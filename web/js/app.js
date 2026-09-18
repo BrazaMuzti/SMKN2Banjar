@@ -18,7 +18,7 @@ const INFO_APLIKASI = {
   urlDonasi: 'https://saweria.co/brazamuzti',    // contoh: 'https://saweria.co/username' / 'https://trakteer.id/username'
   apk: {
     // Link unduhan APK (isi salah satu atau semuanya — tombol hanya muncul bila link terisi)
-    urlGitHub: 'https://brazamuzti.github.io/Administrasi-Sekolah/',  // contoh: 'https://github.com/user/repo/releases/latest'
+    urlGitHub: 'https://github.com/BrazaMuzti/Administrasi-Sekolah',  // contoh: 'https://github.com/user/repo/releases/latest'
     urlDrive: '',   // contoh: 'https://drive.google.com/...'
     urlCustom: '',  // contoh: 'https://sekolah.example/download/sisip.apk' (label bebas: labelCustom)
     labelCustom: 'Unduh Langsung',
@@ -8082,7 +8082,10 @@ function filterTabelMurid() {
 async function editAkunMurid(id) {
     const fallback = (cacheAkunMurid || []).find(r => String(r.id) === String(id));
     try {
-        const { data, error } = await supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('id', id).maybeSingle();
+        let { data, error } = await supaClient.from('akun').select(KOLOM_EXPORT_MURID + ', jabatan_ekskul_map').eq('id', id).maybeSingle();
+        if (error && /jabatan_ekskul_map/i.test(error.message || '')) {
+            ({ data, error } = await supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('id', id).maybeSingle());
+        }
         if (error) throw error;
         if (!data) throw new Error('Data murid tidak ditemukan.');
         openFormAkunMurid(false, data);
@@ -8102,7 +8105,7 @@ function renderChipsJabatan(containerId, arr) {
     const el = document.getElementById(containerId);
     if (!el) return;
     el.innerHTML = (arr && arr.length)
-        ? arr.map(j => `<span class="inline-flex items-center max-w-full bg-blue-600/30 border border-blue-400/40 text-blue-200 px-1.5 py-0.5 rounded text-[10px] leading-4"><span class="truncate">${escapeHtml(j)}</span></span>`).join(' ')
+        ? arr.map(j => `<span class="inline-flex items-center max-w-full bg-blue-600/30 border border-blue-400/40 text-blue-200 px-1.5 py-0.5 rounded text-[10px] leading-4"><span class="break-words">${escapeHtml(j)}</span></span>`).join(' ')
         : `<span class="text-[10px] text-slate-500 italic">Belum ada jabatan dipilih</span>`;
 }
 
@@ -8120,7 +8123,7 @@ function openPopupPilihJabatan(jenis) {
     const listHTML = daftar.length ? daftar.map(j => `
         <label class="flex items-center gap-2 cursor-pointer hover:bg-slate-700 bg-slate-800 px-2 py-1.5 rounded border border-white/10 text-[11px]">
             <input type="checkbox" class="${chkClass}" value="${escJs(j)}" ${terpilih.includes(j) ? 'checked' : ''}>
-            <span class="truncate">${escapeHtml(j)}</span>
+            <span class="break-words">${escapeHtml(j)}</span>
         </label>
     `).join('')
         : `<p class="text-[10px] text-slate-500 italic p-1">Belum ada opsi — tambahkan di Master Data atau ketik manual di bawah.</p>`;
@@ -8172,7 +8175,8 @@ function openFormAkunMurid(isNew, data = {}) {
     const nisnV = data.nisn || data.NISN || "";
     const tahunV = data.tahun_pelajaran || data["ID Tahun Pelajaran"] || "";
     const semesterV = data.semester || data["Semester"] || "";
-    const kelasV = data.tingkat_kelas || data["Tingkat/Kelas"] || "";
+    const kelasV = kelasSiswaTahun(data, currentTahun) || data.tingkat_kelas || data["Tingkat/Kelas"] || "";
+
     const jkV = data.jenis_kelamin || data["Jenis Kelamin"] || "";
     const lahirV = data.tgl_lahir ? String(data.tgl_lahir).split('T')[0] : "";
     const agamaV = data.agama || data["Agama"] || "";
@@ -8195,13 +8199,19 @@ function openFormAkunMurid(isNew, data = {}) {
 
     // Jabatan Kelas & Jabatan Ekstrakurikuler: working copy pilihan — dikelola lewat popup
     formJabatanKelasSel = jabatanV.split(',').map(j => j.trim()).filter(Boolean);
-    formJabatanEkskulSel = jabatanEkskulV.split(',').map(j => j.trim()).filter(Boolean);
+    // Union kolom jabatan_ekskul (teks) + jabatan_ekskul_map (per-ekskul, dikelola dari modul Ekstrakurikuler)
+    // supaya kedua sumber data jabatan ekskul tetap sinkron saat ditampilkan/diedit di form ini.
+    const jabatanMapV = (data.jabatan_ekskul_map && typeof data.jabatan_ekskul_map === 'object') ? data.jabatan_ekskul_map : {};
+    const jabatanMapArr = Object.values(jabatanMapV).map(j => String(j || '').trim()).filter(Boolean);
+    formJabatanEkskulSel = [...new Set([...jabatanEkskulV.split(',').map(j => j.trim()).filter(Boolean), ...jabatanMapArr])];
 
     const ekskulArr = ekskulV.split(',').map(e => e.trim()).filter(Boolean);
+    if (!ekskulArr.length) ekskulArr.push('STO-Siswa Tanpa Organisasi');
+
     const chkEkskulHTML = listEkskul.map(e => `
         <label class="flex items-center gap-1.5 cursor-pointer hover:text-white bg-slate-800 p-1.5 rounded border border-white/10">
             <input type="checkbox" class="chk-ekskul-form" value="${escJs(e)}" ${ekskulArr.includes(e) ? 'checked' : ''}>
-            <span class="truncate">${e}</span>
+            <span class="break-words">${e}</span>
         </label>
     `).join('');
 
@@ -8318,6 +8328,7 @@ function openFormAkunMurid(isNew, data = {}) {
 
             const ekskulChecked = [];
             document.querySelectorAll('.chk-ekskul-form:checked').forEach(el => ekskulChecked.push(el.value));
+            if (!ekskulChecked.length) ekskulChecked.push('STO-Siswa Tanpa Organisasi');
             kumpulkanFormRiwayatSiswa();
 
             return {
@@ -8452,7 +8463,14 @@ async function prosesKenaikanKelas() {
         return p.length === 2 && !isNaN(parseInt(p[0])) ? `${parseInt(p[0]) + 1}/${parseInt(p[1]) + 1}` : '';
     };
 
-    const state = { sumber: sumberDefault, kelas: kelasDefault, nis: nisDefault, nisn: '', mode: 'naik', siswa: [] };
+    const state = { sumber: sumberDefault, kelas: kelasDefault, nama: '', nis: nisDefault, nisn: '', mode: 'naik', siswa: [] };
+
+    const cocokKelas = (kelasAsal) => {
+        if (state.kelas === 'ALL') return true;
+        if (state.kelas === 'GRP:XI') return /^XI(\s|$)/i.test(kelasAsal) || /^11(\s|$)/.test(kelasAsal);
+        if (state.kelas === 'GRP:XII') return /^XII(\s|$)/i.test(kelasAsal) || /^12(\s|$)/.test(kelasAsal);
+        return kelasAsal === state.kelas;
+    };
 
     const saring = () => {
         state.siswa = (cacheAkunMurid || [])
@@ -8463,7 +8481,8 @@ async function prosesKenaikanKelas() {
                 kelasAsal: kelasSiswaTahun(d, state.sumber), raw: d
             }))
             .filter(s => s.kelasAsal && siswaAktifTahun(s.raw, state.sumber)
-                && (state.kelas === 'ALL' || s.kelasAsal === state.kelas)
+                && cocokKelas(s.kelasAsal)
+                && (!state.nama || s.nama.toLowerCase().includes(state.nama.toLowerCase()))
                 && (!state.nis || s.nis.toLowerCase().includes(state.nis.toLowerCase()))
                 && (!state.nisn || String(s.nisn).toLowerCase().includes(state.nisn.toLowerCase())))
             .sort((a, b) => a.kelasAsal.localeCompare(b.kelasAsal, 'id', { numeric: true }) || a.nama.localeCompare(b.nama));
@@ -8517,15 +8536,20 @@ async function prosesKenaikanKelas() {
         html: `
             <div class="text-left text-[11px] text-slate-300 mt-2">
                 <div id="kn-info" class="flex flex-wrap items-center gap-2 mb-2">${infoHtml()}</div>
-                <div class="grid grid-cols-2 sm:grid-cols-5 gap-1.5 mb-1">
-                    <select id="kn-filter-tahun" class="h-7 bg-slate-700 border border-white/20 rounded px-1 text-[10px] text-white outline-none" title="Tahun Pelajaran sumber">${tahunOpts}</select>
-                    <select id="kn-filter-kelas" class="h-7 bg-slate-700 border border-white/20 rounded px-1 text-[10px] text-white outline-none"><option value="ALL" ${state.kelas === 'ALL' ? 'selected' : ''}>Semua Kelas</option>${kelasOpts}</select>
-                    <input id="kn-filter-nis" type="text" value="${escJs(nisDefault)}" placeholder="Filter NIS..." class="h-7 bg-black/40 border border-white/20 rounded px-1.5 text-[10px] text-white outline-none">
-                    <input id="kn-filter-nisn" type="text" placeholder="Filter NISN..." class="h-7 bg-black/40 border border-white/20 rounded px-1.5 text-[10px] text-white outline-none">
-                    <select id="kn-filter-mode" class="h-7 bg-slate-700 border border-white/20 rounded px-1 text-[10px] text-white outline-none" title="Mode koreksi jika terdapat kesalahan kenaikan">
+                <div class="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-6 gap-1.5 mb-1">
+                    <select id="kn-filter-tahun" class="h-7 min-w-0 bg-slate-700 border border-white/20 rounded px-2 text-[11px] text-white outline-none" title="Tahun Pelajaran sumber">${tahunOpts}</select>
+                    <select id="kn-filter-kelas" class="h-7 min-w-0 bg-slate-700 border border-white/20 rounded px-2 text-[11px] text-white outline-none"><option value="ALL" ${state.kelas === 'ALL' ? 'selected' : ''}>Semua Kelas</option><option value="GRP:XI" ${state.kelas === 'GRP:XI' ? 'selected' : ''}>Kelas XI (semua)</option><option value="GRP:XII" ${state.kelas === 'GRP:XII' ? 'selected' : ''}>Kelas XII (semua)</option>${kelasOpts}</select>
+                    <input id="kn-filter-nama" type="text" placeholder="Filter Nama..." class="h-7 min-w-0 bg-black/40 border border-white/20 rounded px-2 text-[11px] text-white outline-none">
+                    <input id="kn-filter-nis" type="text" value="${escJs(nisDefault)}" placeholder="Filter NIS..." class="h-7 min-w-0 bg-black/40 border border-white/20 rounded px-2 text-[11px] text-white outline-none">
+                    <input id="kn-filter-nisn" type="text" placeholder="Filter NISN..." class="h-7 min-w-0 bg-black/40 border border-white/20 rounded px-2 text-[11px] text-white outline-none">
+                    <select id="kn-filter-mode" class="h-7 min-w-0 bg-slate-700 border border-white/20 rounded px-2 text-[11px] text-white outline-none" title="Mode koreksi jika terdapat kesalahan kenaikan">
                         <option value="naik" selected>Mode: Naik (X→XI→XII)</option>
                         <option value="turun">Mode: Turun/Koreksi (XI→X)</option>
                     </select>
+                </div>
+                <div class="flex items-center gap-2 mb-2">
+                    <button type="button" id="kn-btn-cek-semua" class="h-6 px-2 rounded bg-green-600/30 hover:bg-green-600 text-green-200 hover:text-white text-[10px] font-bold transition"><i class="fa-solid fa-square-check mr-1"></i>Ceklis Semua</button>
+                    <button type="button" id="kn-btn-hapus-cek" class="h-6 px-2 rounded bg-red-600/30 hover:bg-red-600 text-red-200 hover:text-white text-[10px] font-bold transition"><i class="fa-solid fa-square mr-1"></i>Hapus Ceklis Semua</button>
                 </div>
                 <div class="text-[10px] text-slate-400 mb-2">Mode Naik: kelas tujuan otomatis X→XI→XII→Lulus. Mode Turun/Koreksi: otomatis mundur (XI→X, XII→XI) dan menulis ulang TA sumber. Keduanya dapat diubah per siswa; hilangkan centang untuk mengecualikan siswa.</div>
                 <div class="max-h-[45vh] overflow-y-auto custom-scrollbar border border-white/10 rounded">
@@ -8544,6 +8568,7 @@ async function prosesKenaikanKelas() {
             const terapkanFilter = () => {
                 state.sumber = (document.getElementById('kn-filter-tahun') || {}).value || state.sumber;
                 state.kelas = (document.getElementById('kn-filter-kelas') || {}).value || 'ALL';
+                state.nama = (((document.getElementById('kn-filter-nama') || {}).value) || '').trim();
                 state.nis = (((document.getElementById('kn-filter-nis') || {}).value) || '').trim();
                 state.nisn = (((document.getElementById('kn-filter-nisn') || {}).value) || '').trim();
                 state.mode = (document.getElementById('kn-filter-mode') || {}).value || 'naik';
@@ -8553,9 +8578,17 @@ async function prosesKenaikanKelas() {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('change', terapkanFilter);
             });
-            ['kn-filter-nis', 'kn-filter-nisn'].forEach(id => {
+            ['kn-filter-nama', 'kn-filter-nis', 'kn-filter-nisn'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) el.addEventListener('input', terapkanFilter);
+            });
+            const btnCek = document.getElementById('kn-btn-cek-semua');
+            if (btnCek) btnCek.addEventListener('click', () => {
+                document.querySelectorAll('.kn-naik').forEach(el => { el.checked = true; });
+            });
+            const btnHapus = document.getElementById('kn-btn-hapus-cek');
+            if (btnHapus) btnHapus.addEventListener('click', () => {
+                document.querySelectorAll('.kn-naik').forEach(el => { el.checked = false; });
             });
         },
         preConfirm: () => {
