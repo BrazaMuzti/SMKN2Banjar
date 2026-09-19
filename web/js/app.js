@@ -8109,14 +8109,38 @@ function renderChipsJabatan(containerId, arr) {
         : `<span class="text-[10px] text-slate-500 italic">Belum ada jabatan dipilih</span>`;
 }
 
-/** Popup pilih jabatan: checklist dari Master Data + teks isian custom (pisahkan koma). */
+const STO_LABEL = 'STO-Siswa Tanpa Organisasi';
+/** Auto-toggle STO pada checklist Ekstrakurikuler form akun murid:
+ *  - Jika ekskul lain dicentang, STO otomatis tidak dicentang.
+ *  - Jika semua ekskul lain tidak dicentang (atau STO dicentang manual), STO otomatis dicentang.
+ */
+function onToggleEkskulForm(el) {
+    const semua = document.querySelectorAll('.chk-ekskul-form');
+    const stoEl = Array.from(semua).find(c => c.value === STO_LABEL);
+    if (!stoEl) return;
+    if (el.value === STO_LABEL) {
+        if (el.checked) {
+            semua.forEach(c => { if (c !== stoEl) c.checked = false; });
+        }
+    } else if (el.checked) {
+        stoEl.checked = false;
+    } else {
+        const adaLain = Array.from(semua).some(c => c !== stoEl && c.checked);
+        if (!adaLain) stoEl.checked = true;
+    }
+}
+
+/** Popup pilih jabatan: checklist dari Master Data + teks isian custom (pisahkan koma).
+ *  Dibuat sebagai overlay DOM manual (BUKAN Swal.fire bersarang) -- memanggil Swal.fire()
+ *  di dalam Swal.fire() lain akan menutup/menggantikan modal Edit/Tambah Akun Murid
+ *  yang sedang terbuka di baliknya (SweetAlert2 hanya mendukung satu modal aktif). */
 function openPopupPilihJabatan(jenis) {
     const isKelas = jenis === 'kelas';
     const opsi = isKelas
         ? urutAz([...new Set(masterDataCache.map(m => m["Jabatan Kelas"]).filter(Boolean))])
         : urutAz([...new Set(masterDataCache.map(m => m["Jabatan Ekstrakurikuler"]).filter(Boolean))]);
     const terpilih = isKelas ? formJabatanKelasSel : formJabatanEkskulSel;
-    const daftar = urutAz([...new Set([...terpilih, ...opsi])]); // nilai tersimpan selalu ikut dalam daftar
+    const daftar = urutAz([...new Set([...terpilih, ...opsi])]);
     const chkClass = isKelas ? 'pchk-jabatan-kelas' : 'pchk-jabatan-ekskul';
     const inputId = isKelas ? 'pcustom-jabatan-kelas' : 'pcustom-jabatan-ekskul';
 
@@ -8126,34 +8150,58 @@ function openPopupPilihJabatan(jenis) {
             <span class="break-words">${escapeHtml(j)}</span>
         </label>
     `).join('')
-        : `<p class="text-[10px] text-slate-500 italic p-1">Belum ada opsi — tambahkan di Master Data atau ketik manual di bawah.</p>`;
+        : `<p class="text-[10px] text-slate-500 italic p-1">Belum ada opsi -- tambahkan di Master Data atau ketik manual di bawah.</p>`;
 
-    Swal.fire({
-        title: `<div class="text-base font-bold">Pilih Jabatan ${isKelas ? 'Kelas' : 'Ekstrakurikuler'}</div>`,
-        html: `
+    tutupPopupPilihJabatan();
+    const overlay = document.createElement('div');
+    overlay.id = 'popup-jabatan-overlay';
+    // NOTE: seluruh style tata-letak kritis (fixed/inset/z-index/flex/ukuran) ditulis inline,
+    // BUKAN lewat class Tailwind arbitrary-value (mis. z-[99999], max-w-[480px]) -- class semacam
+    // itu hanya berfungsi bila web/css/style.css sudah di-build ulang (npm run build:css) sesudah
+    // ditambahkan di source. Inline style menjamin overlay selalu tampil benar di depan modal
+    // SweetAlert2 (Edit/Tambah Akun Murid) walau style.css belum/tidak sempat di-build ulang.
+    overlay.setAttribute('style', 'position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);padding:1rem;');
+    overlay.innerHTML = `
+        <div style="background:#1e293b;color:#fff;border-radius:0.75rem;box-shadow:0 25px 50px -12px rgba(0,0,0,0.5);width:100%;max-width:480px;max-height:85vh;overflow-y:auto;padding:1rem;" class="custom-scrollbar">
+            <div class="text-base font-bold mb-3">Pilih Jabatan ${isKelas ? 'Kelas' : 'Ekstrakurikuler'}</div>
             <div class="text-left text-[11px] text-slate-300">
                 <label class="font-bold text-blue-300 mb-1 block">Pilih Jabatan <span class="font-normal text-slate-400">(boleh pilih lebih dari satu)</span></label>
-                <div class="grid grid-cols-1 gap-1 bg-black/20 p-1.5 rounded border border-white/10 max-h-48 overflow-y-auto custom-scrollbar">
+                <div class="custom-scrollbar" style="display:grid;grid-template-columns:1fr;gap:0.25rem;background:rgba(0,0,0,0.2);padding:0.375rem;border-radius:0.375rem;border:1px solid rgba(255,255,255,0.1);max-height:12rem;overflow-y:auto;">
                     ${listHTML}
                 </div>
-                <label class="font-bold text-blue-300 mt-3 mb-1 block">Jabatan Custom <span class="font-normal text-slate-400">(ketik manual — pisahkan dengan koma bila lebih dari satu)</span></label>
-                <input id="${inputId}" type="text" placeholder="cth: Ketua Robotik, Anggota Futsal" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white outline-none focus:border-blue-500">
-            </div>`,
-        width: 480, background: '#1e293b', color: '#fff',
-        showCancelButton: true,
-        confirmButtonText: '<i class="fa-solid fa-check"></i> Terapkan',
-        preConfirm: () => {
-            const pilihan = [];
-            document.querySelectorAll('.' + chkClass + ':checked').forEach(el => pilihan.push(el.value));
-            const custom = document.getElementById(inputId).value.split(',').map(s => s.trim()).filter(Boolean);
-            return [...new Set([...pilihan, ...custom])];
-        }
-    }).then((res) => {
-        if (!res.isConfirmed) return;
-        if (isKelas) formJabatanKelasSel = res.value;
-        else formJabatanEkskulSel = res.value;
-        renderChipsJabatan(isKelas ? 'badge-jabatan-kelas' : 'badge-jabatan-ekskul', res.value);
-    });
+                <label class="font-bold text-blue-300 mt-3 mb-1 block">Jabatan Custom <span class="font-normal text-slate-400">(ketik manual -- pisahkan dengan koma bila lebih dari satu)</span></label>
+                <input id="${inputId}" type="text" placeholder="cth: Ketua Robotik, Anggota Futsal" style="width:100%;background:rgba(0,0,0,0.4);border:1px solid rgba(255,255,255,0.2);border-radius:0.375rem;padding:0.375rem 0.5rem;" class="text-xs text-white outline-none focus:border-blue-500">
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button type="button" onclick="tutupPopupPilihJabatan()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-1.5 rounded text-xs font-bold transition">Batal</button>
+                <button type="button" onclick="terapkanPopupPilihJabatan('${jenis}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-check mr-1"></i>Terapkan</button>
+            </div>
+        </div>
+    `;
+    overlay.addEventListener('click', (ev) => { if (ev.target === overlay) tutupPopupPilihJabatan(); });
+    document.body.appendChild(overlay);
+}
+
+/** Tutup overlay popup pilih jabatan (Batal / klik backdrop) tanpa menyentuh Swal induk. */
+function tutupPopupPilihJabatan() {
+    const el = document.getElementById('popup-jabatan-overlay');
+    if (el) el.remove();
+}
+
+/** Terapkan pilihan popup jabatan ke working copy form & render ulang chip-nya, lalu tutup overlay. */
+function terapkanPopupPilihJabatan(jenis) {
+    const isKelas = jenis === 'kelas';
+    const chkClass = isKelas ? 'pchk-jabatan-kelas' : 'pchk-jabatan-ekskul';
+    const inputId = isKelas ? 'pcustom-jabatan-kelas' : 'pcustom-jabatan-ekskul';
+    const pilihan = [];
+    document.querySelectorAll('.' + chkClass + ':checked').forEach(el => pilihan.push(el.value));
+    const customEl = document.getElementById(inputId);
+    const custom = (customEl ? customEl.value : '').split(',').map(s => s.trim()).filter(Boolean);
+    const hasil = [...new Set([...pilihan, ...custom])];
+    if (isKelas) formJabatanKelasSel = hasil;
+    else formJabatanEkskulSel = hasil;
+    renderChipsJabatan(isKelas ? 'badge-jabatan-kelas' : 'badge-jabatan-ekskul', hasil);
+    tutupPopupPilihJabatan();
 }
 
 function openFormAkunMurid(isNew, data = {}) {
@@ -8210,7 +8258,7 @@ function openFormAkunMurid(isNew, data = {}) {
 
     const chkEkskulHTML = listEkskul.map(e => `
         <label class="flex items-center gap-1.5 cursor-pointer hover:text-white bg-slate-800 p-1.5 rounded border border-white/10">
-            <input type="checkbox" class="chk-ekskul-form" value="${escJs(e)}" ${ekskulArr.includes(e) ? 'checked' : ''}>
+            <input type="checkbox" class="chk-ekskul-form" value="${escJs(e)}" onchange="onToggleEkskulForm(this)" ${ekskulArr.includes(e) ? 'checked' : ''}>
             <span class="break-words">${e}</span>
         </label>
     `).join('');
