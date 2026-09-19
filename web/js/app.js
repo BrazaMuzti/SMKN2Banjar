@@ -10291,6 +10291,13 @@ function openFormAkunGuru(isNew, data = {}) {
     // Penugasan per tahun pelajaran (working copy form) — [REQ 4a] satu-satunya sumber penugasan
     formPenugasanData = JSON.parse(JSON.stringify(data.penugasan || data.Penugasan || {}));
     formPenugasanTahun = currentTahun;
+    // [FIX] TA aktif belum punya entri penugasan (guru lama / belum pernah disimpan via form baru)
+    // → pra-isi checkbox dari kolom lama (mapel/wali_kelas/ekstrakurikuler) agar tidak tampak kosong
+    // saat form dibuka, konsisten dengan seeding yang sudah dilakukan saat menyimpan.
+    if (!penugasanTahunAda(formPenugasanData[formPenugasanTahun])) {
+        const seedAwal = seedPenugasanDariKolomLama(data, formPenugasanTahun);
+        if (seedAwal) formPenugasanData[formPenugasanTahun] = seedAwal;
+    }
 
     // 2. Nilai existing (snake_case dulu, fallback format lama)
     const namaV = data.nama_lengkap || data["Nama Guru"] || "";
