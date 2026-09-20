@@ -2618,7 +2618,7 @@ window.openEditAbsenMasal = function(tanggal, isHariLibur = false) {
     if (!checkHakAkses(mapelRaw)) return Swal.fire({ icon: 'error', title: 'Akses Ditolak', text: 'Hanya Guru Pengampu yang bisa mengubah ini.', background: '#1e293b', color: '#fff' }); 
   } else {
     const targetGuru = dataStatusKunciGuru.find(g => (g.Mapel || "").includes(namaMapel) || (g.Ekskul || "").includes(namaMapel));
-    if(!targetGuru || targetGuru.Kunci !== 'BUKA') return Swal.fire({ icon: 'error', title: 'Dikunci', text: 'Sesi Absensi Ditutup oleh Guru.', background: '#1e293b', color: '#fff' }); 
+    if(!targetGuru || targetGuru["Kunci Absen"] !== 'BUKA') return Swal.fire({ icon: 'error', title: 'Dikunci', text: 'Sesi Absensi Ditutup oleh Guru.', background: '#1e293b', color: '#fff' }); 
   }
 
   if (isHariLibur) {
@@ -3115,6 +3115,9 @@ window.exportAbsensiPDF = function() {
 
 // Info Kelas Khusus Absen
 function showInfoKelasAbsen() {
+  const mapelRaw = document.getElementById('select-mapel')?.value || "";
+  const arr = mapelRaw.split('|');
+  if (arr[0] === 'Ekskul') { showInfoEkskulNilai(arr[1] || ''); return; }
   const kelas = document.getElementById('select-kelas').value;
   
   let pengurus = listMuridKelas.filter(m => (m.jabatan || m["Jabatan Kelas"] || "").trim() !== "").map(m => {
