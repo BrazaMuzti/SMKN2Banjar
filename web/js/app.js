@@ -337,8 +337,13 @@ async function cekSesiOAuth() {
 async function setupDashboard() {
   const role = currentUser.role || 'user';
   const user = currentUser.user || {};
-  // [REQ 1c] Pengurus = pengurus kelas ATAU murid yang menjabat pada ekskul (peta jabatan)
-  const isPengurus = role === 'murid' && ((user["Jabatan Kelas"] || "").match(/Ketua|Sekretaris/i) || Object.keys(jabatanEkskulMapMurid()).filter(Boolean).length > 0);
+  // [REQ 1c] Pengurus = pengurus kelas ATAU murid yang menjabat pada ekskul (peta jabatan
+  // ATAU field tunggal "Jabatan Ekstrakurikuler" yang diisi lewat form Akun Siswa)
+  const isPengurus = role === 'murid' && (
+    (user["Jabatan Kelas"] || "").match(/Ketua|Sekretaris/i) ||
+    Object.keys(jabatanEkskulMapMurid()).filter(Boolean).length > 0 ||
+    String(user["Jabatan Ekstrakurikuler"] || "").trim().length > 0
+  );
 
 
 
@@ -1072,16 +1077,26 @@ async function bukaPengaturanServer() {
     background: '#1e293b', color: '#fff'
   });
   if (!peringatan.isConfirmed) return;
-  const cfg = (typeof ambilKonfigurasiServer === 'function') ? ambilKonfigurasiServer() : { url: '', key: '', gcalClientId: '' };
+  // Hanya tampilkan nilai di form bila admin sebelumnya sudah menyimpan konfigurasi
+  // kustom di browser ini. Jangan pernah menampilkan default bawaan aplikasi di form,
+  // supaya URL/anon key project tidak terekspos ke siapa pun yang membuka modal ini —
+  // koneksi ke default tetap berjalan normal di background lewat utils.js.
+  let tersimpan = null;
+  try { tersimpan = JSON.parse(localStorage.getItem(SERVER_CONFIG_KEY) || 'null'); } catch (e) { /* abaikan */ }
+  const cfg = {
+    url: (tersimpan && tersimpan.url) ? String(tersimpan.url) : '',
+    key: (tersimpan && tersimpan.key) ? String(tersimpan.key) : '',
+    gcalClientId: (tersimpan && tersimpan.gcalClientId) ? String(tersimpan.gcalClientId) : ''
+  };
   const res = await Swal.fire({
     title: 'Konfigurasi Server',
     html: `
       <div class="text-left text-[11px] text-slate-300 mt-2">
         <label class="font-bold text-blue-300">SUPABASE_URL</label>
-        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://xxxxx.supabase.co" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
+        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://xxxxx.supabase.co (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
         <label class="font-bold text-blue-300">SUPABASE_ANON_KEY</label>
-        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_... / anon key" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
-        <p class="text-[9px] text-slate-400 mt-2 mb-3">Tersimpan hanya di browser ini. Anon key bersifat publik (publishable).</p>
+        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_... / anon key (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
+        <p class="text-[9px] text-slate-400 mt-2 mb-3">Kosongkan untuk tetap memakai konfigurasi default bawaan aplikasi. Tersimpan hanya di browser ini. Anon key bersifat publik (publishable).</p>
         <label class="font-bold text-emerald-300">Google Calendar — Client ID (opsional)</label>
         <input id="sv_gcal" value="${escJs(cfg.gcalClientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500">
         <p class="text-[9px] text-slate-400 mt-2">Untuk sinkronisasi Google Calendar (tab "Google Kalender" & Dashboard). Buat di <b>console.cloud.google.com</b> &rarr; APIs &amp; Services &rarr; Credentials &rarr; OAuth client ID (Web application) dengan Authorized JavaScript origin = URL aplikasi ini, lalu aktifkan <b>Google Calendar API</b>.</p>
@@ -1106,7 +1121,14 @@ async function bukaPengaturanServer() {
   }
   if (!res.isConfirmed) return;
   const { url, key, gcalClientId } = res.value || {};
-  if (!url || !key) { showToast('error', 'URL dan Anon Key wajib diisi.'); return; }
+  if (!url && !key) {
+    // Dikosongkan dengan sengaja → kembali memakai default bawaan aplikasi.
+    hapusKonfigurasiServer();
+    clearSession();
+    location.reload();
+    return;
+  }
+  if (!url || !key) { showToast('error', 'URL dan Anon Key wajib diisi (atau kosongkan keduanya untuk pakai default).'); return; }
   try { new URL(url); } catch (e) { showToast('error', 'Format URL tidak valid.'); return; }
   let ok = false;
   try {
@@ -1752,7 +1774,13 @@ async function renderAbsensiModule(container) {
   const isPengurusKelas = role === 'murid' && user["Jabatan Kelas"]?.match(/Ketua Murid|Sekretaris Kelas|Ketua Kelas/i);
   // [REQ 1c] Pengurus ekskul = murid yang menjabat pada ekskul (peta jabatan), bukan dari "Jabatan Kelas"
   const ekskulJabatanMurid = role === 'murid' ? Object.keys(jabatanEkskulMapMurid()).filter(Boolean) : [];
+  // Fallback: field tunggal "Jabatan Ekstrakurikuler" (diisi lewat form Akun Siswa) tanpa peta per-ekskul
+  // → beri akses Input Hadir untuk ekskul yang diikuti murid tsb.
+  if (role === 'murid' && ekskulJabatanMurid.length === 0 && String(user["Jabatan Ekstrakurikuler"] || "").trim().length > 0) {
+    ekskulJabatanMurid.push(...ekskulDiikutiMurid());
+  }
   const isPengurusEkskul = ekskulJabatanMurid.length > 0;
+
   const isLaporanSaya = role === 'murid' && !isPengurusKelas && !isPengurusEkskul;
   
   container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Menyiapkan Data...</div>`;
