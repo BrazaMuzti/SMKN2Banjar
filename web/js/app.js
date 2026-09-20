@@ -506,7 +506,7 @@ async function bukaProfilAkun() {
   // admin tanpa NIP pada sesi → coba lookup lewat email
   let prof = null;
   try {
-    const kolom = 'nis_nip, nama_lengkap, gelar_depan, gelar_belakang, email, tingkat_kelas, jabatan, wali_kelas, mapel, ekstrakurikuler, no_telepon, jenis_kelamin, agama, nisn, tipe';
+    const kolom = 'nis_nip, nama_lengkap, gelar_depan, gelar_belakang, email, tingkat_kelas, jabatan, wali_kelas, mapel, ekstrakurikuler, penugasan, no_telepon, jenis_kelamin, agama, nisn, tipe';
     const emailSesi = sesi["Email"] || '';
     if (idUser && !/\s/.test(idUser)) {
       const { data, error } = await supaClient.from('akun').select(kolom).eq('nis_nip', idUser).maybeSingle();
@@ -532,6 +532,14 @@ async function bukaProfilAkun() {
   const tahunSesi = document.getElementById('header-tahun')?.value || getPreferensiSesi().tahun || currentTahun;
   const smtSesi = document.getElementById('header-semester')?.value || getPreferensiSesi().semester || '';
 
+  // [SINKRON] Sumber Mapel Diampu/Pembina Ekskul/Wali Kelas = kolom flat akun.mapel/
+  // akun.ekstrakurikuler/akun.wali_kelas (fresh dari DB), sama seperti sumber akses
+  // Hadir Tatap Muka & Input Nilai. Fallback ke sesi bila fetch fresh gagal.
+  const splitKoma = (v) => String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+  const penugasanTampil = prof
+    ? { mapel: splitKoma(prof.mapel), wali: String(prof.wali_kelas || '').trim(), ekskul: splitKoma(prof.ekstrakurikuler) }
+    : { mapel: mapelDiampuAktif(), wali: waliKelasAktif(), ekskul: ekskulDiampuAktif() };
+
   const baris = (label, nilai, icon, warna = 'text-slate-300') => `
     <div class="flex items-start justify-between gap-3 border-b border-white/5 py-1.5">
       <span class="text-[10px] font-bold text-slate-500 uppercase tracking-wider shrink-0 w-32"><i class="fa-solid ${icon} ${warna} mr-1"></i> ${label}</span>
@@ -550,9 +558,9 @@ async function bukaProfilAkun() {
     ` : `
       ${baris('NIP / ID Akun', ambil('nis_nip', 'ID Akun Guru'), 'fa-id-card', 'text-blue-400')}
       ${baris('Email', ambil('email', 'Email'), 'fa-envelope', 'text-blue-300')}
-      ${baris('Wali Kelas', waliKelasAktif(), 'fa-school', 'text-indigo-400')}
-      ${baris('Mapel Diampu', mapelDiampuAktif().join(', '), 'fa-book', 'text-yellow-400')}
-      ${baris('Pembina Ekskul', ekskulDiampuAktif().join(', '), 'fa-medal', 'text-yellow-400')}
+      ${baris('Wali Kelas', penugasanTampil.wali, 'fa-school', 'text-indigo-400')}
+      ${baris('Mapel Diampu', penugasanTampil.mapel.join(', '), 'fa-book', 'text-yellow-400')}
+      ${baris('Pembina Ekskul', penugasanTampil.ekskul.join(', '), 'fa-medal', 'text-yellow-400')}
       ${baris('No HP/WA', ambil('no_telepon', 'No HP'), 'fa-phone', 'text-green-400')}
     `;
 
@@ -1763,6 +1771,16 @@ async function renderAbsensiModule(container) {
     try { await muatDataJadwalLibur(); } catch (e) { console.warn('jadwal absensi:', e); }
   }
 
+  // Kelas diampu guru (untuk grup "Kelas Diampu (Bisa Edit)" di panel Pilih Kelas):
+  // ambil dari jadwal_pelajaran (menu Jadwal & Libur → Jadwal Pelajaran: Kelas & Mapel).
+  if (role === 'guru') {
+    try {
+      const { data: jdRows, error: jdErr } = await supaClient.from('jadwal_pelajaran').select('*');
+      if (!jdErr && jdRows) cacheJadwalGuru = jdRows;
+      else if (jdErr) console.warn('Gagal memuat jadwal pelajaran (absensi):', jdErr.message);
+    } catch (e) { console.warn('jadwal_pelajaran (absensi):', e); }
+  }
+
   let listTahun = [...new Set(masterDataCache.map(m => m["Tahun Pelajaran"]).filter(Boolean))];
   if (listTahun.length > 0 && !listTahun.includes(currentTahun)) currentTahun = listTahun[0];
   let listKelas = urutAz([...new Set(masterDataCache.map(m => m["Tingkat/Kelas"]).filter(Boolean))]);
@@ -1786,7 +1804,7 @@ async function renderAbsensiModule(container) {
   // [PERBAIKAN REQ 3]: Penambahan class bg-slate-800 text-white di semua <option>
   container.innerHTML = `
     <!-- FILTER BAR ABSENSI -->
-    <div class="sticky top-0 z-40 p-2 rounded-b-2xl shadow-lg border-b border-white/10 bg-slate-800/90 w-full backdrop-blur-md flex flex-col gap-2">
+    <div class="sticky top-0 z-40 p-2 rounded-b-2xl shadow-lg border-b border-white/10 bg-slate-800/90 w-full backdrop-blur-md flex flex-col gap-2" style="z-index:70;">
       <div class="flex items-center justify-between gap-1 w-full">
         <div class="flex gap-1 sm:gap-2 flex-wrap items-center">
 
@@ -1805,9 +1823,7 @@ async function renderAbsensiModule(container) {
            <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Mode Tampilan Tanggal">
               <div class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-purple-400 group-hover:bg-purple-500 group-hover:text-white transition shadow-sm"><i class="fa-solid fa-eye text-[10px] sm:text-xs"></i></div>
               <select id="filter-view-mode" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="refreshTableAbsenUI()">
-                <option value="today" class="bg-slate-800 text-white" selected>Hari Ini</option>
-                <option value="week" class="bg-slate-800 text-white">Minggu Ini</option>
-                <option value="all" class="bg-slate-800 text-white">Semua Tgl</option>
+                ${opsiModeTampilanTanggalHTML()}
               </select>
            </div>
           <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Pilih Mapel / Ekskul">
@@ -1819,11 +1835,12 @@ async function renderAbsensiModule(container) {
              </select>
           </div>
           <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Pilih Kelas">
-             <div class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-pink-400 group-hover:bg-pink-500 group-hover:text-white transition shadow-sm"><i class="fa-solid fa-users text-[10px] sm:text-xs"></i></div>
-             <select id="select-kelas" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="loadDataMuridDanAbsen()">
+             <select id="select-kelas" class="hidden" onchange="loadDataMuridDanAbsen()">
                <option value="Semua Kelas" id="opt-semua-kelas" class="bg-slate-800 text-white">-- Semua --</option>
-               ${listKelas.map(k => `<option value="${k}" class="bg-slate-800 text-white">${k}</option>`).join('')}
+               ${opsiKelasAbsenHTML(listKelas, 'Mapel', listMapelDiampu[0] || '')}
              </select>
+             <button type="button" id="btn-dropdown-kelas" onclick="toggleDropdownKelasAbsen(event)" class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-pink-400 hover:bg-pink-500 hover:text-white transition shadow-sm"><i class="fa-solid fa-users text-[10px] sm:text-xs"></i></button>
+             <div id="panel-kelas-absen" class="hidden absolute left-0 top-full mt-1 z-50 w-56 overflow-y-auto bg-slate-800 border border-white/20 rounded-lg shadow-xl text-[11px] text-white p-1.5" style="z-index:9999; max-height: 20rem; width:100px;"></div>
           </div>
         </div>
         
@@ -1857,25 +1874,182 @@ async function renderAbsensiModule(container) {
     </div>
   `;
   pasangPerekamUndoAbsen();
+  window.__listKelasAbsenCache = listKelas;
   handleMapelChange();
 }
 
+/** Flag fitur: opsi Semua Mapel, Semua Kelas (panel Pilih Kelas mode Mapel biasa) dan Hari Ini disembunyikan untuk guru (permintaan user); tetap tampil untuk admin. Set true untuk aktifkan lagi untuk semua role. */
+const TAMPILKAN_OPSI_SEMUA_ABSEN = false;
+/** Opsi Semua Mapel/Semua Kelas/Hari Ini tetap tampil untuk admin (butuh rekap gabungan), disembunyikan untuk guru. */
+function isAdminAbsen() { return TAMPILKAN_OPSI_SEMUA_ABSEN || (currentUser && currentUser.role === 'admin'); }
+
+/** Opsi "Mode Tampilan Tanggal": label Mapel/Ekskul mengikuti pilihan "Pilih Mapel/Ekskul", urutan
+ *  Hari Ini → Mata Pelajaran (opsi dipilih) → Minggu Ini → Semua Tgl (khusus "Semua Mapel", req 6).
+ *  Opsi jadwal menampilkan tanggal2 sesuai hari jadwal_pelajaran (Mapel) / agenda_ekskul (Ekskul)
+ *  pada bulan berjalan. */
+function opsiModeTampilanTanggalHTML() {
+  const mapelRaw = (document.getElementById('select-mapel') || {}).value || '';
+  const arr = mapelRaw.split('|'), jenis = arr[0] || 'Mapel', nama = arr[1] || '';
+  const isSemuaMapel = jenis === 'SemuaMapel';
+  const labelJadwal = jenis === 'Ekskul' ? 'Mata Pelajaran Ekstrakurikuler (opsi dipilih)' : 'Mata Pelajaran (opsi mapel yang dipilih)';
+  let html = isAdminAbsen() ? `<option value="today" class="bg-slate-800 text-white">Hari Ini</option>` : '';
+  if (!isSemuaMapel && nama) html += `<option value="jadwal" class="bg-slate-800 text-white">${labelJadwal}</option>`;
+  html += `<option value="week" class="bg-slate-800 text-white">Minggu Ini</option>`;
+  if (isSemuaMapel) html += `<option value="all" class="bg-slate-800 text-white">Semua Tgl</option>`;
+  return html;
+}
+
+/** Segarkan opsi "Mode Tampilan Tanggal" mengikuti mapel/ekskul terpilih; pertahankan pilihan bila masih valid. */
+function perbaruiModeTampilanTanggal() {
+  const sel = document.getElementById('filter-view-mode');
+  if (!sel) return;
+  const defaultMode = isAdminAbsen() ? 'today' : 'week';
+  const nilaiLama = sel.value || defaultMode;
+  sel.innerHTML = opsiModeTampilanTanggalHTML();
+  if ([...sel.options].some(o => o.value === nilaiLama)) sel.value = nilaiLama;
+  else if (sel.options.length) sel.value = sel.options[0].value;
+}
+
 function handleMapelChange() {
-  const mapelRaw = document.getElementById('select-mapel').value, isEkskul = mapelRaw.startsWith('Ekskul');
+  const mapelRaw = document.getElementById('select-mapel').value, isEkskul = mapelRaw.startsWith('Ekskul'), isSemuaMapel = mapelRaw.startsWith('SemuaMapel');
   const selKelas = document.getElementById('select-kelas'), optSemua = document.getElementById('opt-semua-kelas');
-  if (isEkskul) { optSemua.classList.remove('hidden'); selKelas.value = "Semua Kelas"; document.getElementById('lbl-judul-utama').innerText = `Daftar Hadir Ekstrakurikuler`; } 
+  if (isEkskul || isSemuaMapel) { optSemua.classList.remove('hidden'); selKelas.value = "Semua Kelas"; document.getElementById('lbl-judul-utama').innerText = isSemuaMapel ? `Laporan Hadir Semua Mapel` : `Daftar Hadir Ekstrakurikuler`; } 
   else { optSemua.classList.add('hidden'); if (selKelas.value === "Semua Kelas") selKelas.selectedIndex = 1; document.getElementById('lbl-judul-utama').innerText = `Laporan Hadir Tatap Muka`; }
+  perbaruiOpsiKelasAbsen();
+  perbaruiModeTampilanTanggal();
   perbaruiIkonAkses();
   loadDataMuridDanAbsen();
 }
 
-/** Opsi dropdown mapel: diampu guru di atas, lainnya di bawah. */
+/** Opsi dropdown mapel: diampu guru di atas, lainnya di bawah + opsi "Semua Mapel". */
 function opsiMapelAbsenHTML(lain, diampu) {
   const opt = (arr) => arr.map(m => `<option value="Mapel|${escJs(m)}" class="bg-slate-800 text-white">${escapeHtml(m)}</option>`).join('');
-  if (!diampu || diampu.length === 0) return lain.length > 0 ? `<optgroup label="Mata Pelajaran" class="bg-slate-700 text-blue-300 font-bold">${opt(lain)}</optgroup>` : '';
-  let html = `<optgroup label="Mapel Diampu (Bisa Edit)" class="bg-slate-700 text-green-300 font-bold">${opt(diampu)}</optgroup>`;
+  const semuaMapelOpt = isAdminAbsen() ? `<option value="SemuaMapel|Semua Mapel" class="bg-slate-800 text-cyan-300 font-bold">— Semua Mapel —</option>` : '';
+  if (!diampu || diampu.length === 0) return semuaMapelOpt + (lain.length > 0 ? `<optgroup label="Mata Pelajaran" class="bg-slate-700 text-blue-300 font-bold">${opt(lain)}</optgroup>` : '');
+  let html = semuaMapelOpt + `<optgroup label="Mapel Diampu (Bisa Edit)" class="bg-slate-700 text-green-300 font-bold">${opt(diampu)}</optgroup>`;
   if (lain.length > 0) html += `<optgroup label="Mapel Lainnya (Baca Saja)" class="bg-slate-700 text-slate-400 font-bold">${opt(lain)}</optgroup>`;
   return html;
+}
+
+/** Hitung set kelas yang diampu guru untuk mapel/ekskul TERPILIH pada select-mapel (khusus modul Hadir Tatap Muka).
+ *  Mapel: wali kelas + jadwal_pelajaran guru (TA aktif) untuk mapel tsb. Ekskul: seluruh kelas (lintas kelas). */
+function hitungKelasDiampuAbsen(jenis, nama) {
+  const set = new Set();
+  if (!currentUser || currentUser.role !== 'guru') return set;
+  const user = currentUser.user || {};
+  if (jenis === 'Ekskul') {
+    if (nama && ekskulDiampuAktif().some(e => e.toLowerCase() === String(nama).toLowerCase())) {
+      (masterDataCache || []).forEach(m => { if (m["Tingkat/Kelas"]) set.add(m["Tingkat/Kelas"]); });
+    }
+    return set;
+  }
+  const wali = waliKelasAktif();
+  if (wali) set.add(wali);
+  if (!nama) return set;
+  const idGuru = user["ID Akun Guru"] || "";
+  (cacheJadwalGuru || []).forEach(j => {
+    if (String(j["Tahun"] || '') !== String(currentTahun || '')) return;
+    if (String(j["ID Akun Guru"] || "") === String(idGuru) && (j["Mapel"] || "") === (nama || "")) {
+      const k = (j["Tingkat/Kelas"] || "").trim();
+      if (k) set.add(k);
+    }
+  });
+  return set;
+}
+
+/** Opsi dropdown "Pilih Kelas" modul Hadir Tatap Muka: kelas diampu (bisa edit) vs lainnya (baca saja).
+ *  Admin/murid: daftar kelas biasa tanpa pengelompokan. */
+function opsiKelasAbsenHTML(listKelas, jenis, nama) {
+  if (!currentUser || currentUser.role !== 'guru') return (listKelas || []).map(k => `<option value="${escJs(k)}" class="bg-slate-800 text-white">${escapeHtml(k)}</option>`).join('');
+  const diampuSet = hitungKelasDiampuAbsen(jenis, nama);
+  const opt = (arr) => arr.map(k => `<option value="${escJs(k)}" class="bg-slate-800 text-white">${escapeHtml(k)}</option>`).join('');
+  const diampu = (listKelas || []).filter(k => diampuSet.has(k));
+  const lain = (listKelas || []).filter(k => !diampuSet.has(k));
+  let html = '';
+  if (diampu.length > 0) html += `<optgroup label="Kelas Diampu (Bisa Edit)" class="bg-slate-700 text-green-300 font-bold">${opt(diampu)}</optgroup>`;
+  if (lain.length > 0) html += `<optgroup label="Kelas Lainnya (Baca Saja)" class="bg-slate-700 text-slate-400 font-bold">${opt(lain)}</optgroup>`;
+  return html || opt(listKelas || []);
+}
+
+/** Panel dropdown kustom "Pilih Kelas": kelas diampu tampil paling atas (langsung terlihat),
+ *  "Kelas Lainnya (Baca Saja)" dikolapse (tersembunyi) dan muncul saat header-nya diklik. */
+function renderPanelKelasAbsenHTML(listKelas, jenis, nama, nilaiTerpilih) {
+  const isGuru = currentUser && currentUser.role === 'guru';
+  const btnKelas = (k, aktif) => `<button type="button" onclick="pilihKelasAbsen('${escJs(k)}')" class="w-full text-left px-2 py-1 rounded hover:bg-pink-600/40 transition ${aktif ? 'bg-pink-600/60 font-bold' : ''}">${escapeHtml(k)}</button>`;
+  let html = `<div class="px-1 pb-1 mb-1 border-b border-white/10 text-slate-400 font-bold uppercase text-[9px]">Pilih Kelas</div>`;
+  const tampilkanSemuaKelas = isAdminAbsen() || jenis === 'Ekskul' || jenis === 'SemuaMapel';
+  if (tampilkanSemuaKelas) html += btnKelas('Semua Kelas', nilaiTerpilih === 'Semua Kelas');
+  if (!isGuru) {
+    html += (listKelas || []).map(k => btnKelas(k, nilaiTerpilih === k)).join('');
+    return html;
+  }
+  const diampuSet = hitungKelasDiampuAbsen(jenis, nama);
+  const diampu = (listKelas || []).filter(k => diampuSet.has(k));
+  const lain = (listKelas || []).filter(k => !diampuSet.has(k));
+  if (diampu.length > 0) {
+    html += `<div class="px-1 pt-1 pb-0.5 text-green-300 font-bold text-[9px] uppercase">Kelas Diampu (Bisa Edit)</div>`;
+    html += diampu.map(k => btnKelas(k, nilaiTerpilih === k)).join('');
+  }
+  if (lain.length > 0) {
+    const terbuka = lain.includes(nilaiTerpilih); // otomatis terbuka bila kelas terpilih ada di "lainnya"
+    html += `<button type="button" onclick="toggleKelasLainnyaAbsen(this)" class="w-full flex items-center justify-between px-1 pt-1.5 pb-0.5 text-slate-400 font-bold text-[9px] uppercase hover:text-white transition">
+               <span>Kelas Lainnya (Baca Saja) (${lain.length})</span>
+               <i class="fa-solid fa-chevron-${terbuka ? 'up' : 'down'} text-[8px]"></i>
+             </button>`;
+    html += `<div class="${terbuka ? '' : 'hidden'}">${lain.map(k => btnKelas(k, nilaiTerpilih === k)).join('')}</div>`;
+  }
+  return html || opsiKelasAbsenHTML(listKelas, jenis, nama);
+}
+
+/** Buka/tutup panel dropdown "Pilih Kelas"; auto-close saat klik di luar panel. */
+function toggleDropdownKelasAbsen(ev) {
+  if (ev) ev.stopPropagation();
+  const panel = document.getElementById('panel-kelas-absen');
+  if (!panel) return;
+  const sedangTerbuka = !panel.classList.contains('hidden');
+  document.querySelectorAll('#panel-kelas-absen').forEach(p => p.classList.add('hidden'));
+  if (sedangTerbuka) return;
+  panel.classList.remove('hidden');
+  const tutupDiLuar = (e) => {
+    if (!panel.contains(e.target) && e.target.id !== 'btn-dropdown-kelas' && !e.target.closest('#btn-dropdown-kelas')) {
+      panel.classList.add('hidden');
+      document.removeEventListener('click', tutupDiLuar);
+    }
+  };
+  setTimeout(() => document.addEventListener('click', tutupDiLuar), 0);
+}
+
+/** Kolapse/expand daftar "Kelas Lainnya (Baca Saja)" di dalam panel (tanpa menutup panel). */
+function toggleKelasLainnyaAbsen(btn) {
+  const wrap = btn.nextElementSibling;
+  const icon = btn.querySelector('i');
+  if (!wrap) return;
+  wrap.classList.toggle('hidden');
+  if (icon) { icon.classList.toggle('fa-chevron-down'); icon.classList.toggle('fa-chevron-up'); }
+}
+
+/** Pilih kelas dari panel kustom: set value select asli (agar semua logika lama tetap jalan via event change). */
+function pilihKelasAbsen(kelas) {
+  const sel = document.getElementById('select-kelas');
+  if (!sel) return;
+  sel.value = kelas;
+  sel.dispatchEvent(new Event('change'));
+  const panel = document.getElementById('panel-kelas-absen');
+  if (panel) panel.classList.add('hidden');
+}
+
+/** Segarkan opsi "Pilih Kelas" (label diampu/lainnya) mengikuti mapel/ekskul terpilih saat ini. */
+function perbaruiOpsiKelasAbsen(listKelasAll) {
+  const selKelas = document.getElementById('select-kelas');
+  if (!selKelas) return;
+  const mapelRaw = (document.getElementById('select-mapel') || {}).value || '';
+  const arr = mapelRaw.split('|'), jenis = arr[0] || 'Mapel', nama = arr[1] || '';
+  const daftar = listKelasAll || window.__listKelasAbsenCache || [];
+  const nilaiLama = selKelas.value;
+  selKelas.innerHTML = `<option value="Semua Kelas" id="opt-semua-kelas" class="bg-slate-800 text-white">-- Semua --</option>${opsiKelasAbsenHTML(daftar, jenis, nama)}`;
+  if ([...selKelas.options].some(o => o.value === nilaiLama)) selKelas.value = nilaiLama;
+  const panel = document.getElementById('panel-kelas-absen');
+  if (panel) panel.innerHTML = renderPanelKelasAbsenHTML(daftar, jenis, nama, selKelas.value);
 }
 
 /** Mode akses mapel terpilih: 'keduanya' (admin) | 'menulis' | 'baca'. */
@@ -1884,6 +2058,8 @@ function modeAksesMapel() {
   if (role === 'admin') return 'keduanya';
   const mapelRaw = (document.getElementById('select-mapel') || {}).value || '';
   const arr = mapelRaw.split('|'), jenis = arr[0], nama = arr[1] || '';
+  // [REQ 4] Semua Mapel: tampilan gabungan lintas mapel → mode baca saja (edit tetap per mapel)
+  if (jenis === 'SemuaMapel') return 'baca';
   // [REQ 1c] Murid pengurus ekskul → menulis pada ekskul tsb; anggota → baca
   if (role === 'murid') return (jenis === 'Ekskul' && hakAksesEkskulUntuk(nama) === 'pengurus') ? 'menulis' : 'baca';
   if (!nama) return 'menulis';
@@ -1998,6 +2174,16 @@ function hariJadwalMapelAbsen() {
   const kelas = kelasEl ? kelasEl.value : '';
   const hariKe = (namaHari) => HARI_INDO.findIndex(h => h.toLowerCase() === String(namaHari || '').trim().toLowerCase());
   const set = new Set();
+  if (jenis === 'SemuaMapel') {
+    // [REQ 4/5] Semua Mapel: gabungan hari jadwal seluruh mapel (TA + kelas terpilih)
+    (cacheJadwal || []).forEach(j => {
+      if (String(j["Tahun"] || '') !== String(currentTahun || '')) return;
+      if (kelas && kelas !== 'Semua Kelas' && String(j["Tingkat/Kelas"] || '') !== String(kelas)) return;
+      const idx = hariKe(String(j["Waktu"] || '').split(',')[0]);
+      if (idx >= 0) set.add(idx);
+    });
+    return set;
+  }
   if (jenis === 'Mapel' && nama) {
     (cacheJadwal || []).forEach(j => {
       if (String(j["Tahun"] || '') !== String(currentTahun || '')) return;
@@ -2081,10 +2267,29 @@ function pastikanAgendaHariEkskul(ekskul) {
     .catch(() => { window.__cacheAgendaHariEkskul[ekskul] = []; });
 }
 
+/** [REQ 1/2] Tanggal (1-31) SELURUH BULAN berjalan yang jatuh pada hari jadwal pelajaran/ekskul
+ *  mapel/ekskul terpilih (mis. jadwal Senin → 7,17,21,28). Set kosong (mapel/ekskul belum
+ *  terhubung ke jadwal manapun) → kembalikan seluruh tanggal bulan (fallback). */
+function tanggalJadwalBulanIniAbsen() {
+  const idxBulan = arrBulan.indexOf(currentBulan);
+  if (idxBulan < 0) return [];
+  const partsTahun = String(currentTahun || '').split('/');
+  const tahunAktual = (idxBulan >= 6) ? parseInt(partsTahun[0], 10) : (parseInt(partsTahun[1], 10) || parseInt(partsTahun[0], 10));
+  const hariDalamBulan = new Date(tahunAktual, idxBulan + 1, 0).getDate();
+  const hariSet = hariJadwalMapelAbsen();
+  if (!hariSet || hariSet.size === 0) return Array.from({length: hariDalamBulan}, (_, i) => i + 1);
+  const hasil = [];
+  for (let d = 1; d <= hariDalamBulan; d++) {
+    const hariMingguKe = new Date(tahunAktual, idxBulan, d).getDay();
+    if (hariSet.has(hariMingguKe)) hasil.push(d);
+  }
+  return hasil;
+}
+
 function refreshTableAbsenUI() {
   const isEkskul = document.getElementById('select-mapel').value.startsWith('Ekskul');
   const viewMode = document.getElementById('filter-view-mode').value;
-  // [REQ 3a] Tanggal tampil: Hari Ini / Minggu Ini (sesuai hari jadwal pelajaran) / Semua Tanggal
+  // [REQ 3a] Tanggal tampil: Hari Ini / Minggu Ini (sesuai hari jadwal pelajaran) / Jadwal (sebulan) / Semua Tanggal
   let datesToRender;
   if (viewMode === 'today') datesToRender = [new Date().getDate()];
   else if (viewMode === 'week') {
@@ -2092,7 +2297,12 @@ function refreshTableAbsenUI() {
     const minggu = tanggalMingguIniAbsen();
     datesToRender = minggu.length ? minggu : Array.from({length: 31}, (_, i) => i + 1);
   }
+  else if (viewMode === 'jadwal') {
+    if (isEkskul) pastikanAgendaHariEkskul(document.getElementById('select-mapel').value.split('|')[1] || '');
+    datesToRender = tanggalJadwalBulanIniAbsen();
+  }
   else datesToRender = Array.from({length: 31}, (_, i) => i + 1);
+
 
   const idxBulan = arrBulan.indexOf(currentBulan);
   const partsTahun = currentTahun.split('/');
@@ -2227,7 +2437,8 @@ async function loadDataMuridDanAbsen(paksa = false) {
 
   const kelas = elKelas.value, mapelRaw = elMapel.value;
   currentBulan = elBulan.value; currentTahun = elTahun.value;
-  const isEkskul = mapelRaw.startsWith('Ekskul'), namaMapel = mapelRaw.split('|')[1];
+  const isEkskul = mapelRaw.startsWith('Ekskul'), isSemuaMapel = mapelRaw.startsWith('SemuaMapel');
+  const namaMapel = isSemuaMapel ? 'Semua Mapel' : mapelRaw.split('|')[1];
   const smt = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
   
   const elInfoMapel = document.getElementById('lbl-info-mapel');
@@ -2237,9 +2448,26 @@ async function loadDataMuridDanAbsen(paksa = false) {
   if(tableEl) tableEl.innerHTML = `<tr><td class="p-6 text-center text-slate-400 text-xs"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Sinkronisasi Database...</td></tr>`;
 
   try {
-    const payload = { kelas: kelas, mapel: namaMapel, bulan: currentBulan, tahun: currentTahun };
-    const json = await ambilDashboardData(payload, paksa);
+    let json;
+    if (isSemuaMapel) {
+      // [REQ 4/5] Semua Mapel: gabungkan hasil fetch tiap Mapel yang tersedia di dropdown (sudah difilter akses)
+      const daftarMapel = [...elMapel.querySelectorAll('option[value^="Mapel|"]')].map(o => o.value.split('|')[1]).filter(Boolean);
+      const hasilPerMapel = await Promise.all(daftarMapel.map(m => ambilDashboardData({ kelas, mapel: m, bulan: currentBulan, tahun: currentTahun }, paksa)));
+      const sukses = hasilPerMapel.filter(h => h && h.status === 'success');
+      if (sukses.length === 0) { json = { status: 'success', absen: [], murid: [], status_guru: {}, kepsek: namaKepsekGlobal }; }
+      else {
+        const absenGab = [];
+        sukses.forEach(h => (h.absen || []).forEach(a => absenGab.push(a)));
+        const muridMap = new Map();
+        sukses.forEach(h => (h.murid || []).forEach(m => { if (!muridMap.has(m.NIS)) muridMap.set(m.NIS, m); }));
+        json = { status: 'success', absen: absenGab, murid: [...muridMap.values()], status_guru: sukses[0].status_guru || {}, kepsek: sukses[0].kepsek || namaKepsekGlobal };
+      }
+    } else {
+      const payload = { kelas: kelas, mapel: namaMapel, bulan: currentBulan, tahun: currentTahun };
+      json = await ambilDashboardData(payload, paksa);
+    }
       if (json.status === 'success') {
+
       rawAbsenData = json.absen; 
       dataStatusKunciGuru = json.status_guru; 
       namaKepsekGlobal = json.kepsek || "_____________________";
@@ -9878,10 +10106,23 @@ function guruPunyaEkskulTahun(guruRow, ekskul, tahun = currentTahun) {
     return penugasanGuruAktif(guruRow, tahun).ekskul.some(e => e.toLowerCase() === target);
 }
 
-/** Akses cepat guru yang sedang login (tahun aktif). */
-function mapelDiampuAktif() { return penugasanGuruAktif(barisGuruSesi()).mapel; }
-function waliKelasAktif() { return penugasanGuruAktif(barisGuruSesi()).wali; }
-function ekskulDiampuAktif() { return penugasanGuruAktif(barisGuruSesi()).ekskul; }
+/** Akses cepat guru yang sedang login (tahun aktif).
+ *  [SINKRON] Sumber akses (Hadir Tatap Muka/Input Nilai) & Profil Akun kini kolom flat
+ *  (mapel/ekstrakurikuler/wali_kelas) — otomatis ter-mirror dari TA aktif saat Edit Akun Guru disimpan.
+ *  Sistem "Penugasan per TA" (penugasan json) tetap dipakai untuk riwayat/lookup admin per-TA. */
+function mapelDiampuAktif() {
+    const u = barisGuruSesi();
+    return String(u.mapel || u["Custom Teks Mata Pelajaran"] || u["Mapel"] || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+function waliKelasAktif() {
+    const u = barisGuruSesi();
+    return String(u.wali_kelas || u["Wali Kelas"] || '').trim();
+}
+function ekskulDiampuAktif() {
+    const u = barisGuruSesi();
+    return String(u.ekstrakurikuler || u["Ekstrakurikuler"] || u["Ekskul"] || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
 
 /** Ringkasan penugasan utk badge tabel: "TA: Mapel1, Mapel2 · Wali X" per tahun. */
 function ringkasanPenugasan(row) {
@@ -11030,31 +11271,47 @@ function getHTMLJadwalPelajaran() {
     `;
 }
 
+/** Sinkronkan isian "Waktu (Hari, Jam)" dari checklist "Isi dari Master Jadwal" —
+ *  gabungkan semua slot yang dicentang (urut Senin→Sabtu sesuai render) dipisah " | ". */
+function sinkronWaktuDariChecklist() {
+    const terpilih = [...document.querySelectorAll('.j-sumber-chk:checked')].map(c => c.value);
+    const inputWaktu = document.getElementById('j_waktu');
+    if (inputWaktu) inputWaktu.value = terpilih.join(' | ');
+}
+
 function openFormJadwal(isNew, data = {}) {
-    const listKelas = [...new Set(masterDataCache.map(m => m["Tingkat/Kelas"]).filter(Boolean))];
-    const listMapel = [...new Set(masterDataCache.map(m => m["Mata Pelajaran"]).filter(Boolean))];
-    const listTahun = [...new Set(masterDataCache.map(m => m["Tahun Pelajaran"]).filter(Boolean))];
+    const listKelas = urutAz([...new Set(masterDataCache.map(m => m["Tingkat/Kelas"]).filter(Boolean))]);
+    const listMapel = urutAz([...new Set(masterDataCache.map(m => m["Mata Pelajaran"]).filter(Boolean))]);
+    const listTahun = urutAz([...new Set(masterDataCache.map(m => m["Tahun Pelajaran"]).filter(Boolean))]);
     const prefJadwal = getPreferensiSesi();
     const isGuru = currentUser && currentUser.role === 'guru';
     const idGuruTerkunci = isGuru ? (currentUser.user["ID Akun Guru"] || "") : "";
 
     // (c) Opsi "Sumber Master Jadwal": kolom "Jam Pelajaran <Hari>" (Senin-Sabtu) dari Master Data
     //     Mendukung format triplet baru "Hari, jamke, jam" & format lama "jamke - jam".
+    //     Ditampilkan sebagai checklist (boleh pilih lebih dari satu) khusus saat Tambah Jadwal;
+    //     tiap slot yang dicentang akan disimpan sebagai baris jadwal terpisah.
     const hariMaster = HARI_MASTER_LIST;
-    let opsiJam = '';
+    let opsiJamChecklist = '';
     hariMaster.forEach(h => {
         const items = daftarJamPelajaranHari(h);
         if (!items.length) return;
-        opsiJam += `<optgroup label="${h}" class="bg-slate-700 text-blue-300 font-bold">` + items.map(e =>
-            `<option value="${escJs(h + ', ' + e.jam)}" class="bg-slate-800 text-white">${e.jamKe ? escapeHtml(e.jamKe) + '. ' : ''}${escapeHtml(e.jam)} — ${h}</option>`
-        ).join('') + '</optgroup>';
+        opsiJamChecklist += `<div class="mb-1"><div class="text-blue-300 font-bold">${h}</div>` + items.map((e, idx) => {
+            const val = `${h}, ${e.jam}`;
+            const id = `j_sumber_${h}_${idx}`.replace(/[^a-zA-Z0-9_]/g, '');
+            return `<label for="${id}" class="flex items-center gap-1.5 py-0.5 cursor-pointer hover:text-white">
+                <input type="checkbox" id="${id}" class="j-sumber-chk" value="${escJs(val)}" onchange="sinkronWaktuDariChecklist()">
+                <span>${e.jamKe ? escapeHtml(e.jamKe) + '. ' : ''}${escapeHtml(e.jam)}</span>
+            </label>`;
+        }).join('') + '</div>';
     });
 
     // (a) ID Akun Guru: pilihan dari tabel akun (tipe guru); guru login terkunci ke ID sendiri
-    const opsiGuru = (cacheGuruJadwal || []).map(g => {
-        const nama = namaDenganGelar(g.nama_lengkap, g.gelar_depan, g.gelar_belakang);
-        return `<option value="${escJs(g.nis_nip)}" class="bg-slate-800 text-white" ${String(data["ID Akun Guru"] || '') === String(g.nis_nip) ? 'selected' : ''}>${escapeHtml(nama)} — ${escapeHtml(g.nis_nip)}</option>`;
-    }).join('');
+    const opsiGuru = urutAz((cacheGuruJadwal || []).map(g => namaDenganGelar(g.nama_lengkap, g.gelar_depan, g.gelar_belakang) + '|' + g.nis_nip))
+        .map(gabung => {
+            const [nama, nip] = gabung.split('|');
+            return `<option value="${escJs(nip)}" class="bg-slate-800 text-white" ${String(data["ID Akun Guru"] || '') === String(nip) ? 'selected' : ''}>${escapeHtml(nama)} — ${escapeHtml(nip)}</option>`;
+        }).join('');
     const fieldGuru = isGuru
       ? `<input type="text" id="j_guru" value="${escapeHtml(guruNamaJadwal(idGuruTerkunci))} (${escapeHtml(idGuruTerkunci)})" readonly class="w-full bg-slate-800 border border-white/10 rounded px-2 py-1.5 mt-1 outline-none text-slate-400 cursor-not-allowed">`
       : `<select id="j_guru" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none"><option value="">-- Pilih Guru --</option>${opsiGuru}</select>`;
@@ -11066,7 +11323,10 @@ function openFormJadwal(isNew, data = {}) {
                 <div class="col-span-2">
                     <label class="font-bold text-blue-300">Waktu (Hari, Jam) *</label>
                     <input type="text" id="j_waktu" placeholder="Senin, 07:00 - 08:30" value="${data.Waktu || ''}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 outline-none text-white focus:border-blue-500">
-                    ${opsiJam ? `<select id="j_sumber" onchange="if(this.value) document.getElementById('j_waktu').value = this.value;" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1.5 text-[10px] text-white outline-none"><option value="">— Isi dari Master Jadwal (Jam Pelajaran Senin-Sabtu) —</option>${opsiJam}</select>` : ''}
+                    ${isNew && opsiJamChecklist ? `
+                    <div class="text-slate-400 mt-1">Isi dari Master Jadwal (Jam Pelajaran Senin-Sabtu) — boleh centang lebih dari satu, tiap centang jadi 1 baris jadwal:</div>
+                    <div id="j_sumber_wrap" class="max-h-40 overflow-y-auto bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-[10px] text-slate-200">${opsiJamChecklist}</div>
+                    ` : ''}
                 </div>
                 <div class="col-span-2"><label class="font-bold text-blue-300">ID Akun Guru * ${isGuru ? '<span class="text-slate-500 normal-case">(akun guru: otomatis jadwal yang Anda ampu)</span>' : ''}</label>${fieldGuru}</div>
                 <div><label class="font-bold text-blue-300">Tahun Ajaran</label><select id="j_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">${listTahun.map(t=>`<option value="${t}" ${(data.Tahun===t || (!data.Tahun && prefJadwal.tahun===t))?'selected':''}>${t}</option>`).join('')}</select></div>
@@ -11077,27 +11337,41 @@ function openFormJadwal(isNew, data = {}) {
         background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: 'Simpan',
         preConfirm: () => {
             let guru = isGuru ? idGuruTerkunci : document.getElementById('j_guru').value.trim();
+            const tahun = document.getElementById('j_tahun').value;
+            const mapel = document.getElementById('j_mapel').value;
+            const kelas = document.getElementById('j_kelas').value;
+            const base = { "ID Akun Guru": guru, "ID Jadwal Murid": data["ID Jadwal Murid"] || "", "Tahun": tahun, "Semester": (prefJadwal.semester || "Ganjil"), "Mapel": mapel, "Tingkat/Kelas": kelas };
+
+            const checklistTerpilih = isNew ? [...document.querySelectorAll('.j-sumber-chk:checked')].map(c => c.value) : [];
+            if (checklistTerpilih.length) {
+                if (!guru) { Swal.showValidationMessage('Guru wajib diisi!'); return false; }
+                return checklistTerpilih.map(w => ({ ...base, "Waktu": w }));
+            }
+
             let waktu = document.getElementById('j_waktu').value.trim();
             if(!guru || !waktu) { Swal.showValidationMessage('Guru & Waktu wajib diisi!'); return false; }
-            return { "ID Akun Guru": guru, "ID Jadwal Murid": data["ID Jadwal Murid"] || "", "Tahun": document.getElementById('j_tahun').value, "Semester": (prefJadwal.semester || "Ganjil"), "Waktu": waktu, "Mapel": document.getElementById('j_mapel').value, "Tingkat/Kelas": document.getElementById('j_kelas').value };
+            return [{ ...base, "Waktu": waktu }];
         }
     }).then(async (res) => {
         if(res.isConfirmed) {
-            // (F3) Validasi bentrok: guru sama ATAU kelas sama pada Waktu yang sama
-            const bentrok = cariBentrokJadwal(res.value, isNew ? null : data.id);
-            const lanjutSimpan = () => simpanJadwalDb(res.value, isNew, isNew ? null : data.id);
-            if (bentrok.length) {
-                const detail = bentrok.map(j => `• ${escapeHtml(guruNamaJadwal(j["ID Akun Guru"]))} — ${escapeHtml(j["Tingkat/Kelas"] || '-')} ${escapeHtml(j.Mapel || '')} (${escapeHtml(j.Waktu)})`).join('<br>');
-                const konf = await Swal.fire({
-                    title: 'Jadwal Berpotensi Bentrok!',
-                    html: `<div class="text-left text-[11px]">${detail}</div>`,
-                    icon: 'warning', showCancelButton: true,
-                    confirmButtonText: '<i class="fa-solid fa-triangle-exclamation"></i> Tetap Simpan',
-                    cancelButtonText: 'Batal', confirmButtonColor: '#f59e0b',
-                    background: '#1e293b', color: '#fff'
-                });
-                if (konf.isConfirmed) lanjutSimpan();
-            } else lanjutSimpan();
+            const daftarPayload = res.value; // array (1 baris manual, atau N baris dari checklist)
+            for (const payload of daftarPayload) {
+                // (F3) Validasi bentrok: guru sama ATAU kelas sama pada Waktu yang sama
+                const bentrok = cariBentrokJadwal(payload, isNew ? null : data.id);
+                const lanjutSimpan = () => simpanJadwalDb(payload, isNew, isNew ? null : data.id);
+                if (bentrok.length) {
+                    const detail = bentrok.map(j => `• ${escapeHtml(guruNamaJadwal(j["ID Akun Guru"]))} — ${escapeHtml(j["Tingkat/Kelas"] || '-')} ${escapeHtml(j.Mapel || '')} (${escapeHtml(j.Waktu)})`).join('<br>');
+                    const konf = await Swal.fire({
+                        title: `Jadwal Berpotensi Bentrok! (${escapeHtml(payload.Waktu)})`,
+                        html: `<div class="text-left text-[11px]">${detail}</div>`,
+                        icon: 'warning', showCancelButton: true,
+                        confirmButtonText: '<i class="fa-solid fa-triangle-exclamation"></i> Tetap Simpan',
+                        cancelButtonText: 'Lewati Baris Ini', confirmButtonColor: '#f59e0b',
+                        background: '#1e293b', color: '#fff'
+                    });
+                    if (konf.isConfirmed) await lanjutSimpan();
+                } else await lanjutSimpan();
+            }
         }
     });
 }
