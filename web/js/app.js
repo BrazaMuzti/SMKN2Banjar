@@ -1084,8 +1084,8 @@ async function bukaPengaturanServer() {
   let tersimpan = null;
   try { tersimpan = JSON.parse(localStorage.getItem(SERVER_CONFIG_KEY) || 'null'); } catch (e) { /* abaikan */ }
   const cfg = {
-    url: (tersimpan && tersimpan.url) ? String(tersimpan.url) : '',
-    key: (tersimpan && tersimpan.key) ? String(tersimpan.key) : '',
+    url: (tersimpan && tersimpan.url) ? String(tersimpan.url) : 'https://lkhuyoihrrnzvrmhquln.supabase.co',
+    key: (tersimpan && tersimpan.key) ? String(tersimpan.key) : 'sb_publishable_o_pUNncXPyOmV2yhhOevcw_58aUM3pB',
     gcalClientId: (tersimpan && tersimpan.gcalClientId) ? String(tersimpan.gcalClientId) : ''
   };
   const res = await Swal.fire({
@@ -1441,6 +1441,10 @@ async function renderDashboardMurid(container) {
         <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider mb-2"><i class="fa-solid fa-bell text-amber-400 mr-1"></i> Agenda 7 Hari Ke Depan (Kalender Pendidikan${ekskulSaya.length ? ' + Ekskul' : ''})</h3>
         <div class="space-y-1.5">${agendaHTML}</div>
       </div>
+      <div id="dash-kas-notif" class="bg-white/5 border border-white/10 rounded-xl p-3">
+        <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider mb-2"><i class="fa-solid fa-money-bill-wave text-emerald-400 mr-1"></i> Notifikasi Kas Ekstrakurikuler</h3>
+        <div class="space-y-1.5"><p class="text-[11px] text-slate-500 italic">Memuat notifikasi...</p></div>
+      </div>
       <div class="flex flex-wrap gap-2 justify-center">
         ${tombolModul('absen-mandiri', 'Absen Mandiri', 'fa-user-check', 'bg-green-600 hover:bg-green-700')}
         ${tombolModul('laporan-absen', 'Laporan Saya', 'fa-clipboard-list', 'bg-blue-600 hover:bg-blue-700')}
@@ -1449,6 +1453,27 @@ async function renderDashboardMurid(container) {
     </div>`;
     muatPengumumanDashboard();
     muatPoinMuridDashboard();
+    muatNotifikasiKasDashboard(nis, ekskulSaya);
+}
+
+/** Muat notifikasi kas ekstrakurikuler (Kas Umum & Kas Anggota) untuk widget dashboard murid. */
+async function muatNotifikasiKasDashboard(nis, ekskulSaya) {
+  const box = document.getElementById('dash-kas-notif');
+  if (!box) return;
+  try {
+    let q = supaClient.from('notifikasi').select('*').contains('untuk_peran', ['murid']).order('created_at', { ascending: false }).limit(10);
+    const { data, error } = await q;
+    if (error) throw error;
+    const rows = (data || []).filter(n => (!n.target_nis_nip || n.target_nis_nip === nis) && (!n.ekskul || (ekskulSaya || []).includes(n.ekskul)));
+    box.querySelector('div').innerHTML = rows.length === 0
+      ? `<p class="text-[11px] text-slate-500 italic">Belum ada notifikasi kas.</p>`
+      : rows.map(n => `<div class="bg-black/20 border border-white/10 rounded px-2 py-1.5">
+          <div class="flex items-center justify-between"><span class="text-[10px] font-bold text-emerald-300">${escapeHtml(n.judul)}</span><span class="text-[8px] text-slate-500">${escapeHtml(String(n.created_at || '').split('T')[0])}</span></div>
+          <div class="text-[10px] text-slate-300">${escapeHtml(n.pesan)}${n.ekskul ? ` <span class="text-slate-500">(${escapeHtml(n.ekskul)})</span>` : ''}</div>
+        </div>`).join('');
+  } catch (e) {
+    box.querySelector('div').innerHTML = `<p class="text-[11px] text-red-400 italic">Gagal memuat notifikasi: ${escapeHtml(e.message || '')}</p>`;
+  }
 }
 
 /** Cetak kartu QR NIS murid (pola cetakQRMuridTerfilter). */
@@ -1862,6 +1887,12 @@ async function renderAbsensiModule(container) {
                ${listEkskul.length > 0 ? `<optgroup label="Ekstrakurikuler" class="bg-slate-700 text-yellow-300 font-bold">${listEkskul.map(e => `<option value="Ekskul|${e}" class="bg-slate-800 text-white">${e}</option>`).join('')}</optgroup>` : ''}
              </select>
           </div>
+          <div class="relative w-7 h-7 sm:w-8 sm:h-8 group hidden" id="wrap-sub-ekskul" title="Pilih Sub Ekstrakurikuler">
+             <div class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-indigo-400 group-hover:bg-indigo-500 group-hover:text-white transition shadow-sm"><i class="fa-solid fa-sitemap text-[10px] sm:text-xs"></i></div>
+             <select id="select-sub-ekskul" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="loadDataMuridDanAbsen()">
+               <option value="" class="bg-slate-800 text-white">Semua Sub Ekstrakurikuler</option>
+             </select>
+          </div>
           <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Pilih Kelas">
              <select id="select-kelas" class="hidden" onchange="loadDataMuridDanAbsen()">
                <option value="Semua Kelas" id="opt-semua-kelas" class="bg-slate-800 text-white">-- Semua --</option>
@@ -1938,16 +1969,37 @@ function perbaruiModeTampilanTanggal() {
   else if (sel.options.length) sel.value = sel.options[0].value;
 }
 
-function handleMapelChange() {
+async function handleMapelChange() {
   const mapelRaw = document.getElementById('select-mapel').value, isEkskul = mapelRaw.startsWith('Ekskul'), isSemuaMapel = mapelRaw.startsWith('SemuaMapel');
   const selKelas = document.getElementById('select-kelas'), optSemua = document.getElementById('opt-semua-kelas');
   if (isEkskul || isSemuaMapel) { optSemua.classList.remove('hidden'); selKelas.value = "Semua Kelas"; document.getElementById('lbl-judul-utama').innerText = isSemuaMapel ? `Laporan Hadir Semua Mapel` : `Daftar Hadir Ekstrakurikuler`; } 
   else { optSemua.classList.add('hidden'); if (selKelas.value === "Semua Kelas") selKelas.selectedIndex = 1; document.getElementById('lbl-judul-utama').innerText = `Laporan Hadir Tatap Muka`; }
+  await perbaruiOpsiSubEkskul(isEkskul ? mapelRaw.split('|')[1] : '');
   perbaruiOpsiKelasAbsen();
   perbaruiModeTampilanTanggal();
   perbaruiIkonAkses();
   loadDataMuridDanAbsen();
 }
+
+/** Segarkan dropdown "Pilih Sub Ekstrakurikuler": tampil hanya saat opsi Ekstrakurikuler terpilih,
+ *  opsi pertama selalu "Semua Sub Ekstrakurikuler" diikuti daftar sub (sama seperti Edit Ekstrakurikuler). */
+async function perbaruiOpsiSubEkskul(ekskul) {
+  const wrap = document.getElementById('wrap-sub-ekskul'), sel = document.getElementById('select-sub-ekskul');
+  if (!wrap || !sel) return;
+  if (!ekskul) { wrap.classList.add('hidden'); sel.innerHTML = `<option value="" class="bg-slate-800 text-white">Semua Sub Ekstrakurikuler</option>`; sel.value = ''; return; }
+  const nilaiLama = sel.value;
+  const subs = await ambilSubEkskul(ekskul);
+  sel.innerHTML = `<option value="" class="bg-slate-800 text-white">Semua Sub Ekstrakurikuler</option>` +
+    subs.map(s => `<option value="${escJs(s.nama_sub)}" class="bg-slate-800 text-white">${escapeHtml(s.nama_sub)}</option>`).join('');
+  if (subs.length > 0) {
+    wrap.classList.remove('hidden');
+    if ([...sel.options].some(o => o.value === nilaiLama)) sel.value = nilaiLama;
+  } else {
+    wrap.classList.add('hidden');
+    sel.value = '';
+  }
+}
+
 
 /** Opsi dropdown mapel: diampu guru di atas, lainnya di bawah + opsi "Semua Mapel". */
 function opsiMapelAbsenHTML(lain, diampu) {
@@ -2470,7 +2522,8 @@ async function loadDataMuridDanAbsen(paksa = false) {
   const smt = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
   
   const elInfoMapel = document.getElementById('lbl-info-mapel');
-  if(elInfoMapel) elInfoMapel.innerHTML = `<span class="text-slate-300 font-bold"><i class="fa-regular fa-calendar"></i> Tahun: ${currentTahun}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-blue-400 font-bold"><i class="fa-regular fa-calendar-check"></i> Bln: ${currentBulan}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-green-400 font-bold"><i class="fa-solid fa-leaf"></i> Smt: ${smt}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-purple-400 font-bold"><i class="fa-solid fa-book"></i> Mapel: ${namaMapel}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-pink-400 font-bold"><i class="fa-solid fa-users"></i> ${isEkskul ? 'Ekskul' : 'Kelas'}: ${kelas}</span>`;
+  const subTerpilihLbl = isEkskul ? (document.getElementById('select-sub-ekskul')?.value || '') : '';
+  if(elInfoMapel) elInfoMapel.innerHTML = `<span class="text-slate-300 font-bold"><i class="fa-regular fa-calendar"></i> Tahun: ${currentTahun}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-blue-400 font-bold"><i class="fa-regular fa-calendar-check"></i> Bln: ${currentBulan}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-green-400 font-bold"><i class="fa-solid fa-leaf"></i> Smt: ${smt}</span><span class="text-slate-600 hidden sm:inline">|</span><span class="text-purple-400 font-bold"><i class="fa-solid fa-book"></i> Mapel: ${namaMapel}</span>${subTerpilihLbl ? `<span class="text-slate-600 hidden sm:inline">|</span><span class="text-indigo-400 font-bold"><i class="fa-solid fa-sitemap"></i> Sub: ${subTerpilihLbl}</span>` : ''}<span class="text-slate-600 hidden sm:inline">|</span><span class="text-pink-400 font-bold"><i class="fa-solid fa-users"></i> ${isEkskul ? 'Ekskul' : 'Kelas'}: ${kelas}</span>`;
 
   const tableEl = document.getElementById('tabel-absensi');
   if(tableEl) tableEl.innerHTML = `<tr><td class="p-6 text-center text-slate-400 text-xs"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Sinkronisasi Database...</td></tr>`;
@@ -2510,7 +2563,16 @@ async function loadDataMuridDanAbsen(paksa = false) {
             const arrEkskul = dataEkskul.split(',').map(e => e.trim());
             return arrEkskul.includes(namaMapel);
         });
+        // Filter lanjutan: Sub-Ekstrakurikuler terpilih (opsi sama dengan "Edit Ekstrakurikuler")
+        const subTerpilih = document.getElementById('select-sub-ekskul')?.value || '';
+        if (subTerpilih) {
+          const subs = cacheSubEkskul[namaMapel] || [];
+          const subObj = subs.find(s => s.nama_sub === subTerpilih);
+          const anggotaSub = new Set((subObj?.anggota || []).map(String));
+          filteredMurid = filteredMurid.filter(m => anggotaSub.has(String(m.NIS)));
+        }
       }
+
 
       // [REQ 1c] Murid pengurus (kelas, atau ekskul terpilih) melihat seluruh anggota; lainnya hanya dirinya
       const isPengurus = currentUser.role === 'murid'
@@ -9713,6 +9775,14 @@ async function ambilMasterData() {
     return masterDataCache;
 }
 
+/** Ambil link Google Drive kategori tertentu ('Ekstrakurikuler','Akun Murid','Akun Guru',
+ *  'Mata Pelajaran','Administrasi Sekolah') dari baris identitas master_data. Manual link saja. */
+function linkDriveMaster(kategori) {
+    const rows = masterDataCache || [];
+    const idn = rows.find(r => r["Nama Sekolah"]) || {};
+    return (idn['Drive ' + kategori] || '').trim();
+}
+
 async function renderTabIdentitas() {
     const box = document.getElementById('content-master');
     box.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat...</div>`;
@@ -9733,10 +9803,22 @@ async function renderTabIdentitas() {
             { id: 'website', kol: 'Website Sekolah', ph: 'https://sekolah.sch.id' },
             { id: 'kurikulum', kol: 'Kurikulum', ph: 'Kurikulum Merdeka' }
         ];
+        const FD = [
+            { id: 'drive_murid', kol: 'Drive Akun Murid', ph: 'https://drive.google.com/drive/folders/...' },
+            { id: 'drive_guru', kol: 'Drive Akun Guru', ph: 'https://drive.google.com/drive/folders/...' },
+            { id: 'drive_mapel', kol: 'Drive Mata Pelajaran', ph: 'https://drive.google.com/drive/folders/...' },
+            { id: 'drive_ekskul', kol: 'Drive Ekstrakurikuler', ph: 'https://drive.google.com/drive/folders/...' },
+            { id: 'drive_adm', kol: 'Drive Administrasi Sekolah', ph: 'https://drive.google.com/drive/folders/...' }
+        ];
         box.innerHTML = `
             <div class="max-w-lg mx-auto space-y-3 text-left text-[11px] text-slate-300">
                 <p class="text-[10px] text-slate-400"><i class="fa-solid fa-circle-info"></i> Baris identitas dipakai header aplikasi (logo &amp; nama sekolah). Simpan hanya satu baris identitas.</p>
                 ${F.map(f => `<div><label class="font-bold text-purple-300">${f.kol}</label><input id="mi_${f.id}" value="${escJs(idn[f.kol] || '')}" placeholder="${f.ph}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-purple-500"></div>`).join('')}
+                <div class="pt-2 border-t border-white/10 mt-4">
+                    <h3 class="text-[11px] font-bold text-emerald-300 uppercase tracking-wide mb-2"><i class="fa-brands fa-google-drive mr-1"></i> Link Database Google Drive (per kategori)</h3>
+                    <p class="text-[10px] text-slate-400 mb-2">Isi link folder Google Drive untuk masing-masing kategori. Link ini murni disimpan sebagai tautan (tanpa integrasi API), dipakai al. oleh tombol "Upload Nota" di Kas Umum Ekstrakurikuler.</p>
+                    ${FD.map(f => `<div class="mt-2"><label class="font-bold text-emerald-300">${f.kol}</label><input id="mi_${f.id}" value="${escJs(idn[f.kol] || '')}" placeholder="${f.ph}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500"></div>`).join('')}
+                </div>
                 <div class="pt-2"><button onclick="simpanIdentitasMaster('${idn.id ?? ''}')" class="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-save"></i> Simpan Identitas</button></div>
             </div>
         `;
@@ -9759,8 +9841,14 @@ async function simpanIdentitasMaster(rowId) {
         "Telepon Sekolah": ambil('telp'),
         "Email Sekolah": ambil('email'),
         "Website Sekolah": ambil('website'),
-        "Kurikulum": ambil('kurikulum')
+        "Kurikulum": ambil('kurikulum'),
+        "Drive Akun Murid": ambil('drive_murid'),
+        "Drive Akun Guru": ambil('drive_guru'),
+        "Drive Mata Pelajaran": ambil('drive_mapel'),
+        "Drive Ekstrakurikuler": ambil('drive_ekskul'),
+        "Drive Administrasi Sekolah": ambil('drive_adm')
     };
+
     if (!payload["Nama Sekolah"]) { showToast('error', 'Nama sekolah wajib diisi.'); return; }
     Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
     try {
@@ -14329,9 +14417,13 @@ async function renderTabKasUmumEkskul() {
     <div class="p-4 space-y-3">
       <div class="flex gap-2 items-center flex-wrap">
         <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+        <button onclick="renderTabEkskul()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Refresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
         ${bolehKelola ? `<button onclick="formKasUmum(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Transaksi Kas Umum</button>` : ''}
-        <button onclick="exportKasUmumCSV()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-export"></i> Export Excel</button>
-        <button onclick="window.print()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
+        ${bolehKelola ? `<button onclick="bukaKategoriKasModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-tags"></i> Kategori</button>` : ''}
+        ${bolehKelola ? `<button onclick="openImportKasUmum()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-import"></i> Import Excel</button>` : ''}
+        <button onclick="exportKasUmumCSV()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+        <button onclick="exportKasUmumWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Export WhatsApp</button>
+        <button onclick="exportKasUmumPDF()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
       </div>
       <div class="flex gap-2 items-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
         <label class="text-[10px] text-slate-400">Dari <input type="date" id="ku_dari" value="${escJs(filterKasUmum.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
@@ -14390,12 +14482,13 @@ async function muatKasUmum() {
       ? `<p class="italic p-2">Belum ada transaksi kas umum.</p>`
       : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
       <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
-        <th class="p-2">Tanggal</th><th class="p-2">Kategori</th><th class="p-2">Keterangan</th><th class="p-2">No. Bukti</th><th class="p-2">Nota</th><th class="p-2 text-right">Masuk</th><th class="p-2 text-right">Keluar</th><th class="p-2 text-right">Saldo</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
+        <th class="p-2">Tanggal</th><th class="p-2">Kategori</th><th class="p-2">Keterangan</th><th class="p-2">Nama Siswa</th><th class="p-2">No. Bukti</th><th class="p-2">Nota</th><th class="p-2 text-right">Masuk</th><th class="p-2 text-right">Keluar</th><th class="p-2 text-right">Saldo</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
       </tr></thead>
       <tbody>${withSaldo.slice().reverse().map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
         <td class="p-2 whitespace-nowrap">${escapeHtml(String(r.tanggal || '').split('T')[0])}</td>
         <td class="p-2">${escapeHtml((r.kategori_kas || {}).nama || '-')}</td>
         <td class="p-2">${escapeHtml(r.keterangan || '-')}</td>
+        <td class="p-2">${escapeHtml(r.nama_siswa || '-')}</td>
         <td class="p-2">${escapeHtml(r.no_bukti || '-')}</td>
         <td class="p-2">${r.bukti_url ? `<a href="${escJs(r.bukti_url)}" target="_blank" class="text-blue-400 hover:underline"><i class="fa-solid fa-receipt"></i></a>` : '-'}</td>
         <td class="p-2 text-right text-emerald-300">${Number(r.jumlah_masuk) ? formatRupiah(r.jumlah_masuk) : '-'}</td>
@@ -14432,7 +14525,9 @@ async function formKasUmum(isNew, data = {}) {
   const aktif = window.__ekskulAktif;
   if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
   const kategoriList = await ambilKategoriKas();
+  const anggota = await ambilAnggotaEkskul(aktif);
   const vis = data.visibilitas || ['pembina_jabatan', 'anggota'];
+  const linkDrive = linkDriveMaster('Ekstrakurikuler');
   Swal.fire({
     title: `${isNew ? 'Tambah' : 'Edit'} Transaksi Kas Umum`,
     html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
@@ -14444,12 +14539,21 @@ async function formKasUmum(isNew, data = {}) {
       <select id="kum_kategori" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${kategoriList.map(k => `<option value="${escJs(k.id)}" ${data.kategori_id === k.id ? 'selected' : ''}>${escapeHtml(k.nama)}</option>`).join('')}</select>
       <label class="font-bold text-yellow-300 block mt-2">Keterangan</label>
       <input id="kum_ket" value="${escJs(data.keterangan || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
-      <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
-      <input type="number" min="0" id="kum_nominal" value="${Number(data.jumlah_masuk || data.jumlah_keluar || 0) || ''}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Nama Siswa</label>
+      <select id="kum_siswa_pilih" onchange="document.getElementById('kum_siswa').value = this.value ? this.options[this.selectedIndex].text : document.getElementById('kum_siswa').value;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="">-- Pilih anggota (opsional) --</option>
+        ${anggota.map(a => `<option value="${escJs(a.nis_nip)}" ${data.nama_siswa === a.nama_lengkap ? 'selected' : ''}>${escapeHtml(a.nama_lengkap)}</option>`).join('')}
+      </select>
+      <input id="kum_siswa" value="${escJs(data.nama_siswa || '')}" placeholder="atau ketik nama siswa manual" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">No. Bukti</label>
       <input id="kum_nobukti" value="${escJs(data.no_bukti || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Upload Nota</label>
-      <input type="file" id="kum_bukti" accept="image/*,.pdf" class="w-full text-[10px] text-slate-300">
+      ${linkDrive
+        ? `<a href="${escJs(linkDrive)}" target="_blank" class="w-full inline-flex items-center justify-center gap-2 bg-emerald-700 hover:bg-emerald-600 text-white rounded px-2 py-1.5 text-[10px] font-bold"><i class="fa-brands fa-google-drive"></i> Buka Folder Drive Ekstrakurikuler</a>
+           <p class="text-[9px] text-slate-500 mt-1">Unggah nota ke folder Drive di atas, lalu tempel link file-nya sebagai No. Bukti bila perlu.</p>`
+        : `<p class="text-[10px] text-amber-400"><i class="fa-solid fa-triangle-exclamation"></i> Link Drive Ekstrakurikuler belum diatur di Master Data &rarr; tab Daftar.</p>`}
+      <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
+      <input type="number" min="0" id="kum_nominal" value="${Number(data.jumlah_masuk || data.jumlah_keluar || 0) || ''}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Perlihatkan laporan untuk:</label>
       <div class="flex flex-wrap gap-1">${chkVisibilitasHTML('kumv', vis)}</div>
     </div>`,
@@ -14460,15 +14564,13 @@ async function formKasUmum(isNew, data = {}) {
       const jenis = document.querySelector('input[name="kum_jenis"]:checked')?.value || 'masuk';
       const kategori_id = document.getElementById('kum_kategori').value;
       const keterangan = document.getElementById('kum_ket').value.trim();
+      const nama_siswa = document.getElementById('kum_siswa').value.trim();
       const nominal = Number(document.getElementById('kum_nominal').value) || 0;
       const no_bukti = document.getElementById('kum_nobukti').value.trim();
-      const file = document.getElementById('kum_bukti').files[0];
       const visibilitas = OPSI_VISIBILITAS_KAS.map(o => o.v).filter(v => document.getElementById(`kumv_${v}`)?.checked);
       if (!tgl) { Swal.showValidationMessage('Tanggal wajib diisi.'); return false; }
       if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
-      let bukti_url = data.bukti_url || '';
-      if (file) bukti_url = await uploadBuktiKas(file);
-      return { tgl, jenis, kategori_id, keterangan, nominal, no_bukti, bukti_url, visibilitas };
+      return { tgl, jenis, kategori_id, keterangan, nama_siswa, nominal, no_bukti, bukti_url: data.bukti_url || '', visibilitas };
     }
   }).then(async (res) => {
     if (!res.isConfirmed) return;
@@ -14479,6 +14581,7 @@ async function formKasUmum(isNew, data = {}) {
         tanggal: d.tgl,
         kategori_id: d.kategori_id || null,
         keterangan: d.keterangan,
+        nama_siswa: d.nama_siswa,
         no_bukti: d.no_bukti,
         bukti_url: d.bukti_url,
         jumlah_masuk: d.jenis === 'masuk' ? d.nominal : 0,
@@ -14490,6 +14593,12 @@ async function formKasUmum(isNew, data = {}) {
       const { error } = isNew ? await supaClient.from('kas_umum').insert(payload)
         : await supaClient.from('kas_umum').update(payload).eq('id', data.id);
       if (error) throw error;
+      try {
+        await supaClient.from('notifikasi').insert({
+          ekskul: aktif, target_nis_nip: null, untuk_peran: ['murid', 'pembina', 'bendahara'],
+          judul: 'Transaksi Kas Umum', pesan: `${d.jenis === 'masuk' ? 'Pemasukan' : 'Pengeluaran'} ${formatRupiah(d.nominal)} - ${d.keterangan || ''}`.trim()
+        });
+      } catch (ignoreErr) {}
       showToast('success', 'Transaksi kas umum tersimpan');
       renderTabEkskul();
     } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
@@ -14505,20 +14614,247 @@ async function hapusKasUmum(id) {
   renderTabEkskul();
 }
 
-/** Export tabel Kas Umum yang sedang tampil ke file CSV (bisa dibuka Excel). */
+/** Export tabel Kas Umum yang sedang tampil ke file Excel (.xlsx) via SheetJS. */
 function exportKasUmumCSV() {
   const rows = window.__cacheKasUmumRows || [];
   if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  const header = ['Tanggal', 'Kategori', 'Keterangan', 'No. Bukti', 'Masuk', 'Keluar'];
-  const lines = [header.join(';')];
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  let saldo = 0;
+  const header = ['Tanggal', 'Kategori', 'Keterangan', 'Nama Siswa', 'No. Bukti', 'Masuk', 'Keluar', 'Saldo'];
+  const data = [[`KAS UMUM - ${window.__ekskulAktif || ''}`], [], header];
   rows.forEach(r => {
-    lines.push([String(r.tanggal || '').split('T')[0], (r.kategori_kas || {}).nama || '', (r.keterangan || '').replace(/;/g, ','), r.no_bukti || '', r.jumlah_masuk || 0, r.jumlah_keluar || 0].join(';'));
+    saldo += (Number(r.jumlah_masuk) || 0) - (Number(r.jumlah_keluar) || 0);
+    data.push([
+      String(r.tanggal || '').split('T')[0],
+      (r.kategori_kas || {}).nama || '',
+      r.keterangan || '',
+      r.nama_siswa || '',
+      r.no_bukti || '',
+      Number(r.jumlah_masuk) || 0,
+      Number(r.jumlah_keluar) || 0,
+      saldo
+    ]);
   });
-  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `kas-umum-${window.__ekskulAktif || 'ekskul'}.csv`;
-  a.click();
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Kas Umum');
+  XLSX.writeFile(wb, `kas-umum-${window.__ekskulAktif || 'ekskul'}.xlsx`);
+}
+
+/** Kirim ringkasan Kas Umum yang sedang tampil sebagai pesan WhatsApp (via wa.me, tanpa nomor tujuan). */
+function exportKasUmumWA() {
+  const rows = window.__cacheKasUmumRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  let totalMasuk = 0, totalKeluar = 0;
+  rows.forEach(r => { totalMasuk += Number(r.jumlah_masuk) || 0; totalKeluar += Number(r.jumlah_keluar) || 0; });
+  let teks = `*LAPORAN KAS UMUM - ${window.__ekskulAktif || ''}*\n\n`;
+  rows.slice().reverse().slice(0, 30).forEach(r => {
+    const tgl = String(r.tanggal || '').split('T')[0];
+    const nom = Number(r.jumlah_masuk) ? `+${formatRupiah(r.jumlah_masuk)}` : `-${formatRupiah(r.jumlah_keluar)}`;
+    teks += `${tgl} | ${r.keterangan || (r.kategori_kas || {}).nama || '-'}${r.nama_siswa ? ' (' + r.nama_siswa + ')' : ''}: ${nom}\n`;
+  });
+  teks += `\nTotal Pemasukan: ${formatRupiah(totalMasuk)}\nTotal Pengeluaran: ${formatRupiah(totalKeluar)}\n*Saldo Akhir: ${formatRupiah(totalMasuk - totalKeluar)}*`;
+  Swal.fire({
+    title: '<i class="fa-brands fa-whatsapp"></i> Preview Pesan',
+    html: `<textarea id="ku_wa_preview" class="w-full h-52 bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none custom-scrollbar">${escapeHtml(teks)}</textarea>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-brands fa-whatsapp"></i> Kirim via WA',
+    preConfirm: () => document.getElementById('ku_wa_preview').value
+  }).then(res => {
+    if (res.isConfirmed) window.open(`https://wa.me/?text=${encodeURIComponent(res.value || teks)}`, '_blank');
+  });
+}
+
+/** Cetak laporan Kas Umum ke jendela print khusus (judul rapi, tanpa header/FAB aplikasi). */
+function exportKasUmumPDF() {
+  const rows = window.__cacheKasUmumRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  let saldo = 0, totalMasuk = 0, totalKeluar = 0;
+  const trs = rows.map(r => {
+    saldo += (Number(r.jumlah_masuk) || 0) - (Number(r.jumlah_keluar) || 0);
+    totalMasuk += Number(r.jumlah_masuk) || 0;
+    totalKeluar += Number(r.jumlah_keluar) || 0;
+    return `<tr>
+      <td>${escapeHtml(String(r.tanggal || '').split('T')[0])}</td>
+      <td>${escapeHtml((r.kategori_kas || {}).nama || '-')}</td>
+      <td>${escapeHtml(r.keterangan || '-')}</td>
+      <td>${escapeHtml(r.nama_siswa || '-')}</td>
+      <td style="text-align:right">${Number(r.jumlah_masuk) ? formatRupiah(r.jumlah_masuk) : '-'}</td>
+      <td style="text-align:right">${Number(r.jumlah_keluar) ? formatRupiah(r.jumlah_keluar) : '-'}</td>
+      <td style="text-align:right">${formatRupiah(saldo)}</td>
+    </tr>`;
+  }).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Laporan Kas Umum - ${escapeHtml(window.__ekskulAktif || '')}</title>
+  <style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;}
+    h1{font-size:15px;margin-bottom:2px;} h2{font-size:12px;font-weight:normal;color:#444;margin-top:0;}
+    table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;}
+    th{background:#eee;text-align:left;} tfoot td{font-weight:bold;background:#f5f5f5;}
+  </style></head><body>
+  <h1>Laporan Kas Umum</h1>
+  <h2>Ekstrakurikuler: ${escapeHtml(window.__ekskulAktif || '')}</h2>
+  <table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Keterangan</th><th>Nama Siswa</th><th>Masuk</th><th>Keluar</th><th>Saldo</th></tr></thead>
+  <tbody>${trs}</tbody>
+  <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${formatRupiah(totalMasuk)}</td><td style="text-align:right">${formatRupiah(totalKeluar)}</td><td style="text-align:right">${formatRupiah(totalMasuk - totalKeluar)}</td></tr></tfoot>
+  </table>
+  <script>window.onload=()=>{window.print();};<\/script>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return showToast('error', 'Popup diblokir browser. Izinkan popup untuk export PDF.');
+  w.document.write(html);
+  w.document.close();
+}
+
+/** Modal kelola kategori kas (tambah/edit deskripsi/nonaktifkan). */
+async function bukaKategoriKasModal() {
+  const { data, error } = await supaClient.from('kategori_kas').select('*').order('nama');
+  const rows = error ? [] : (data || []);
+  const baris = r => `<tr class="border-b border-white/10">
+    <td class="p-1.5">${escapeHtml(r.nama)}</td>
+    <td class="p-1.5">${escapeHtml(r.jenis)}</td>
+    <td class="p-1.5"><input value="${escJs(r.deskripsi || '')}" onchange="simpanDeskripsiKategoriKas('${escJs(r.id)}', this.value)" class="w-full bg-black/40 border border-white/20 rounded px-1.5 py-1 text-white outline-none text-[10px]"></td>
+    <td class="p-1.5 text-center"><input type="checkbox" ${r.aktif ? 'checked' : ''} onchange="ubahAktifKategoriKas('${escJs(r.id)}', this.checked)" class="w-3.5 h-3.5 accent-emerald-500"></td>
+  </tr>`;
+  Swal.fire({
+    title: '<i class="fa-solid fa-tags"></i> Kategori Kas',
+    width: '640px',
+    html: `<div class="text-left text-[11px] text-slate-300">
+      <div class="flex gap-2 mb-2">
+        <input id="kk_nama" placeholder="Nama kategori baru" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <select id="kk_jenis" class="bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+          <option value="masuk">Masuk</option><option value="keluar">Keluar</option><option value="both">Keduanya</option>
+        </select>
+        <button onclick="tambahKategoriKas()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 rounded font-bold"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <div class="max-h-72 overflow-auto custom-scrollbar border border-white/10 rounded-lg">
+        <table class="w-full text-[10px]"><thead><tr class="text-slate-400 uppercase bg-white/5"><th class="p-1.5 text-left">Nama</th><th class="p-1.5 text-left">Jenis</th><th class="p-1.5 text-left">Deskripsi</th><th class="p-1.5">Aktif</th></tr></thead>
+        <tbody>${rows.map(baris).join('')}</tbody></table>
+      </div>
+    </div>`,
+    background: '#1e293b', color: '#fff', showConfirmButton: false, showCloseButton: true
+  });
+}
+
+async function tambahKategoriKas() {
+  const nama = document.getElementById('kk_nama')?.value.trim();
+  const jenis = document.getElementById('kk_jenis')?.value || 'masuk';
+  if (!nama) return showToast('error', 'Isi nama kategori.');
+  const { error } = await supaClient.from('kategori_kas').insert({ nama, jenis });
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  window.__cacheKategoriKas = null;
+  showToast('success', 'Kategori ditambahkan');
+  bukaKategoriKasModal();
+}
+
+async function simpanDeskripsiKategoriKas(id, deskripsi) {
+  await supaClient.from('kategori_kas').update({ deskripsi }).eq('id', id);
+  window.__cacheKategoriKas = null;
+  showToast('success', 'Deskripsi tersimpan');
+}
+
+async function ubahAktifKategoriKas(id, aktif) {
+  await supaClient.from('kategori_kas').update({ aktif }).eq('id', id);
+  window.__cacheKategoriKas = null;
+  showToast('success', aktif ? 'Kategori diaktifkan' : 'Kategori dinonaktifkan');
+}
+
+/** Import Excel transaksi Kas Umum massal (format sederhana: Tanggal;Jenis;Kategori;Keterangan;Nama Siswa;Nominal). */
+function openImportKasUmum() {
+  Swal.fire({
+    title: '<div class="text-base font-bold text-teal-400"><i class="fa-solid fa-file-excel"></i> Import Kas Umum</div>',
+    html: `
+      <div class="text-sm text-slate-300 mb-4 text-left">
+        1. Unduh template format Kas Umum di bawah ini.<br>
+        2. Isi transaksi pada Excel (Jenis: masuk / keluar).<br>
+        3. Upload kembali file yang sudah diisi ke sini.
+      </div>
+      <button onclick="downloadTemplateKasUmum()" class="w-full mb-4 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded shadow-md text-xs font-bold transition"><i class="fa-solid fa-download"></i> Download Template Kas Umum</button>
+      <div class="border-t border-white/20 pt-4">
+          <label class="block text-left text-[10px] font-bold text-teal-300 mb-1">Upload File Excel (.xlsx)</label>
+          <input type="file" id="file-import-kasumum" accept=".xlsx, .xls" class="w-full bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none focus:border-teal-500">
+      </div>
+    `,
+    background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-table-list"></i> Pratinjau Import',
+    preConfirm: () => {
+        const file = document.getElementById('file-import-kasumum').files[0];
+        if (!file) { Swal.showValidationMessage('Pilih file Excel terlebih dahulu!'); return false; }
+        return file;
+    }
+  }).then(res => { if (res.isConfirmed) previewImportKasUmum(res.value); });
+}
+
+function downloadTemplateKasUmum() {
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS tidak ditemukan.', 'error');
+  const headers = ['Tanggal (YYYY-MM-DD)', 'Jenis (masuk/keluar)', 'Kategori', 'Keterangan', 'Nama Siswa', 'Nominal'];
+  const dataRows = [
+    ['FORMAT IMPORT KAS UMUM', window.__ekskulAktif || ''],
+    ['INFO', 'Jenis wajib "masuk" atau "keluar". Kategori harus sesuai nama kategori yang sudah terdaftar.'],
+    headers,
+    ['2026-01-15', 'masuk', 'Iuran Anggota', 'Contoh transaksi', 'Budi Santoso', 50000]
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(dataRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template_KasUmum');
+  XLSX.writeFile(wb, `Template_KasUmum_${window.__ekskulAktif || 'ekskul'}.xlsx`);
+}
+
+async function previewImportKasUmum(file) {
+  try {
+    const jsonArray = await bacaExcelPertama(file);
+    if (jsonArray.length < 4) throw new Error('Format tidak dikenali.');
+    const kategoriList = await ambilKategoriKas();
+    const byNama = {}; kategoriList.forEach(k => { byNama[k.nama.toLowerCase()] = k; });
+    const kolom = [{ k: 'tanggal', l: 'Tanggal' }, { k: 'jenis', l: 'Jenis' }, { k: 'kategori', l: 'Kategori' }, { k: 'keterangan', l: 'Keterangan' }, { k: 'nama_siswa', l: 'Nama Siswa' }, { k: 'nominal', l: 'Nominal' }];
+    const baris = [];
+    for (let i = 3; i < jsonArray.length; i++) {
+      const row = jsonArray[i];
+      if (!row || !row[0]) continue;
+      const tanggal = String(row[0]).trim();
+      const jenis = String(row[1] || '').trim().toLowerCase();
+      const kategoriNama = String(row[2] || '').trim();
+      const keterangan = String(row[3] || '').trim();
+      const nama_siswa = String(row[4] || '').trim();
+      const nominal = Number(row[5]) || 0;
+      let status = 'ok', alasan = '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(tanggal)) { status = 'bad'; alasan = 'Format tanggal salah'; }
+      else if (!['masuk', 'keluar'].includes(jenis)) { status = 'bad'; alasan = 'Jenis harus masuk/keluar'; }
+      else if (!byNama[kategoriNama.toLowerCase()]) { status = 'bad'; alasan = `Kategori "${kategoriNama}" tidak ditemukan`; }
+      else if (!nominal || nominal <= 0) { status = 'bad'; alasan = 'Nominal harus > 0'; }
+      baris.push({
+        status, alasan,
+        sel: { tanggal: { v: tanggal }, jenis: { v: jenis }, kategori: { v: kategoriNama }, keterangan: { v: keterangan }, nama_siswa: { v: nama_siswa }, nominal: { v: nominal } },
+        raw: { tanggal, jenis, kategori_id: (byNama[kategoriNama.toLowerCase()] || {}).id, keterangan, nama_siswa, nominal }
+      });
+    }
+    bukaPreviewImport({
+      judul: 'Import Data Kas Umum', namaFile: file.name, kolom, baris,
+      labelTerapkan: 'Terapkan & Simpan',
+      onTerapkan: async (rowsValid) => {
+        Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+        try {
+          const payloads = rowsValid.map(b => ({
+            ekskul: window.__ekskulAktif,
+            tanggal: b.raw.tanggal,
+            kategori_id: b.raw.kategori_id || null,
+            keterangan: b.raw.keterangan,
+            nama_siswa: b.raw.nama_siswa,
+            jumlah_masuk: b.raw.jenis === 'masuk' ? b.raw.nominal : 0,
+            jumlah_keluar: b.raw.jenis === 'keluar' ? b.raw.nominal : 0,
+            visibilitas: ['pembina_jabatan', 'anggota'],
+            sumber: 'manual',
+            dibuat_oleh: (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '')
+          }));
+          const { error } = await supaClient.from('kas_umum').insert(payloads);
+          if (error) throw error;
+          showToast('success', `${payloads.length} transaksi berhasil diimpor`);
+          renderTabEkskul();
+        } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
+      },
+      onReupload: () => openImportKasUmum()
+    });
+  } catch (e) {
+    Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' });
+  }
 }
 
 // ==================== TAB 5: KAS ANGGOTA ====================
@@ -14608,23 +14944,47 @@ async function muatKasAnggota() {
       </tr>`)).join('')}</tbody></table></div>`;
 }
 
+/** Ambil daftar deskripsi iuran tersimpan untuk ekskul tertentu (untuk dropdown "Deskripsi Pembayaran"). */
+async function ambilDeskripsiIuran(ekskul) {
+  const { data, error } = await supaClient.from('deskripsi_iuran').select('*').eq('ekskul', ekskul).order('judul');
+  return error ? [] : (data || []);
+}
+
 async function formKasAnggota() {
   const aktif = window.__ekskulAktif;
   if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
   const anggota = await ambilAnggotaEkskul(aktif);
   if (!anggota.length) return showToast('error', 'Belum ada anggota terdaftar di ekskul ini.');
+  const deskripsiList = await ambilDeskripsiIuran(aktif);
+  const tipeTersimpan = localStorage.getItem('sisip_kia_tipe_default') || 'harian';
+  const urutTipe = ['harian', 'mingguan', 'bulanan'];
+  const labelTipe = { harian: 'Harian', mingguan: 'Mingguan', bulanan: 'Bulanan' };
   Swal.fire({
     title: 'Catat Iuran Anggota',
+    width: '620px',
     html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
-      <label class="font-bold text-yellow-300">Anggota *</label>
-      <select id="kia_nis" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${anggota.map(a => `<option value="${escJs(a.nis_nip)}">${escapeHtml(a.nama_lengkap)} (${escapeHtml(a.nis_nip)})</option>`).join('')}</select>
+      <label class="font-bold text-yellow-300">Anggota * <span class="text-slate-500 font-normal">(centang satu atau lebih)</span></label>
+      <div class="flex gap-1 mb-1">
+        <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=true)" class="text-[9px] px-2 py-0.5 rounded bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white transition">Ceklis Semua</button>
+        <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=false)" class="text-[9px] px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600 text-red-200 hover:text-white transition">Hapus Ceklis</button>
+      </div>
+      <div class="max-h-32 overflow-auto custom-scrollbar border border-white/10 rounded-lg p-1.5 grid grid-cols-1 gap-0.5">
+        ${anggota.map(a => `<label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white/5 cursor-pointer"><input type="checkbox" class="kia-chk w-3 h-3 accent-yellow-500" value="${escJs(a.nis_nip)}"> ${escapeHtml(a.nama_lengkap)} (${escapeHtml(a.nis_nip)})</label>`).join('')}
+      </div>
       <label class="font-bold text-yellow-300 block mt-2">Tipe Periode *</label>
-      <select id="kia_tipe" onchange="ubahTipePeriodeIuran()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
-        <option value="bulanan">Bulanan</option><option value="mingguan">Mingguan</option><option value="harian">Harian</option>
+      <select id="kia_tipe" onchange="ubahTipePeriodeIuran(); localStorage.setItem('sisip_kia_tipe_default', this.value);" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        ${urutTipe.map(t => `<option value="${t}" ${tipeTersimpan === t ? 'selected' : ''}>${labelTipe[t]}</option>`).join('')}
       </select>
       <label class="font-bold text-yellow-300 block mt-2">Tahun *</label>
       <input type="number" id="kia_tahun" value="${new Date().getFullYear()}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <div id="kia_periode_wrap"></div>
+      <label class="font-bold text-yellow-300 block mt-2">Deskripsi Pembayaran</label>
+      <select id="kia_deskripsi_pilih" onchange="const v=this.value; const el=document.getElementById('kia_deskripsi'); if(v==='__custom__'){el.value='';el.focus();}else{el.value=v;}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="">-- Pilih deskripsi tersimpan --</option>
+        ${deskripsiList.map(d => `<option value="${escJs(d.judul)}">${escapeHtml(d.judul)}</option>`).join('')}
+        <option value="__custom__">+ Deskripsi baru (ketik manual)</option>
+      </select>
+      <input id="kia_deskripsi" placeholder="Cth: Iuran Kas Bulanan" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
       <input type="number" min="0" id="kia_nominal" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Status *</label>
@@ -14638,31 +14998,45 @@ async function formKasAnggota() {
     confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan',
     didOpen: () => ubahTipePeriodeIuran(),
     preConfirm: () => {
-      const nis_nip = document.getElementById('kia_nis').value;
+      const nisList = [...document.querySelectorAll('.kia-chk:checked')].map(c => c.value);
       const periode_tipe = document.getElementById('kia_tipe').value;
       const tahun = Number(document.getElementById('kia_tahun').value) || new Date().getFullYear();
       const periode_label = document.getElementById('kia_periode_label')?.value || '';
       const bulan = document.getElementById('kia_bulan_val') ? Number(document.getElementById('kia_bulan_val').value) : null;
+      const deskripsi_pembayaran = document.getElementById('kia_deskripsi').value.trim();
       const nominal = Number(document.getElementById('kia_nominal').value) || 0;
       const status = document.getElementById('kia_status').value;
       const tanggal_bayar = document.getElementById('kia_tglbayar').value || null;
+      if (!nisList.length) { Swal.showValidationMessage('Pilih minimal 1 anggota.'); return false; }
       if (!periode_label) { Swal.showValidationMessage('Periode wajib diisi.'); return false; }
       if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
-      return { nis_nip, periode_tipe, tahun, bulan, periode_label, nominal, status, tanggal_bayar };
+      return { nisList, periode_tipe, tahun, bulan, periode_label, deskripsi_pembayaran, nominal, status, tanggal_bayar };
     }
   }).then(async (res) => {
     if (!res.isConfirmed) return;
     const d = res.value;
     try {
-      const { error } = await supaClient.from('iuran_anggota').insert({
-        ekskul: aktif, nis_nip: d.nis_nip, periode_tipe: d.periode_tipe, periode_label: d.periode_label,
-        tahun: d.tahun, bulan: d.bulan, nominal: d.nominal, status: d.status, tanggal_bayar: d.tanggal_bayar,
-        dicatat_oleh: (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '')
-      });
+      if (d.deskripsi_pembayaran) {
+        const ada = (await ambilDeskripsiIuran(aktif)).some(x => x.judul.toLowerCase() === d.deskripsi_pembayaran.toLowerCase());
+        if (!ada) await supaClient.from('deskripsi_iuran').insert({ ekskul: aktif, judul: d.deskripsi_pembayaran });
+      }
+      const dicatat_oleh = (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '');
+      const payloads = d.nisList.map(nis_nip => ({
+        ekskul: aktif, nis_nip, periode_tipe: d.periode_tipe, periode_label: d.periode_label,
+        tahun: d.tahun, bulan: d.bulan, deskripsi_pembayaran: d.deskripsi_pembayaran, nominal: d.nominal,
+        status: d.status, tanggal_bayar: d.tanggal_bayar, dicatat_oleh
+      }));
+      const { error } = await supaClient.from('iuran_anggota').insert(payloads);
       if (error) throw error;
-      showToast('success', 'Iuran anggota tersimpan');
+      try {
+        await supaClient.from('notifikasi').insert(d.nisList.map(nis_nip => ({
+          ekskul: aktif, target_nis_nip: nis_nip, untuk_peran: ['murid', 'pembina', 'bendahara'],
+          judul: 'Iuran Anggota', pesan: `Iuran ${d.periode_label} sebesar ${formatRupiah(d.nominal)} tercatat ${d.status === 'lunas' ? 'LUNAS' : 'MENUNGGAK'}.`
+        })));
+      } catch (ignoreErr) {}
+      showToast('success', `Iuran ${payloads.length} anggota tersimpan`);
       renderTabEkskul();
-    } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: /duplicate|unique/i.test(e.message || '') ? 'Periode ini sudah tercatat untuk anggota tsb.' : (e.message || ''), background: '#1e293b', color: '#fff' }); }
+    } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: /duplicate|unique/i.test(e.message || '') ? 'Periode ini sudah tercatat untuk sebagian anggota (yang lain tetap tersimpan bila terpisah).' : (e.message || ''), background: '#1e293b', color: '#fff' }); }
   });
 }
 /** Ganti input periode di form Kas Anggota sesuai tipe (bulanan/mingguan/harian). */
@@ -14682,7 +15056,8 @@ function ubahTipePeriodeIuran() {
       <select id="kia_periode_label" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${LABEL_MINGGU.map(m => `<option value="${m}">${m}</option>`).join('')}</select>`;
   } else {
     wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal *</label>
-      <input type="date" id="kia_periode_label" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+      <input type="date" id="kia_periode_label" onchange="const d=this.value?new Date(this.value):null; const b=document.getElementById('kia_bulan_val'); if(b&&d) b.value=d.getMonth()+1;" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <input type="hidden" id="kia_bulan_val" value="${new Date().getMonth() + 1}">`;
   }
 }
 
