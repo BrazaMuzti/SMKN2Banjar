@@ -12777,6 +12777,33 @@ function hakAksesEkskulUntuk(ekskul) {
 /** [REQ 1c] Cek cepat peran akses satu ekskul termasuk salah satu peran yang diberikan. */
 function ekskulAksesTermasukUntuk(ekskul, ...peran) { return peran.includes(hakAksesEkskulUntuk(ekskul)); }
 
+/** Deteksi apakah jabatan ekskul murid pada `ekskul` tsb adalah Bendahara (case-insensitive). */
+function apakahBendaharaEkskul(ekskul) {
+  const jab = jabatanEkskulMapMurid();
+  return /bendahara/i.test(String(jab[ekskul] || ''));
+}
+
+/**
+ * Peran akses Kas Umum/Kas Anggota per ekskul:
+ *  - admin/guru (pembina)        -> 'kelola' (baca, tulis, edit, hapus)
+ *  - murid berjabatan "Bendahara" -> 'kelola'
+ *  - murid pengurus lain / anggota -> 'baca' (read-only)
+ *  - bukan bagian ekskul tsb      -> 'tanpa'
+ */
+function hakAksesKasUntuk(ekskul) {
+  const akses = hakAksesEkskulUntuk(ekskul);
+  if (akses === 'admin' || akses === 'guru') return 'kelola';
+  if (akses === 'pengurus' && apakahBendaharaEkskul(ekskul)) return 'kelola';
+  if (akses === 'pengurus' || akses === 'anggota') return 'baca';
+  return 'tanpa';
+}
+
+/** Format angka menjadi Rupiah, cth: 150000 -> "Rp150.000". */
+function formatRupiah(n) {
+  const v = Number(n) || 0;
+  return 'Rp' + Math.round(v).toLocaleString('id-ID');
+}
+
 /** Cek cepat: peran akses ekskul termasuk salah satu peran yang diberikan. */
 function ekskulAksesTermasuk(...peran) { return peran.includes(hakAksesEkskul()); }
 
@@ -12827,6 +12854,8 @@ async function renderEkstrakurikulerModule(container) {
             ${tabBtn('profil', 'Profil & Anggota', 'fa-users', true)}
             ${tabBtn('agenda', 'Agenda Kegiatan', 'fa-calendar-check', true)}
             ${tabBtn('dispensasi', 'Surat Dispensasi', 'fa-file-signature', bolehKelolaPenuh)}
+            ${tabBtn('kasumum', 'Kas Umum', 'fa-wallet', true)}
+            ${tabBtn('kasanggota', 'Kas Anggota', 'fa-hand-holding-dollar', true)}
             ${bolehKelolaPenuh ? `<button onclick="bukaAbsensiEkskul()" class="px-3 sm:px-4 py-1.5 rounded text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition" title="Absensi Ekskul terpilih"><i class="fa-solid fa-clipboard-user mr-1"></i> Hadir Tatap Muka</button>` : ''}
             ${bolehKelolaPenuh ? `<button onclick="bukaNilaiEkskul()" class="px-3 sm:px-4 py-1.5 rounded text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition"><i class="fa-solid fa-star mr-1"></i> Nilai</button>` : ''}
           </div>
@@ -12856,6 +12885,8 @@ async function renderTabEkskul() {
   if (currentTabEkskul === 'info') return renderTabInfoEkskul();
   if (currentTabEkskul === 'agenda') return renderTabAgendaEkskul();
   if (currentTabEkskul === 'dispensasi') return renderTabDispensasiEkskul();
+  if (currentTabEkskul === 'kasumum') return renderTabKasUmumEkskul();
+  if (currentTabEkskul === 'kasanggota') return renderTabKasAnggotaEkskul();
   return renderTabProfilEkskul();
 }
 
@@ -14258,7 +14289,417 @@ function tambahTtdDispensasi(nama = '', nip = '') {
   wrap.appendChild(row);
 }
 
-/** [REQ B1] Popup pilih siswa (anggota): checkbox per sub, ceklis massal, keterangan massal/per siswa. */
+// ==================== TAB 4: KAS UMUM ====================
+// Visibilitas laporan: kombinasi 'pembina_jabatan','anggota','siswa_sekolah','guru','umum'.
+const OPSI_VISIBILITAS_KAS = [
+  { v: 'pembina_jabatan', l: 'Pembina & Jabatan Ekskul' },
+  { v: 'anggota', l: 'Anggota Ekstrakurikuler' },
+  { v: 'siswa_sekolah', l: 'Siswa Sekolah' },
+  { v: 'guru', l: 'Guru' },
+  { v: 'umum', l: 'Untuk Umum' }
+];
+let filterKasUmum = { dari: '', sampai: '', kategori: '' };
+
+/** Apakah baris kas (visibilitas[]) boleh dilihat oleh viewer saat ini pada akses 'kelola'/'baca'. */
+function bolehLihatVisibilitasKas(row, aksesKas) {
+  if (aksesKas === 'kelola') return true; // bendahara/pembina lihat semua
+  const vis = row.visibilitas || [];
+  const role = (currentUser || {}).role || '';
+  if (role === 'murid') return vis.includes('anggota') || vis.includes('siswa_sekolah') || vis.includes('umum');
+  if (role === 'guru') return vis.includes('guru') || vis.includes('pembina_jabatan') || vis.includes('umum');
+  return vis.includes('umum');
+}
+
+async function ambilKategoriKas() {
+  if (window.__cacheKategoriKas) return window.__cacheKategoriKas;
+  const { data, error } = await supaClient.from('kategori_kas').select('*').eq('aktif', true).order('nama');
+  window.__cacheKategoriKas = error ? [] : (data || []);
+  return window.__cacheKategoriKas;
+}
+
+async function renderTabKasUmumEkskul() {
+  const box = document.getElementById('content-ekskul');
+  const daftar = window.__daftarEkskul || [];
+  const aktif = window.__ekskulAktif;
+  const aksesKas = hakAksesKasUntuk(aktif);
+  const bolehKelola = aksesKas === 'kelola';
+  const kategoriList = await ambilKategoriKas();
+
+  box.innerHTML = `
+    <div class="p-4 space-y-3">
+      <div class="flex gap-2 items-center flex-wrap">
+        <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+        ${bolehKelola ? `<button onclick="formKasUmum(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Transaksi Kas Umum</button>` : ''}
+        <button onclick="exportKasUmumCSV()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-export"></i> Export Excel</button>
+        <button onclick="window.print()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
+      </div>
+      <div class="flex gap-2 items-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
+        <label class="text-[10px] text-slate-400">Dari <input type="date" id="ku_dari" value="${escJs(filterKasUmum.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <label class="text-[10px] text-slate-400">Sampai <input type="date" id="ku_sampai" value="${escJs(filterKasUmum.sampai)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <select id="ku_kategori" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
+          <option value="">Semua Kategori</option>
+          ${kategoriList.map(k => `<option value="${escJs(k.id)}" ${filterKasUmum.kategori === k.id ? 'selected' : ''}>${escapeHtml(k.nama)}</option>`).join('')}
+        </select>
+        <button onclick="terapkanFilterKasUmum()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
+      </div>
+      <div id="ku-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      <div id="ku-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat transaksi...</div>
+    </div>`;
+  await muatKasUmum();
+}
+
+function terapkanFilterKasUmum() {
+  filterKasUmum.dari = document.getElementById('ku_dari')?.value || '';
+  filterKasUmum.sampai = document.getElementById('ku_sampai')?.value || '';
+  filterKasUmum.kategori = document.getElementById('ku_kategori')?.value || '';
+  muatKasUmum();
+}
+
+async function muatKasUmum() {
+  const aktif = window.__ekskulAktif;
+  const aksesKas = hakAksesKasUntuk(aktif);
+  let q = supaClient.from('kas_umum').select('*, kategori_kas(nama)').eq('ekskul', aktif).order('tanggal', { ascending: true }).order('created_at', { ascending: true });
+  if (filterKasUmum.dari) q = q.gte('tanggal', filterKasUmum.dari);
+  if (filterKasUmum.sampai) q = q.lte('tanggal', filterKasUmum.sampai);
+  if (filterKasUmum.kategori) q = q.eq('kategori_id', filterKasUmum.kategori);
+  const { data, error } = await q;
+  const rowsAll = error ? [] : (data || []);
+  const rows = rowsAll.filter(r => bolehLihatVisibilitasKas(r, aksesKas));
+  window.__cacheKasUmumRows = rows;
+
+  let saldo = 0, totalMasuk = 0, totalKeluar = 0;
+  const withSaldo = rows.map(r => {
+    saldo += (Number(r.jumlah_masuk) || 0) - (Number(r.jumlah_keluar) || 0);
+    totalMasuk += Number(r.jumlah_masuk) || 0;
+    totalKeluar += Number(r.jumlah_keluar) || 0;
+    return { ...r, __saldo: saldo };
+  });
+
+  const cards = document.getElementById('ku-cards');
+  if (cards) cards.innerHTML = `
+    <div class="bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-4"><div class="text-[10px] text-emerald-300 uppercase font-bold">Total Pemasukan</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalMasuk)}</div></div>
+    <div class="bg-red-900/30 border border-red-500/30 rounded-xl p-4"><div class="text-[10px] text-red-300 uppercase font-bold">Total Pengeluaran</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalKeluar)}</div></div>
+    <div class="bg-blue-900/30 border border-blue-500/30 rounded-xl p-4"><div class="text-[10px] text-blue-300 uppercase font-bold">Saldo Akhir</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalMasuk - totalKeluar)}</div></div>`;
+
+  const tabel = document.getElementById('ku-tabel');
+  if (!tabel) return;
+  const bolehKelola = aksesKas === 'kelola';
+  tabel.outerHTML = error
+    ? `<p class="italic p-2">Gagal memuat: ${escapeHtml(error.message)}</p>`
+    : !withSaldo.length
+      ? `<p class="italic p-2">Belum ada transaksi kas umum.</p>`
+      : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
+      <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
+        <th class="p-2">Tanggal</th><th class="p-2">Kategori</th><th class="p-2">Keterangan</th><th class="p-2">No. Bukti</th><th class="p-2">Nota</th><th class="p-2 text-right">Masuk</th><th class="p-2 text-right">Keluar</th><th class="p-2 text-right">Saldo</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
+      </tr></thead>
+      <tbody>${withSaldo.slice().reverse().map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
+        <td class="p-2 whitespace-nowrap">${escapeHtml(String(r.tanggal || '').split('T')[0])}</td>
+        <td class="p-2">${escapeHtml((r.kategori_kas || {}).nama || '-')}</td>
+        <td class="p-2">${escapeHtml(r.keterangan || '-')}</td>
+        <td class="p-2">${escapeHtml(r.no_bukti || '-')}</td>
+        <td class="p-2">${r.bukti_url ? `<a href="${escJs(r.bukti_url)}" target="_blank" class="text-blue-400 hover:underline"><i class="fa-solid fa-receipt"></i></a>` : '-'}</td>
+        <td class="p-2 text-right text-emerald-300">${Number(r.jumlah_masuk) ? formatRupiah(r.jumlah_masuk) : '-'}</td>
+        <td class="p-2 text-right text-red-300">${Number(r.jumlah_keluar) ? formatRupiah(r.jumlah_keluar) : '-'}</td>
+        <td class="p-2 text-right font-bold text-white">${formatRupiah(r.__saldo)}</td>
+        ${bolehKelola ? `<td class="p-2"><div class="flex gap-1">
+          <button onclick='formKasUmum(false, ${JSON.stringify(r).replace(/'/g, "&#39;")})' class="w-6 h-6 bg-blue-600/20 hover:bg-blue-600 text-blue-400 rounded transition" title="Edit"><i class="fa-solid fa-pen text-[9px]"></i></button>
+          <button onclick="hapusKasUmum('${escJs(r.id)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button>
+        </div></td>` : ''}
+      </tr>`).join('')}</tbody></table></div>`;
+}
+
+/** Upload file bukti/nota ke Supabase Storage bucket "kas-bukti", kembalikan URL publik. */
+async function uploadBuktiKas(file) {
+  if (!file) return '';
+  try {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
+    const path = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const { error } = await supaClient.storage.from('kas-bukti').upload(path, file, { upsert: false });
+    if (error) throw error;
+    const { data } = supaClient.storage.from('kas-bukti').getPublicUrl(path);
+    return (data || {}).publicUrl || '';
+  } catch (e) {
+    showToast('error', 'Gagal upload bukti: ' + (e.message || ''));
+    return '';
+  }
+}
+
+function chkVisibilitasHTML(idPrefix, terpilih) {
+  return OPSI_VISIBILITAS_KAS.map(o => `<label class="flex items-center gap-1 text-[10px] cursor-pointer bg-black/40 border border-white/20 rounded px-2 py-1"><input type="checkbox" id="${idPrefix}_${o.v}" ${terpilih.includes(o.v) ? 'checked' : ''} class="w-3 h-3 accent-yellow-500"> ${o.l}</label>`).join('');
+}
+
+async function formKasUmum(isNew, data = {}) {
+  const aktif = window.__ekskulAktif;
+  if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const kategoriList = await ambilKategoriKas();
+  const vis = data.visibilitas || ['pembina_jabatan', 'anggota'];
+  Swal.fire({
+    title: `${isNew ? 'Tambah' : 'Edit'} Transaksi Kas Umum`,
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
+      <label class="font-bold text-yellow-300">Tanggal *</label>
+      <input type="date" id="kum_tgl" value="${escJs(String(data.tanggal || new Date().toISOString().split('T')[0]).split('T')[0])}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Jenis *</label>
+      <div class="flex gap-3"><label class="flex items-center gap-1"><input type="radio" name="kum_jenis" value="masuk" ${!data.jumlah_keluar ? 'checked' : ''}> Masuk</label><label class="flex items-center gap-1"><input type="radio" name="kum_jenis" value="keluar" ${Number(data.jumlah_keluar) > 0 ? 'checked' : ''}> Keluar</label></div>
+      <label class="font-bold text-yellow-300 block mt-2">Kategori *</label>
+      <select id="kum_kategori" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${kategoriList.map(k => `<option value="${escJs(k.id)}" ${data.kategori_id === k.id ? 'selected' : ''}>${escapeHtml(k.nama)}</option>`).join('')}</select>
+      <label class="font-bold text-yellow-300 block mt-2">Keterangan</label>
+      <input id="kum_ket" value="${escJs(data.keterangan || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
+      <input type="number" min="0" id="kum_nominal" value="${Number(data.jumlah_masuk || data.jumlah_keluar || 0) || ''}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">No. Bukti</label>
+      <input id="kum_nobukti" value="${escJs(data.no_bukti || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Upload Nota</label>
+      <input type="file" id="kum_bukti" accept="image/*,.pdf" class="w-full text-[10px] text-slate-300">
+      <label class="font-bold text-yellow-300 block mt-2">Perlihatkan laporan untuk:</label>
+      <div class="flex flex-wrap gap-1">${chkVisibilitasHTML('kumv', vis)}</div>
+    </div>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan',
+    preConfirm: async () => {
+      const tgl = document.getElementById('kum_tgl').value;
+      const jenis = document.querySelector('input[name="kum_jenis"]:checked')?.value || 'masuk';
+      const kategori_id = document.getElementById('kum_kategori').value;
+      const keterangan = document.getElementById('kum_ket').value.trim();
+      const nominal = Number(document.getElementById('kum_nominal').value) || 0;
+      const no_bukti = document.getElementById('kum_nobukti').value.trim();
+      const file = document.getElementById('kum_bukti').files[0];
+      const visibilitas = OPSI_VISIBILITAS_KAS.map(o => o.v).filter(v => document.getElementById(`kumv_${v}`)?.checked);
+      if (!tgl) { Swal.showValidationMessage('Tanggal wajib diisi.'); return false; }
+      if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
+      let bukti_url = data.bukti_url || '';
+      if (file) bukti_url = await uploadBuktiKas(file);
+      return { tgl, jenis, kategori_id, keterangan, nominal, no_bukti, bukti_url, visibilitas };
+    }
+  }).then(async (res) => {
+    if (!res.isConfirmed) return;
+    const d = res.value;
+    try {
+      const payload = {
+        ekskul: aktif,
+        tanggal: d.tgl,
+        kategori_id: d.kategori_id || null,
+        keterangan: d.keterangan,
+        no_bukti: d.no_bukti,
+        bukti_url: d.bukti_url,
+        jumlah_masuk: d.jenis === 'masuk' ? d.nominal : 0,
+        jumlah_keluar: d.jenis === 'keluar' ? d.nominal : 0,
+        visibilitas: d.visibilitas,
+        sumber: 'manual',
+        dibuat_oleh: (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '')
+      };
+      const { error } = isNew ? await supaClient.from('kas_umum').insert(payload)
+        : await supaClient.from('kas_umum').update(payload).eq('id', data.id);
+      if (error) throw error;
+      showToast('success', 'Transaksi kas umum tersimpan');
+      renderTabEkskul();
+    } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
+  });
+}
+async function hapusKasUmum(id) {
+  if (hakAksesKasUntuk(window.__ekskulAktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const konf = await Swal.fire({ title: 'Hapus transaksi ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
+  if (!konf.isConfirmed) return;
+  const { error } = await supaClient.from('kas_umum').delete().eq('id', id);
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  showToast('success', 'Transaksi terhapus');
+  renderTabEkskul();
+}
+
+/** Export tabel Kas Umum yang sedang tampil ke file CSV (bisa dibuka Excel). */
+function exportKasUmumCSV() {
+  const rows = window.__cacheKasUmumRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  const header = ['Tanggal', 'Kategori', 'Keterangan', 'No. Bukti', 'Masuk', 'Keluar'];
+  const lines = [header.join(';')];
+  rows.forEach(r => {
+    lines.push([String(r.tanggal || '').split('T')[0], (r.kategori_kas || {}).nama || '', (r.keterangan || '').replace(/;/g, ','), r.no_bukti || '', r.jumlah_masuk || 0, r.jumlah_keluar || 0].join(';'));
+  });
+  const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `kas-umum-${window.__ekskulAktif || 'ekskul'}.csv`;
+  a.click();
+}
+
+// ==================== TAB 5: KAS ANGGOTA ====================
+let filterKasAnggota = { tahun: new Date().getFullYear(), bulan: new Date().getMonth() + 1, status: '' };
+const LABEL_MINGGU = ['M1', 'M2', 'M3', 'M4'];
+
+async function renderTabKasAnggotaEkskul() {
+  const box = document.getElementById('content-ekskul');
+  const daftar = window.__daftarEkskul || [];
+  const aktif = window.__ekskulAktif;
+  const aksesKas = hakAksesKasUntuk(aktif);
+  const bolehKelola = aksesKas === 'kelola';
+
+  box.innerHTML = `
+    <div class="p-4 space-y-3">
+      <div class="flex gap-2 items-center flex-wrap">
+        <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+        <input type="number" id="ka_tahun" value="${filterKasAnggota.tahun}" class="w-20 bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
+        <select id="ka_bulan" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
+          ${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}" ${filterKasAnggota.bulan === i + 1 ? 'selected' : ''}>${b}</option>`).join('')}
+        </select>
+        <select id="ka_status" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
+          <option value="">Semua Status</option>
+          <option value="lunas" ${filterKasAnggota.status === 'lunas' ? 'selected' : ''}>Lunas</option>
+          <option value="menunggak" ${filterKasAnggota.status === 'menunggak' ? 'selected' : ''}>Menunggak</option>
+        </select>
+        <button onclick="terapkanFilterKasAnggota()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
+        ${bolehKelola ? `<button onclick="formKasAnggota()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Catat Iuran Anggota</button>` : ''}
+      </div>
+      <div id="ka-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      <div id="ka-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat matriks iuran...</div>
+    </div>`;
+  await muatKasAnggota();
+}
+
+function terapkanFilterKasAnggota() {
+  filterKasAnggota.tahun = Number(document.getElementById('ka_tahun')?.value) || new Date().getFullYear();
+  filterKasAnggota.bulan = Number(document.getElementById('ka_bulan')?.value) || 1;
+  filterKasAnggota.status = document.getElementById('ka_status')?.value || '';
+  muatKasAnggota();
+}
+
+async function muatKasAnggota() {
+  const aktif = window.__ekskulAktif;
+  const aksesKas = hakAksesKasUntuk(aktif);
+  const anggota = await ambilAnggotaEkskul(aktif);
+  const { data, error } = await supaClient.rpc('matriks_iuran_anggota', { p_ekskul: aktif, p_tahun: filterKasAnggota.tahun, p_bulan: filterKasAnggota.bulan });
+  let rows = error ? [] : (data || []);
+  if (filterKasAnggota.status) rows = rows.filter(r => r.status === filterKasAnggota.status);
+  window.__cacheIuranRows = rows;
+
+  const totalLunas = rows.filter(r => r.status === 'lunas').length;
+  const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const totalTerkumpul = rows.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+
+  const cards = document.getElementById('ka-cards');
+  if (cards) cards.innerHTML = `
+    <div class="bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-4"><div class="text-[10px] text-emerald-300 uppercase font-bold">Pembayaran Lunas</div><div class="text-lg font-bold text-white mt-1">${totalLunas} dari ${rows.length}</div></div>
+    <div class="bg-blue-900/30 border border-blue-500/30 rounded-xl p-4"><div class="text-[10px] text-blue-300 uppercase font-bold">Dana Terkumpul</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalTerkumpul)}</div></div>
+    <div class="bg-amber-900/30 border border-amber-500/30 rounded-xl p-4"><div class="text-[10px] text-amber-300 uppercase font-bold">Total Tagihan</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalTagihan)}</div></div>`;
+
+  const byNis = {};
+  rows.forEach(r => { (byNis[r.nis_nip] = byNis[r.nis_nip] || []).push(r); });
+  const bolehKelola = aksesKas === 'kelola';
+
+  const tabel = document.getElementById('ka-tabel');
+  if (!tabel) return;
+  const namaMap = {};
+  anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
+  const listNis = Object.keys(byNis).length ? Object.keys(byNis) : anggota.map(a => a.nis_nip);
+  tabel.outerHTML = error
+    ? `<p class="italic p-2">Gagal memuat: ${escapeHtml(error.message)}</p>`
+    : !listNis.length
+      ? `<p class="italic p-2">Belum ada data iuran pada periode ini.</p>`
+      : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
+      <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
+        <th class="p-2">Nama</th><th class="p-2">NIS</th><th class="p-2">Periode</th><th class="p-2 text-right">Nominal</th><th class="p-2">Status</th><th class="p-2">Tgl Bayar</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
+      </tr></thead>
+      <tbody>${listNis.flatMap(nis => (byNis[nis] || []).map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
+        <td class="p-2">${escapeHtml(namaMap[nis] || nis)}</td>
+        <td class="p-2">${escapeHtml(nis)}</td>
+        <td class="p-2">${escapeHtml(r.periode_label)} <span class="text-slate-500">(${escapeHtml(r.periode_tipe)})</span></td>
+        <td class="p-2 text-right">${formatRupiah(r.nominal)}</td>
+        <td class="p-2"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${r.status === 'lunas' ? 'bg-emerald-600/30 text-emerald-300' : 'bg-red-600/30 text-red-300'}">${r.status === 'lunas' ? 'Lunas' : 'Menunggak'}</span></td>
+        <td class="p-2">${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
+        ${bolehKelola ? `<td class="p-2"><button onclick="hapusIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>` : ''}
+      </tr>`)).join('')}</tbody></table></div>`;
+}
+
+async function formKasAnggota() {
+  const aktif = window.__ekskulAktif;
+  if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const anggota = await ambilAnggotaEkskul(aktif);
+  if (!anggota.length) return showToast('error', 'Belum ada anggota terdaftar di ekskul ini.');
+  Swal.fire({
+    title: 'Catat Iuran Anggota',
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
+      <label class="font-bold text-yellow-300">Anggota *</label>
+      <select id="kia_nis" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${anggota.map(a => `<option value="${escJs(a.nis_nip)}">${escapeHtml(a.nama_lengkap)} (${escapeHtml(a.nis_nip)})</option>`).join('')}</select>
+      <label class="font-bold text-yellow-300 block mt-2">Tipe Periode *</label>
+      <select id="kia_tipe" onchange="ubahTipePeriodeIuran()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="bulanan">Bulanan</option><option value="mingguan">Mingguan</option><option value="harian">Harian</option>
+      </select>
+      <label class="font-bold text-yellow-300 block mt-2">Tahun *</label>
+      <input type="number" id="kia_tahun" value="${new Date().getFullYear()}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <div id="kia_periode_wrap"></div>
+      <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
+      <input type="number" min="0" id="kia_nominal" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Status *</label>
+      <select id="kia_status" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="lunas">Lunas</option><option value="menunggak">Menunggak</option>
+      </select>
+      <label class="font-bold text-yellow-300 block mt-2">Tanggal Bayar</label>
+      <input type="date" id="kia_tglbayar" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+    </div>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan',
+    didOpen: () => ubahTipePeriodeIuran(),
+    preConfirm: () => {
+      const nis_nip = document.getElementById('kia_nis').value;
+      const periode_tipe = document.getElementById('kia_tipe').value;
+      const tahun = Number(document.getElementById('kia_tahun').value) || new Date().getFullYear();
+      const periode_label = document.getElementById('kia_periode_label')?.value || '';
+      const bulan = document.getElementById('kia_bulan_val') ? Number(document.getElementById('kia_bulan_val').value) : null;
+      const nominal = Number(document.getElementById('kia_nominal').value) || 0;
+      const status = document.getElementById('kia_status').value;
+      const tanggal_bayar = document.getElementById('kia_tglbayar').value || null;
+      if (!periode_label) { Swal.showValidationMessage('Periode wajib diisi.'); return false; }
+      if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
+      return { nis_nip, periode_tipe, tahun, bulan, periode_label, nominal, status, tanggal_bayar };
+    }
+  }).then(async (res) => {
+    if (!res.isConfirmed) return;
+    const d = res.value;
+    try {
+      const { error } = await supaClient.from('iuran_anggota').insert({
+        ekskul: aktif, nis_nip: d.nis_nip, periode_tipe: d.periode_tipe, periode_label: d.periode_label,
+        tahun: d.tahun, bulan: d.bulan, nominal: d.nominal, status: d.status, tanggal_bayar: d.tanggal_bayar,
+        dicatat_oleh: (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '')
+      });
+      if (error) throw error;
+      showToast('success', 'Iuran anggota tersimpan');
+      renderTabEkskul();
+    } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: /duplicate|unique/i.test(e.message || '') ? 'Periode ini sudah tercatat untuk anggota tsb.' : (e.message || ''), background: '#1e293b', color: '#fff' }); }
+  });
+}
+/** Ganti input periode di form Kas Anggota sesuai tipe (bulanan/mingguan/harian). */
+function ubahTipePeriodeIuran() {
+  const tipe = document.getElementById('kia_tipe')?.value || 'bulanan';
+  const wrap = document.getElementById('kia_periode_wrap');
+  if (!wrap) return;
+  const bulanOpts = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}">${b}</option>`).join('');
+  if (tipe === 'bulanan') {
+    wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Bulan *</label>
+      <select id="kia_bulan_val" onchange="document.getElementById('kia_periode_label').value=this.options[this.selectedIndex].text" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${bulanOpts}</select>
+      <input type="hidden" id="kia_periode_label" value="Jan">`;
+  } else if (tipe === 'mingguan') {
+    wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Bulan *</label>
+      <select id="kia_bulan_val" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${bulanOpts}</select>
+      <label class="font-bold text-yellow-300 block mt-2">Minggu ke *</label>
+      <select id="kia_periode_label" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${LABEL_MINGGU.map(m => `<option value="${m}">${m}</option>`).join('')}</select>`;
+  } else {
+    wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal *</label>
+      <input type="date" id="kia_periode_label" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+  }
+}
+
+async function hapusIuranAnggota(nis, periode_tipe, periode_label) {
+  if (hakAksesKasUntuk(window.__ekskulAktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const konf = await Swal.fire({ title: 'Hapus catatan iuran ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
+  if (!konf.isConfirmed) return;
+  const { error } = await supaClient.from('iuran_anggota').delete()
+    .eq('ekskul', window.__ekskulAktif).eq('nis_nip', nis).eq('periode_tipe', periode_tipe).eq('periode_label', periode_label).eq('tahun', filterKasAnggota.tahun);
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  showToast('success', 'Catatan iuran terhapus');
+  renderTabEkskul();
+}
+
+
+
+
 async function popupSiswaDispensasi() {
   const aktif = window.__ekskulAktif || document.getElementById('dp_ekskul')?.value || '';
   if (!aktif) return showToast('error', 'Pilih ekstrakurikuler dulu.');
