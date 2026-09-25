@@ -14396,7 +14396,20 @@ const OPSI_VISIBILITAS_KAS = [
   { v: 'guru', l: 'Guru' },
   { v: 'umum', l: 'Untuk Umum' }
 ];
-let filterKasUmum = { dari: '', sampai: '', kategori: '' };
+/** Hitung rentang tanggal semester berjalan (Ganjil: 1 Jul–31 Des, Genap: 1 Jan–30 Jun),
+ *  memakai aturan bulan yang sama dengan isiHeaderSesi(). */
+function rentangSemesterAktif() {
+  const now = new Date();
+  const cm = now.getMonth(), cy = now.getFullYear();
+  if (cm >= 6) {
+    // Semester Ganjil: Juli - Desember tahun berjalan
+    return { dari: `${cy}-07-01`, sampai: `${cy}-12-31` };
+  }
+  // Semester Genap: Januari - Juni tahun berjalan
+  return { dari: `${cy}-01-01`, sampai: `${cy}-06-30` };
+}
+
+let filterKasUmum = { ...rentangSemesterAktif(), kategori: '' };
 
 /** Apakah baris kas (visibilitas[]) boleh dilihat oleh viewer saat ini pada akses 'kelola'/'baca'. */
 function bolehLihatVisibilitasKas(row, aksesKas) {
