@@ -34,6 +34,9 @@ let SUPABASE_URL = SUPABASE_URL_DEFAULT;
 let SUPABASE_ANON_KEY = SUPABASE_ANON_KEY_DEFAULT;
 let supaClient = null;
 function initSupaClient(url, key) {
+  if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+    throw new Error('Library Supabase (supabase-js) belum termuat. Periksa koneksi internet/CDN.');
+  }
   SUPABASE_URL = url;
   SUPABASE_ANON_KEY = key;
   supaClient = window.supabase.createClient(url, key);
@@ -43,9 +46,14 @@ function initSupaClient(url, key) {
   try {
     initSupaClient(cfg.url, cfg.key);
   } catch (e) {
-    console.warn('Konfigurasi server tersimpan tidak valid, kembali ke default:', e);
+    console.error('Konfigurasi server tersimpan tidak valid, kembali ke default:', e);
     hapusKonfigurasiServer();
-    initSupaClient(SUPABASE_URL_DEFAULT, SUPABASE_ANON_KEY_DEFAULT);
+    try {
+      initSupaClient(SUPABASE_URL_DEFAULT, SUPABASE_ANON_KEY_DEFAULT);
+    } catch (e2) {
+      console.error('Gagal menginisialisasi Supabase client bahkan dengan konfigurasi default:', e2);
+      supaClient = null;
+    }
   }
 })();
 
@@ -105,6 +113,9 @@ function bangunResponsSesi(prof, emailFallback, token) {
 }
 
 async function apiCall(action, data = {}) {
+  if (!supaClient) {
+    return { status: 'error', message: 'Gagal terhubung ke Supabase. Periksa Konfigurasi Server (ikon gerigi di kartu login) — URL/Anon Key mungkin tidak valid atau library Supabase gagal dimuat.' };
+  }
   try {
     if (action === 'login') {
       const identifier = String(data.username || '').trim();

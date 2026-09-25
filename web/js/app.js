@@ -1084,8 +1084,8 @@ async function bukaPengaturanServer() {
   let tersimpan = null;
   try { tersimpan = JSON.parse(localStorage.getItem(SERVER_CONFIG_KEY) || 'null'); } catch (e) { /* abaikan */ }
   const cfg = {
-    url: (tersimpan && tersimpan.url) ? String(tersimpan.url) : 'https://lkhuyoihrrnzvrmhquln.supabase.co',
-    key: (tersimpan && tersimpan.key) ? String(tersimpan.key) : 'sb_publishable_o_pUNncXPyOmV2yhhOevcw_58aUM3pB',
+    url: (tersimpan && tersimpan.url) ? String(tersimpan.url) : '',
+    key: (tersimpan && tersimpan.key) ? String(tersimpan.key) : '',
     gcalClientId: (tersimpan && tersimpan.gcalClientId) ? String(tersimpan.gcalClientId) : ''
   };
   const res = await Swal.fire({
@@ -1093,9 +1093,9 @@ async function bukaPengaturanServer() {
     html: `
       <div class="text-left text-[11px] text-slate-300 mt-2">
         <label class="font-bold text-blue-300">SUPABASE_URL</label>
-        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://lkhuyoihrrnzvrmhquln.supabase.co (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
+        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://xxxxx.supabase.co (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
         <label class="font-bold text-blue-300">SUPABASE_ANON_KEY</label>
-        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_o_pUNncXPyOmV2yhhOevcw_58aUM3pB (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
+        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_... / anon key (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
         <p class="text-[9px] text-slate-400 mt-2 mb-3">Kosongkan untuk tetap memakai konfigurasi default bawaan aplikasi. Tersimpan hanya di browser ini. Anon key bersifat publik (publishable).</p>
         <label class="font-bold text-emerald-300">Google Calendar — Client ID (opsional)</label>
         <input id="sv_gcal" value="${escJs(cfg.gcalClientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500">
@@ -1130,6 +1130,16 @@ async function bukaPengaturanServer() {
   }
   if (!url || !key) { showToast('error', 'URL dan Anon Key wajib diisi (atau kosongkan keduanya untuk pakai default).'); return; }
   try { new URL(url); } catch (e) { showToast('error', 'Format URL tidak valid.'); return; }
+  try {
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+      showToast('error', 'Library Supabase belum termuat. Periksa koneksi internet lalu coba lagi.');
+      return;
+    }
+    window.supabase.createClient(url, key);
+  } catch (e) {
+    showToast('error', 'URL/Anon Key tidak valid untuk Supabase: ' + (e.message || e));
+    return;
+  }
   let ok = false;
   try {
     const r = await fetch(url + '/auth/v1/health', { headers: { apikey: key } });
@@ -14415,7 +14425,7 @@ async function renderTabKasUmumEkskul() {
 
   box.innerHTML = `
     <div class="p-4 space-y-3">
-      <div class="flex gap-2 items-center flex-wrap">
+      <div class="flex gap-2 items-center justify-center flex-wrap">
         <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
         <button onclick="renderTabEkskul()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Refresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
         ${bolehKelola ? `<button onclick="formKasUmum(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Transaksi Kas Umum</button>` : ''}
@@ -14425,16 +14435,16 @@ async function renderTabKasUmumEkskul() {
         <button onclick="exportKasUmumWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Export WhatsApp</button>
         <button onclick="exportKasUmumPDF()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
       </div>
-      <div class="flex gap-2 items-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
-        <label class="text-[10px] text-slate-400">Dari <input type="date" id="ku_dari" value="${escJs(filterKasUmum.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
-        <label class="text-[10px] text-slate-400">Sampai <input type="date" id="ku_sampai" value="${escJs(filterKasUmum.sampai)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
-        <select id="ku_kategori" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
+      <div class="flex gap-2 items-center justify-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
+        <label class="text-[10px] text-slate-400">Dari <input type="date" id="ku_dari" onchange="terapkanFilterKasUmum()" value="${escJs(filterKasUmum.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <label class="text-[10px] text-slate-400">Sampai <input type="date" id="ku_sampai" onchange="terapkanFilterKasUmum()" value="${escJs(filterKasUmum.sampai)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <select id="ku_kategori" onchange="terapkanFilterKasUmum()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
           <option value="">Semua Kategori</option>
           ${kategoriList.map(k => `<option value="${escJs(k.id)}" ${filterKasUmum.kategori === k.id ? 'selected' : ''}>${escapeHtml(k.nama)}</option>`).join('')}
         </select>
         <button onclick="terapkanFilterKasUmum()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
       </div>
-      <div id="ku-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      <div id="ku-cards" class="grid grid-cols-3 gap-2 sm:gap-3"></div>
       <div id="ku-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat transaksi...</div>
     </div>`;
   await muatKasUmum();
@@ -14651,7 +14661,9 @@ function exportKasUmumWA() {
   rows.slice().reverse().slice(0, 30).forEach(r => {
     const tgl = String(r.tanggal || '').split('T')[0];
     const nom = Number(r.jumlah_masuk) ? `+${formatRupiah(r.jumlah_masuk)}` : `-${formatRupiah(r.jumlah_keluar)}`;
-    teks += `${tgl} | ${r.keterangan || (r.kategori_kas || {}).nama || '-'}${r.nama_siswa ? ' (' + r.nama_siswa + ')' : ''}: ${nom}\n`;
+    const bukti = r.no_bukti ? ` [Bukti: ${r.no_bukti}]` : '';
+    const nota = r.bukti_url ? ' [Ada Nota]' : '';
+    teks += `${tgl} | ${r.keterangan || (r.kategori_kas || {}).nama || '-'}${r.nama_siswa ? ' (' + r.nama_siswa + ')' : ''}: ${nom}${bukti}${nota}\n`;
   });
   teks += `\nTotal Pemasukan: ${formatRupiah(totalMasuk)}\nTotal Pengeluaran: ${formatRupiah(totalKeluar)}\n*Saldo Akhir: ${formatRupiah(totalMasuk - totalKeluar)}*`;
   Swal.fire({
@@ -14679,6 +14691,8 @@ function exportKasUmumPDF() {
       <td>${escapeHtml((r.kategori_kas || {}).nama || '-')}</td>
       <td>${escapeHtml(r.keterangan || '-')}</td>
       <td>${escapeHtml(r.nama_siswa || '-')}</td>
+      <td>${escapeHtml(r.no_bukti || '-')}</td>
+      <td>${r.bukti_url ? 'Ada' : '-'}</td>
       <td style="text-align:right">${Number(r.jumlah_masuk) ? formatRupiah(r.jumlah_masuk) : '-'}</td>
       <td style="text-align:right">${Number(r.jumlah_keluar) ? formatRupiah(r.jumlah_keluar) : '-'}</td>
       <td style="text-align:right">${formatRupiah(saldo)}</td>
@@ -14693,9 +14707,9 @@ function exportKasUmumPDF() {
   </style></head><body>
   <h1>Laporan Kas Umum</h1>
   <h2>Ekstrakurikuler: ${escapeHtml(window.__ekskulAktif || '')}</h2>
-  <table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Keterangan</th><th>Nama Siswa</th><th>Masuk</th><th>Keluar</th><th>Saldo</th></tr></thead>
+  <table><thead><tr><th>Tanggal</th><th>Kategori</th><th>Keterangan</th><th>Nama Siswa</th><th>No. Bukti</th><th>Nota</th><th>Masuk</th><th>Keluar</th><th>Saldo</th></tr></thead>
   <tbody>${trs}</tbody>
-  <tfoot><tr><td colspan="4">TOTAL</td><td style="text-align:right">${formatRupiah(totalMasuk)}</td><td style="text-align:right">${formatRupiah(totalKeluar)}</td><td style="text-align:right">${formatRupiah(totalMasuk - totalKeluar)}</td></tr></tfoot>
+  <tfoot><tr><td colspan="6">TOTAL</td><td style="text-align:right">${formatRupiah(totalMasuk)}</td><td style="text-align:right">${formatRupiah(totalKeluar)}</td><td style="text-align:right">${formatRupiah(totalMasuk - totalKeluar)}</td></tr></tfoot>
   </table>
   <script>window.onload=()=>{window.print();};<\/script>
   </body></html>`;
@@ -14858,7 +14872,7 @@ async function previewImportKasUmum(file) {
 }
 
 // ==================== TAB 5: KAS ANGGOTA ====================
-let filterKasAnggota = { tahun: new Date().getFullYear(), bulan: new Date().getMonth() + 1, status: '' };
+let filterKasAnggota = { dari: '', sampai: '', status: '' };
 const LABEL_MINGGU = ['M1', 'M2', 'M3', 'M4'];
 
 async function renderTabKasAnggotaEkskul() {
@@ -14870,29 +14884,34 @@ async function renderTabKasAnggotaEkskul() {
 
   box.innerHTML = `
     <div class="p-4 space-y-3">
-      <div class="flex gap-2 items-center flex-wrap">
+      <div class="flex gap-2 items-center justify-center flex-wrap">
         <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
-        <input type="number" id="ka_tahun" value="${filterKasAnggota.tahun}" class="w-20 bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
-        <select id="ka_bulan" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
-          ${['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}" ${filterKasAnggota.bulan === i + 1 ? 'selected' : ''}>${b}</option>`).join('')}
-        </select>
-        <select id="ka_status" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-2 text-xs text-white outline-none">
+        <button onclick="renderTabEkskul()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Refresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
+        ${bolehKelola ? `<button onclick="formKasAnggota()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Catat Iuran Anggota</button>` : ''}
+        ${bolehKelola ? `<button onclick="bukaDeskripsiIuranModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-tags"></i> Deskripsi Pembayaran</button>` : ''}
+        ${bolehKelola ? `<button onclick="openImportKasAnggota()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-import"></i> Import Excel</button>` : ''}
+        <button onclick="exportKasAnggotaCSV()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+        <button onclick="exportKasAnggotaPDF()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
+      </div>
+      <div class="flex gap-2 items-center justify-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
+        <label class="text-[10px] text-slate-400">Dari <input type="date" id="ka_dari" onchange="terapkanFilterKasAnggota()" value="${escJs(filterKasAnggota.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <label class="text-[10px] text-slate-400">Sampai <input type="date" id="ka_sampai" onchange="terapkanFilterKasAnggota()" value="${escJs(filterKasAnggota.sampai)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+        <select id="ka_status" onchange="terapkanFilterKasAnggota()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
           <option value="">Semua Status</option>
           <option value="lunas" ${filterKasAnggota.status === 'lunas' ? 'selected' : ''}>Lunas</option>
           <option value="menunggak" ${filterKasAnggota.status === 'menunggak' ? 'selected' : ''}>Menunggak</option>
         </select>
-        <button onclick="terapkanFilterKasAnggota()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
-        ${bolehKelola ? `<button onclick="formKasAnggota()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Catat Iuran Anggota</button>` : ''}
+        <button onclick="terapkanFilterKasAnggota()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
       </div>
-      <div id="ka-cards" class="grid grid-cols-1 sm:grid-cols-3 gap-3"></div>
+      <div id="ka-cards" class="grid grid-cols-3 gap-2 sm:gap-3"></div>
       <div id="ka-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat matriks iuran...</div>
     </div>`;
   await muatKasAnggota();
 }
 
 function terapkanFilterKasAnggota() {
-  filterKasAnggota.tahun = Number(document.getElementById('ka_tahun')?.value) || new Date().getFullYear();
-  filterKasAnggota.bulan = Number(document.getElementById('ka_bulan')?.value) || 1;
+  filterKasAnggota.dari = document.getElementById('ka_dari')?.value || '';
+  filterKasAnggota.sampai = document.getElementById('ka_sampai')?.value || '';
   filterKasAnggota.status = document.getElementById('ka_status')?.value || '';
   muatKasAnggota();
 }
@@ -14901,20 +14920,26 @@ async function muatKasAnggota() {
   const aktif = window.__ekskulAktif;
   const aksesKas = hakAksesKasUntuk(aktif);
   const anggota = await ambilAnggotaEkskul(aktif);
-  const { data, error } = await supaClient.rpc('matriks_iuran_anggota', { p_ekskul: aktif, p_tahun: filterKasAnggota.tahun, p_bulan: filterKasAnggota.bulan });
-  let rows = error ? [] : (data || []);
-  if (filterKasAnggota.status) rows = rows.filter(r => r.status === filterKasAnggota.status);
-  window.__cacheIuranRows = rows;
-
-  const totalLunas = rows.filter(r => r.status === 'lunas').length;
-  const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-  const totalTerkumpul = rows.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const { data, error } = await supaClient.rpc('iuran_anggota_rentang', {
+    p_ekskul: aktif,
+    p_dari: filterKasAnggota.dari || null,
+    p_sampai: filterKasAnggota.sampai || null
+  });
+  const rowsSemua = error ? [] : (data || []);
+  window.__cacheIuranRows = rowsSemua;
+  // Kartu ringkasan dihitung dari data hasil filter tanggal SAJA (tidak terpengaruh filter status)
+  const totalLunas = rowsSemua.filter(r => r.status === 'lunas').length;
+  const totalTagihan = rowsSemua.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const totalTerkumpul = rowsSemua.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
 
   const cards = document.getElementById('ka-cards');
   if (cards) cards.innerHTML = `
-    <div class="bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-4"><div class="text-[10px] text-emerald-300 uppercase font-bold">Pembayaran Lunas</div><div class="text-lg font-bold text-white mt-1">${totalLunas} dari ${rows.length}</div></div>
-    <div class="bg-blue-900/30 border border-blue-500/30 rounded-xl p-4"><div class="text-[10px] text-blue-300 uppercase font-bold">Dana Terkumpul</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalTerkumpul)}</div></div>
-    <div class="bg-amber-900/30 border border-amber-500/30 rounded-xl p-4"><div class="text-[10px] text-amber-300 uppercase font-bold">Total Tagihan</div><div class="text-lg font-bold text-white mt-1">${formatRupiah(totalTagihan)}</div></div>`;
+    <div class="bg-emerald-900/30 border border-emerald-500/30 rounded-xl p-2 sm:p-4"><div class="text-[9px] sm:text-[10px] text-emerald-300 uppercase font-bold">Pembayaran Lunas</div><div class="text-sm sm:text-lg font-bold text-white mt-1">${totalLunas} dari ${rowsSemua.length}</div></div>
+    <div class="bg-blue-900/30 border border-blue-500/30 rounded-xl p-2 sm:p-4"><div class="text-[9px] sm:text-[10px] text-blue-300 uppercase font-bold">Dana Terkumpul</div><div class="text-sm sm:text-lg font-bold text-white mt-1">${formatRupiah(totalTerkumpul)}</div></div>
+    <div class="bg-amber-900/30 border border-amber-500/30 rounded-xl p-2 sm:p-4"><div class="text-[9px] sm:text-[10px] text-amber-300 uppercase font-bold">Total Tagihan</div><div class="text-sm sm:text-lg font-bold text-white mt-1">${formatRupiah(totalTagihan)}</div></div>`;
+
+  // Baris tabel: kartu tidak terdampak filter status, tapi tabel iya
+  const rows = filterKasAnggota.status ? rowsSemua.filter(r => r.status === filterKasAnggota.status) : rowsSemua;
 
   const byNis = {};
   rows.forEach(r => { (byNis[r.nis_nip] = byNis[r.nis_nip] || []).push(r); });
@@ -14924,31 +14949,90 @@ async function muatKasAnggota() {
   if (!tabel) return;
   const namaMap = {};
   anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
-  const listNis = Object.keys(byNis).length ? Object.keys(byNis) : anggota.map(a => a.nis_nip);
+  const listNis = Object.keys(byNis);
   tabel.outerHTML = error
     ? `<p class="italic p-2">Gagal memuat: ${escapeHtml(error.message)}</p>`
     : !listNis.length
-      ? `<p class="italic p-2">Belum ada data iuran pada periode ini.</p>`
+      ? `<p class="italic p-2">Belum ada data iuran pada rentang tanggal ini.</p>`
       : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
       <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
-        <th class="p-2">Nama</th><th class="p-2">NIS</th><th class="p-2">Periode</th><th class="p-2 text-right">Nominal</th><th class="p-2">Status</th><th class="p-2">Tgl Bayar</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
+        <th class="p-2">Ekstrakurikuler</th><th class="p-2">Nama</th><th class="p-2">NIS</th><th class="p-2">Periode</th><th class="p-2 text-right">Nominal</th><th class="p-2">Status</th><th class="p-2">Tgl Bayar</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
       </tr></thead>
       <tbody>${listNis.flatMap(nis => (byNis[nis] || []).map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
+        <td class="p-2">${escapeHtml(aktif || '-')}</td>
         <td class="p-2">${escapeHtml(namaMap[nis] || nis)}</td>
         <td class="p-2">${escapeHtml(nis)}</td>
         <td class="p-2">${escapeHtml(r.periode_label)} <span class="text-slate-500">(${escapeHtml(r.periode_tipe)})</span></td>
         <td class="p-2 text-right">${formatRupiah(r.nominal)}</td>
         <td class="p-2"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${r.status === 'lunas' ? 'bg-emerald-600/30 text-emerald-300' : 'bg-red-600/30 text-red-300'}">${r.status === 'lunas' ? 'Lunas' : 'Menunggak'}</span></td>
         <td class="p-2">${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
-        ${bolehKelola ? `<td class="p-2"><button onclick="hapusIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>` : ''}
+        ${bolehKelola ? `<td class="p-2"><button onclick="hapusIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}','${escJs(r.tahun)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>` : ''}
       </tr>`)).join('')}</tbody></table></div>`;
 }
+
 
 /** Ambil daftar deskripsi iuran tersimpan untuk ekskul tertentu (untuk dropdown "Deskripsi Pembayaran"). */
 async function ambilDeskripsiIuran(ekskul) {
   const { data, error } = await supaClient.from('deskripsi_iuran').select('*').eq('ekskul', ekskul).order('judul');
   return error ? [] : (data || []);
 }
+
+/** Modal kelola "Deskripsi Pembayaran" (tambah/edit/hapus) khusus ekskul aktif. */
+async function bukaDeskripsiIuranModal() {
+  const aktif = window.__ekskulAktif;
+  if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const rows = await ambilDeskripsiIuran(aktif);
+  const baris = r => `<tr class="border-b border-white/10">
+    <td class="p-1.5"><input value="${escJs(r.judul)}" onchange="simpanJudulDeskripsiIuran('${escJs(r.id)}', this.value)" class="w-full bg-black/40 border border-white/20 rounded px-1.5 py-1 text-white outline-none text-[10px]"></td>
+    <td class="p-1.5"><input value="${escJs(r.deskripsi || '')}" onchange="simpanDeskripsiDeskripsiIuran('${escJs(r.id)}', this.value)" class="w-full bg-black/40 border border-white/20 rounded px-1.5 py-1 text-white outline-none text-[10px]"></td>
+    <td class="p-1.5 text-center"><button onclick="hapusDeskripsiIuran('${escJs(r.id)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>
+  </tr>`;
+  Swal.fire({
+    title: '<i class="fa-solid fa-tags"></i> Deskripsi Pembayaran',
+    width: '640px',
+    html: `<div class="text-left text-[11px] text-slate-300">
+      <div class="flex gap-2 mb-2">
+        <input id="di_judul" placeholder="Judul deskripsi baru (cth: Iuran Kas Bulanan)" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <button onclick="tambahDeskripsiIuran()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 rounded font-bold"><i class="fa-solid fa-plus"></i></button>
+      </div>
+      <div class="max-h-72 overflow-auto custom-scrollbar border border-white/10 rounded-lg">
+        <table class="w-full text-[10px]"><thead><tr class="text-slate-400 uppercase bg-white/5"><th class="p-1.5 text-left">Judul</th><th class="p-1.5 text-left">Deskripsi</th><th class="p-1.5">Aksi</th></tr></thead>
+        <tbody>${rows.map(baris).join('')}</tbody></table>
+      </div>
+    </div>`,
+    background: '#1e293b', color: '#fff', showConfirmButton: false, showCloseButton: true
+  });
+}
+
+async function tambahDeskripsiIuran() {
+  const aktif = window.__ekskulAktif;
+  const judul = document.getElementById('di_judul')?.value.trim();
+  if (!judul) return showToast('error', 'Isi judul deskripsi.');
+  const { error } = await supaClient.from('deskripsi_iuran').insert({ ekskul: aktif, judul });
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  showToast('success', 'Deskripsi ditambahkan');
+  bukaDeskripsiIuranModal();
+}
+
+async function simpanJudulDeskripsiIuran(id, judul) {
+  await supaClient.from('deskripsi_iuran').update({ judul }).eq('id', id);
+  showToast('success', 'Judul tersimpan');
+}
+
+async function simpanDeskripsiDeskripsiIuran(id, deskripsi) {
+  await supaClient.from('deskripsi_iuran').update({ deskripsi }).eq('id', id);
+  showToast('success', 'Deskripsi tersimpan');
+}
+
+async function hapusDeskripsiIuran(id) {
+  const konf = await Swal.fire({ title: 'Hapus deskripsi ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
+  if (!konf.isConfirmed) return;
+  const { error } = await supaClient.from('deskripsi_iuran').delete().eq('id', id);
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  showToast('success', 'Deskripsi terhapus');
+  bukaDeskripsiIuranModal();
+}
+
 
 async function formKasAnggota() {
   const aktif = window.__ekskulAktif;
@@ -15020,13 +15104,28 @@ async function formKasAnggota() {
         const ada = (await ambilDeskripsiIuran(aktif)).some(x => x.judul.toLowerCase() === d.deskripsi_pembayaran.toLowerCase());
         if (!ada) await supaClient.from('deskripsi_iuran').insert({ ekskul: aktif, judul: d.deskripsi_pembayaran });
       }
+      // Cek data yang sudah ada untuk periode+anggota yang sama (agar bisa ditawarkan overwrite)
+      const { data: existing } = await supaClient.from('iuran_anggota').select('nis_nip')
+        .eq('ekskul', aktif).eq('periode_tipe', d.periode_tipe).eq('periode_label', d.periode_label).eq('tahun', d.tahun)
+        .in('nis_nip', d.nisList);
+      const nisSudahAda = (existing || []).map(x => x.nis_nip);
+      if (nisSudahAda.length) {
+        const konfTimpa = await Swal.fire({
+          title: 'Data sudah ada',
+          html: `Catatan iuran periode <b>${escapeHtml(d.periode_label)}</b> tahun <b>${d.tahun}</b> sudah ada untuk <b>${nisSudahAda.length}</b> anggota yang dipilih.<br>Timpa (overwrite) data tersebut dengan data baru ini?`,
+          icon: 'warning', showCancelButton: true, confirmButtonColor: '#f59e0b', confirmButtonText: 'Ya, Timpa', cancelButtonText: 'Batal',
+          background: '#1e293b', color: '#fff'
+        });
+        if (!konfTimpa.isConfirmed) return;
+      }
       const dicatat_oleh = (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '');
       const payloads = d.nisList.map(nis_nip => ({
         ekskul: aktif, nis_nip, periode_tipe: d.periode_tipe, periode_label: d.periode_label,
         tahun: d.tahun, bulan: d.bulan, deskripsi_pembayaran: d.deskripsi_pembayaran, nominal: d.nominal,
         status: d.status, tanggal_bayar: d.tanggal_bayar, dicatat_oleh
       }));
-      const { error } = await supaClient.from('iuran_anggota').insert(payloads);
+      const { error } = await supaClient.from('iuran_anggota')
+        .upsert(payloads, { onConflict: 'ekskul,nis_nip,periode_tipe,periode_label,tahun' });
       if (error) throw error;
       try {
         await supaClient.from('notifikasi').insert(d.nisList.map(nis_nip => ({
@@ -15034,11 +15133,20 @@ async function formKasAnggota() {
           judul: 'Iuran Anggota', pesan: `Iuran ${d.periode_label} sebesar ${formatRupiah(d.nominal)} tercatat ${d.status === 'lunas' ? 'LUNAS' : 'MENUNGGAK'}.`
         })));
       } catch (ignoreErr) {}
-      showToast('success', `Iuran ${payloads.length} anggota tersimpan`);
+      showToast('success', `Iuran ${payloads.length} anggota tersimpan${nisSudahAda.length ? ` (${nisSudahAda.length} ditimpa)` : ''}`);
       renderTabEkskul();
-    } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: /duplicate|unique/i.test(e.message || '') ? 'Periode ini sudah tercatat untuk sebagian anggota (yang lain tetap tersimpan bila terpisah).' : (e.message || ''), background: '#1e293b', color: '#fff' }); }
+    } catch (e) {
+      Swal.fire({
+        icon: 'error', title: 'Gagal',
+        text: /duplicate|unique/i.test(e.message || '')
+          ? 'Periode ini sudah tercatat untuk anggota yang dipilih. Hapus catatan lama terlebih dahulu, atau konfirmasi ulang untuk menimpa (overwrite) data.'
+          : (e.message || ''),
+        background: '#1e293b', color: '#fff'
+      });
+    }
   });
 }
+
 /** Ganti input periode di form Kas Anggota sesuai tipe (bulanan/mingguan/harian). */
 function ubahTipePeriodeIuran() {
   const tipe = document.getElementById('kia_tipe')?.value || 'bulanan';
@@ -15061,16 +15169,181 @@ function ubahTipePeriodeIuran() {
   }
 }
 
-async function hapusIuranAnggota(nis, periode_tipe, periode_label) {
+async function hapusIuranAnggota(nis, periode_tipe, periode_label, tahun) {
   if (hakAksesKasUntuk(window.__ekskulAktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
   const konf = await Swal.fire({ title: 'Hapus catatan iuran ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
   if (!konf.isConfirmed) return;
   const { error } = await supaClient.from('iuran_anggota').delete()
-    .eq('ekskul', window.__ekskulAktif).eq('nis_nip', nis).eq('periode_tipe', periode_tipe).eq('periode_label', periode_label).eq('tahun', filterKasAnggota.tahun);
+    .eq('ekskul', window.__ekskulAktif).eq('nis_nip', nis).eq('periode_tipe', periode_tipe).eq('periode_label', periode_label).eq('tahun', Number(tahun));
   if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
   showToast('success', 'Catatan iuran terhapus');
   renderTabEkskul();
 }
+
+/** Export tabel Kas Anggota yang sedang tampil ke file Excel (.xlsx) via SheetJS. */
+function exportKasAnggotaCSV() {
+  const rows = window.__cacheIuranRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const header = ['Ekstrakurikuler', 'NIS', 'Periode', 'Tipe', 'Tahun', 'Deskripsi Pembayaran', 'Nominal', 'Status', 'Tanggal Bayar'];
+  const data = [[`KAS ANGGOTA - ${window.__ekskulAktif || ''}`], [], header];
+  rows.forEach(r => {
+    data.push([
+      window.__ekskulAktif || '',
+      r.nis_nip || '',
+      r.periode_label || '',
+      r.periode_tipe || '',
+      r.tahun || '',
+      r.deskripsi_pembayaran || '',
+      Number(r.nominal) || 0,
+      r.status === 'lunas' ? 'Lunas' : 'Menunggak',
+      r.tanggal_bayar ? String(r.tanggal_bayar).split('T')[0] : ''
+    ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Kas Anggota');
+  XLSX.writeFile(wb, `kas-anggota-${window.__ekskulAktif || 'ekskul'}.xlsx`);
+}
+
+/** Cetak laporan Kas Anggota ke jendela print khusus. */
+function exportKasAnggotaPDF() {
+  const rows = window.__cacheIuranRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  const trs = rows.map(r => `<tr>
+    <td>${escapeHtml(window.__ekskulAktif || '')}</td>
+    <td>${escapeHtml(r.nis_nip || '')}</td>
+    <td>${escapeHtml(r.periode_label || '')} (${escapeHtml(r.periode_tipe || '')})</td>
+    <td>${escapeHtml(r.deskripsi_pembayaran || '-')}</td>
+    <td style="text-align:right">${formatRupiah(r.nominal)}</td>
+    <td>${r.status === 'lunas' ? 'Lunas' : 'Menunggak'}</td>
+    <td>${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
+  </tr>`).join('');
+  const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const totalTerkumpul = rows.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Laporan Kas Anggota - ${escapeHtml(window.__ekskulAktif || '')}</title>
+  <style>
+    body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;}
+    h1{font-size:15px;margin-bottom:2px;} h2{font-size:12px;font-weight:normal;color:#444;margin-top:0;}
+    table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;}
+    th{background:#eee;text-align:left;} tfoot td{font-weight:bold;background:#f5f5f5;}
+  </style></head><body>
+  <h1>Laporan Kas Anggota</h1>
+  <h2>Ekstrakurikuler: ${escapeHtml(window.__ekskulAktif || '')}</h2>
+  <table><thead><tr><th>Ekstrakurikuler</th><th>NIS</th><th>Periode</th><th>Deskripsi Pembayaran</th><th>Nominal</th><th>Status</th><th>Tgl Bayar</th></tr></thead>
+  <tbody>${trs}</tbody>
+  <tfoot><tr><td colspan="4">TOTAL TAGIHAN / TERKUMPUL</td><td style="text-align:right">${formatRupiah(totalTagihan)}</td><td colspan="2" style="text-align:right">${formatRupiah(totalTerkumpul)}</td></tr></tfoot>
+  </table>
+  <script>window.onload=()=>{window.print();};<\\/script>
+  </body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return showToast('error', 'Popup diblokir browser. Izinkan popup untuk export PDF.');
+  w.document.write(html);
+  w.document.close();
+}
+/** Import Excel iuran anggota massal. */
+function openImportKasAnggota() {
+  Swal.fire({
+    title: '<div class="text-base font-bold text-teal-400"><i class="fa-solid fa-file-excel"></i> Import Kas Anggota</div>',
+    html: `
+      <div class="text-sm text-slate-300 mb-4 text-left">
+        1. Unduh template format Kas Anggota di bawah ini.<br>
+        2. Isi data iuran pada Excel (Tipe: harian / mingguan / bulanan; Status: lunas / menunggak).<br>
+        3. Upload kembali file yang sudah diisi ke sini.
+      </div>
+      <button onclick="downloadTemplateKasAnggota()" class="w-full mb-4 bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded shadow-md text-xs font-bold transition"><i class="fa-solid fa-download"></i> Download Template Kas Anggota</button>
+      <div class="border-t border-white/20 pt-4">
+          <label class="block text-left text-[10px] font-bold text-teal-300 mb-1">Upload File Excel (.xlsx)</label>
+          <input type="file" id="file-import-kasanggota" accept=".xlsx, .xls" class="w-full bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none focus:border-teal-500">
+      </div>
+    `,
+    background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-table-list"></i> Pratinjau Import',
+    preConfirm: () => {
+        const file = document.getElementById('file-import-kasanggota').files[0];
+        if (!file) { Swal.showValidationMessage('Pilih file Excel terlebih dahulu!'); return false; }
+        return file;
+    }
+  }).then(res => { if (res.isConfirmed) previewImportKasAnggota(res.value); });
+}
+
+function downloadTemplateKasAnggota() {
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS tidak ditemukan.', 'error');
+  const headers = ['NIS', 'Tipe Periode (harian/mingguan/bulanan)', 'Periode (cth: 2026-01-15 / M1)', 'Tahun', 'Bulan (1-12)', 'Deskripsi Pembayaran', 'Nominal', 'Status (lunas/menunggak)', 'Tanggal Bayar (YYYY-MM-DD)'];
+  const dataRows = [
+    ['FORMAT IMPORT KAS ANGGOTA', window.__ekskulAktif || ''],
+    ['INFO', 'Tipe Periode wajib harian/mingguan/bulanan. Status wajib lunas/menunggak. NIS harus terdaftar sebagai anggota ekskul ini.'],
+    headers,
+    ['1234567890', 'harian', '2026-01-15', 2026, 1, 'Iuran Kas Bulanan', 20000, 'lunas', '2026-01-15']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(dataRows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template_KasAnggota');
+  XLSX.writeFile(wb, `Template_KasAnggota_${window.__ekskulAktif || 'ekskul'}.xlsx`);
+}
+async function previewImportKasAnggota(file) {
+  try {
+    const jsonArray = await bacaExcelPertama(file);
+    if (jsonArray.length < 4) throw new Error('Format tidak dikenali.');
+    const aktif = window.__ekskulAktif;
+    const anggota = await ambilAnggotaEkskul(aktif);
+    const nisValid = new Set(anggota.map(a => a.nis_nip));
+    const kolom = [
+      { k: 'nis', l: 'NIS' }, { k: 'tipe', l: 'Tipe' }, { k: 'periode', l: 'Periode' }, { k: 'tahun', l: 'Tahun' },
+      { k: 'bulan', l: 'Bulan' }, { k: 'deskripsi', l: 'Deskripsi' }, { k: 'nominal', l: 'Nominal' }, { k: 'status', l: 'Status' }, { k: 'tglbayar', l: 'Tgl Bayar' }
+    ];
+    const baris = [];
+    for (let i = 3; i < jsonArray.length; i++) {
+      const row = jsonArray[i];
+      if (!row || !row[0]) continue;
+      const nis = String(row[0]).trim();
+      const tipe = String(row[1] || '').trim().toLowerCase();
+      const periode = String(row[2] || '').trim();
+      const tahun = Number(row[3]) || new Date().getFullYear();
+      const bulan = row[4] ? Number(row[4]) : null;
+      const deskripsi = String(row[5] || '').trim();
+      const nominal = Number(row[6]) || 0;
+      const status = String(row[7] || '').trim().toLowerCase();
+      const tglbayar = String(row[8] || '').trim();
+      let stat = 'ok', alasan = '';
+      if (!nisValid.has(nis)) { stat = 'bad'; alasan = `NIS "${nis}" bukan anggota ekskul ini`; }
+      else if (!['harian', 'mingguan', 'bulanan'].includes(tipe)) { stat = 'bad'; alasan = 'Tipe periode harus harian/mingguan/bulanan'; }
+      else if (!periode) { stat = 'bad'; alasan = 'Periode wajib diisi'; }
+      else if (!nominal || nominal <= 0) { stat = 'bad'; alasan = 'Nominal harus > 0'; }
+      else if (!['lunas', 'menunggak'].includes(status)) { stat = 'bad'; alasan = 'Status harus lunas/menunggak'; }
+      else if (tglbayar && !/^\d{4}-\d{2}-\d{2}$/.test(tglbayar)) { stat = 'bad'; alasan = 'Format tanggal bayar salah'; }
+      baris.push({
+        status: stat, alasan,
+        sel: { nis: { v: nis }, tipe: { v: tipe }, periode: { v: periode }, tahun: { v: tahun }, bulan: { v: bulan }, deskripsi: { v: deskripsi }, nominal: { v: nominal }, status: { v: status }, tglbayar: { v: tglbayar } },
+        raw: { nis_nip: nis, periode_tipe: tipe, periode_label: periode, tahun, bulan, deskripsi_pembayaran: deskripsi, nominal, status, tanggal_bayar: tglbayar || null }
+      });
+    }
+    bukaPreviewImport({
+      judul: 'Import Data Kas Anggota', namaFile: file.name, kolom, baris,
+      labelTerapkan: 'Terapkan & Simpan',
+      onTerapkan: async (rowsValid) => {
+        Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+        try {
+          const dicatat_oleh = (currentUser.user["ID Akun Guru"] || currentUser.user["NIP"] || currentUser.user["NIS"] || '');
+          const payloads = rowsValid.map(b => ({ ekskul: aktif, dicatat_oleh, ...b.raw }));
+          const { error } = await supaClient.from('iuran_anggota')
+            .upsert(payloads, { onConflict: 'ekskul,nis_nip,periode_tipe,periode_label,tahun' });
+          if (error) throw error;
+          showToast('success', `${payloads.length} data iuran berhasil diimpor`);
+          renderTabEkskul();
+        } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
+      },
+      onReupload: () => openImportKasAnggota()
+    });
+  } catch (e) {
+    Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' });
+  }
+}
+
+
+
+
+
+
 
 
 
