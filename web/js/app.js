@@ -1093,9 +1093,9 @@ async function bukaPengaturanServer() {
     html: `
       <div class="text-left text-[11px] text-slate-300 mt-2">
         <label class="font-bold text-blue-300">SUPABASE_URL</label>
-        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://lkhuyoihrrnzvrmhquln.supabase.co (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
+        <input id="sv_url" value="${escJs(cfg.url)}" placeholder="https://xxxxx.supabase.co (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 mb-3 text-white outline-none focus:border-blue-500">
         <label class="font-bold text-blue-300">SUPABASE_ANON_KEY</label>
-        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_o_pUNncXPyOmV2yhhOevcw_58aUM3pB (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
+        <input id="sv_key" value="${escJs(cfg.key)}" placeholder="sb_publishable_... / anon key (kosong = pakai default bawaan)" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-blue-500">
         <p class="text-[9px] text-slate-400 mt-2 mb-3">Kosongkan untuk tetap memakai konfigurasi default bawaan aplikasi. Tersimpan hanya di browser ini. Anon key bersifat publik (publishable).</p>
         <label class="font-bold text-emerald-300">Google Calendar — Client ID (opsional)</label>
         <input id="sv_gcal" value="${escJs(cfg.gcalClientId || '')}" placeholder="xxxxxxxx.apps.googleusercontent.com" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500">
@@ -14872,7 +14872,14 @@ async function previewImportKasUmum(file) {
 }
 
 // ==================== TAB 5: KAS ANGGOTA ====================
-let filterKasAnggota = { dari: '', sampai: '', status: '' };
+/** Rentang tanggal default = semester akademik berjalan (konvensi sama dgn isiHeaderSesi:
+ *  Juli-Desember = Ganjil, Januari-Juni = Genap). */
+function hitungRentangSemesterAktif() {
+  const now = new Date(); const cm = now.getMonth(), cy = now.getFullYear();
+  if (cm >= 6) return { dari: `${cy}-07-01`, sampai: `${cy}-12-31` }; // Ganjil
+  return { dari: `${cy}-01-01`, sampai: `${cy}-06-30` }; // Genap
+}
+let filterKasAnggota = { ...hitungRentangSemesterAktif(), status: '' };
 const LABEL_MINGGU = ['M1', 'M2', 'M3', 'M4'];
 
 async function renderTabKasAnggotaEkskul() {
