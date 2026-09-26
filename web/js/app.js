@@ -12946,7 +12946,7 @@ async function renderEkstrakurikulerModule(container) {
     container.innerHTML = `
       <div class="glass-card rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex flex-col h-[85vh]">
         <div class="bg-slate-800/80 p-4 border-b border-white/10 flex flex-col sm:flex-row justify-between items-center gap-3">
-          <h2 class="text-sm sm:text-base font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-medal text-yellow-400 mr-2"></i> Ekstrakurikuler</h2>
+          <h2 class="text-sm sm:text-base font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-medal text-yellow-400 mr-2"></i> Ekstrakurikuler <span id="ekskul-header-nama" class="text-yellow-300">${window.__ekskulAktif ? '- ' + escapeHtml(window.__ekskulAktif) : ''}</span></h2>
           <div class="flex gap-2 w-full sm:w-auto p-1 bg-black/40 rounded-lg flex-wrap justify-center">
             ${tabBtn('info', 'Info Ekskul', 'fa-circle-info', true)}
             ${tabBtn('profil', 'Profil & Anggota', 'fa-users', true)}
@@ -12977,7 +12977,10 @@ function switchTabEkskul(tab) {
 function pilihEkskulModul(ekskul) {
   const akses = hakAksesEkskul();
   if ((akses === 'pengurus' || akses === 'anggota') && !ekskulMilikMurid().includes(ekskul)) return showToast('error', 'Anda bukan anggota ekstrakurikuler tersebut.');
-  window.__ekskulAktif = ekskul; renderTabEkskul();
+  window.__ekskulAktif = ekskul;
+  const headerNama = document.getElementById('ekskul-header-nama');
+  if (headerNama) headerNama.textContent = ekskul ? `- ${ekskul}` : '';
+  renderTabEkskul();
 }
 async function renderTabEkskul() {
   if (currentTabEkskul === 'info') return renderTabInfoEkskul();
@@ -13025,6 +13028,43 @@ function bukaAbsensiEkskul() {
 }
 
 // ---------- TAB 0: INFO EKSTRAKURIKULER (read-only, req 1e) ----------
+/** Urutan baku Pengurus & Jabatan Ekskul (Ketua di atas, dst.). Jabatan di luar daftar → di bawah, urut A-Z. */
+const URUTAN_JABATAN_EKSKUL = [
+  'Ketua', 'Wakil Ketua', 'Sekretaris 1', 'Sekretaris 2', 'Bendahara 1', 'Bendahara 2',
+  'Divisi Paduan Suara', 'Divisi Seni Musik', 'Divisi Seni Tari Modern', 'Divisi Seni Tari Tradisional',
+  'Dokumentasi/Publikasi', 'Seksi Konsumsi', 'Divisi Peralatan/Logistik'
+];
+function urutanIndexJabatan(jabatan) {
+  const j = String(jabatan || '').trim().toLowerCase();
+  const i = URUTAN_JABATAN_EKSKUL.findIndex(x => x.toLowerCase() === j);
+  return i < 0 ? 999 : i;
+}
+/** Urutkan daftar pengurus sesuai URUTAN_JABATAN_EKSKUL, lalu A-Z untuk jabatan lain/sama. */
+function urutkanPengurusBakuEkskul(list, petaJab) {
+  return [...(list || [])].sort((a, b) => {
+    const ja = petaJab[String(a.nis_nip)] || a.jabatan || '';
+    const jb = petaJab[String(b.nis_nip)] || b.jabatan || '';
+    const ia = urutanIndexJabatan(ja), ib = urutanIndexJabatan(jb);
+    if (ia !== ib) return ia - ib;
+    if (ia === 999 && ja !== jb) return String(ja).localeCompare(String(jb), 'id');
+    return String(a.nama_lengkap || '').localeCompare(String(b.nama_lengkap || ''), 'id');
+  });
+}
+/** Palet warna berbeda per Sub-Ekstrakurikuler (dipakai sebagai border/teks kartu anggota). */
+const PALET_WARNA_SUB = [
+  { border: 'border-indigo-500/50', text: 'text-indigo-300', bg: 'bg-indigo-900/20' },
+  { border: 'border-emerald-500/50', text: 'text-emerald-300', bg: 'bg-emerald-900/20' },
+  { border: 'border-amber-500/50', text: 'text-amber-300', bg: 'bg-amber-900/20' },
+  { border: 'border-pink-500/50', text: 'text-pink-300', bg: 'bg-pink-900/20' },
+  { border: 'border-sky-500/50', text: 'text-sky-300', bg: 'bg-sky-900/20' },
+  { border: 'border-orange-500/50', text: 'text-orange-300', bg: 'bg-orange-900/20' },
+  { border: 'border-purple-500/50', text: 'text-purple-300', bg: 'bg-purple-900/20' },
+  { border: 'border-teal-500/50', text: 'text-teal-300', bg: 'bg-teal-900/20' }
+];
+function warnaSub(namaSub, subs) {
+  const idx = (subs || []).findIndex(s => s.nama_sub === namaSub);
+  return PALET_WARNA_SUB[idx >= 0 ? idx % PALET_WARNA_SUB.length : PALET_WARNA_SUB.length - 1];
+}
 /** Label jadwal agenda: tanggal, atau "Setiap <hari>" untuk agenda berulang (req 1d). */
 function labelJadwalAgenda(r) {
   const hari = String(r.hari || '').split(',').map(h => h.trim()).filter(Boolean);
@@ -13050,6 +13090,26 @@ function urutkanAgendaEkskul(rows) {
   return [...ulang, ...tgl];
 }
 
+// Sort A-Z/Z-A per kolom untuk tabel Pengurus & Anggota (tab Info Ekskul).
+let sortInfoPengurus = { kolom: '', arah: 'asc' };
+let sortInfoAnggota = { kolom: '', arah: 'asc' };
+function gantiSortInfoEkskul(tabel, kolom) {
+  const st = tabel === 'pengurus' ? sortInfoPengurus : sortInfoAnggota;
+  if (st.kolom === kolom) st.arah = st.arah === 'asc' ? 'desc' : 'asc';
+  else { st.kolom = kolom; st.arah = 'asc'; }
+  renderTabInfoEkskul();
+}
+function ikonSortInfo(tabel, kolom) {
+  const st = tabel === 'pengurus' ? sortInfoPengurus : sortInfoAnggota;
+  if (st.kolom !== kolom) return '<i class="fa-solid fa-sort text-slate-500"></i>';
+  return st.arah === 'asc' ? '<i class="fa-solid fa-sort-up text-yellow-300"></i>' : '<i class="fa-solid fa-sort-down text-yellow-300"></i>';
+}
+function terapkanSortKolom(list, st, ambilNilai) {
+  if (!st.kolom) return list;
+  const out = [...list].sort((a, b) => String(ambilNilai(a, st.kolom) || '').localeCompare(String(ambilNilai(b, st.kolom) || ''), 'id'));
+  return st.arah === 'desc' ? out.reverse() : out;
+}
+
 async function renderTabInfoEkskul() {
   const box = document.getElementById('content-ekskul');
   const daftar = window.__daftarEkskul || [];
@@ -13059,33 +13119,34 @@ async function renderTabInfoEkskul() {
 
   box.innerHTML = `
     <div class="p-4 space-y-3">
-      <div class="flex gap-2 items-center flex-wrap">
-        <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
-      </div>
       <div class="bg-white/5 border border-white/10 rounded-xl p-4 text-sm">
-        <div class="font-bold text-white text-base mb-1"><i class="fa-solid fa-medal text-yellow-400"></i> ${escapeHtml(aktif || 'Belum ada ekskul')}</div>
-        <p class="text-xs text-slate-300 mb-2">${escapeHtml(row.deskripsi || 'Belum ada deskripsi.')}</p>
-        <p class="text-xs mb-0.5"><span class="text-slate-400 font-bold">Pembina:</span><span class="align-middle"> ${htmlPembinaEkskul(row, guruRows, aktif)}</span></p>
-        <p class="text-xs"><span class="text-slate-400 font-bold">Jadwal Latihan:</span> ${escapeHtml(row.jadwal || '-')}</p>
+        <div class="flex items-start justify-between gap-3 flex-wrap">
+          <div class="min-w-0 flex-1">
+            <div class="font-bold text-white text-base mb-1"><i class="fa-solid fa-medal text-yellow-400"></i> ${escapeHtml(aktif || 'Belum ada ekskul')}</div>
+            <p class="text-xs text-slate-300 mb-2">${escapeHtml(row.deskripsi || 'Belum ada deskripsi.')}</p>
+            <p class="text-xs"><span class="text-slate-400 font-bold">Pembina:</span><span class="align-middle"> ${htmlPembinaEkskul(row, guruRows, aktif)}</span></p>
+          </div>
+          <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none shrink-0">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+        </div>
       </div>
-      <div id="info-pengurus-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengurus & anggota...</div>
-      <div id="info-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
+      <div class="flex gap-2 items-center justify-end flex-wrap">
+        <button onclick="exportInfoEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+        <button onclick="exportInfoEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
+        <button onclick="exportInfoEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
+      </div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div id="info-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
+        <div id="info-pengurus-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengurus...</div>
+        <div id="info-anggota-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat anggota...</div>
+      </div>
     </div>`;
 
   const anggota = await ambilAnggotaEkskul(aktif);
   const petaJab = petaJabatanAnggota(aktif, anggota);
-  const pengurus = anggota.filter(a => (petaJab[String(a.nis_nip)] || '') || /Ekstra/i.test(a.jabatan || ''));
-  const boxP = document.getElementById('info-pengurus-ekskul');
-  if (boxP) {
-    const htmlPengurus = pengurus.length === 0
-      ? `<i>Tidak ada pengurus ekskul (kolom jabatan siswa tidak berisi jabatan ekstra).</i>`
-      : pengurus.map(p => `• ${escapeHtml(p.nama_lengkap || '-')} <span class="text-blue-300">(${escapeHtml(petaJab[String(p.nis_nip)] || p.jabatan || '')})</span> <span class="text-[9px] text-indigo-300">(${escapeHtml(p.tingkat_kelas || '-')})</span> — ${linkWA(p.no_telepon || '', `Assalamualaikum, kami menghubungi ${p.nama_lengkap || ''} (${petaJab[String(p.nis_nip)] || p.jabatan || ''}) ekstrakurikuler ${aktif}.`)}`).join('<br>');
-    boxP.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
-      <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-user-tie"></i> Pengurus & Anggota (${anggota.length})</h3>
-      <div class="text-[11px] text-slate-200 leading-relaxed">${htmlPengurus}</div>
-      <div class="text-[10px] text-slate-400 mt-2 italic">Total anggota aktif: ${anggota.length} siswa. Daftar lengkap tersedia di tab "Profil & Anggota".</div>
-    </div>`;
-  }
+  const subs = await ambilSubEkskul(aktif);
+  const subMap = await ambilSubAnggota(aktif);
+  const pengurus = urutkanPengurusBakuEkskul(anggota.filter(a => (petaJab[String(a.nis_nip)] || '') || /Ekstra/i.test(a.jabatan || '')), petaJab);
+  window.__cacheInfoEkskul = { anggota, petaJab, subs, subMap, aktif };
 
   let agendaRows = [];
   try {
@@ -13098,6 +13159,7 @@ async function renderTabInfoEkskul() {
     const mendatang = urutkanAgendaEkskul(agendaRows.filter(r => agendaBerulang(r) || String(r.tanggal || '') >= hariIni)).slice(0, 5);
     boxA.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
       <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-calendar-check"></i> Agenda Terdekat</h3>
+      <p class="text-xs mb-2"><span class="text-slate-400 font-bold"><i class="fa-regular fa-clock"></i> Jadwal Latihan:</span> ${escapeHtml(row.jadwal || '-')}</p>
       ${mendatang.length === 0
         ? `<p class="italic text-slate-400">Belum ada agenda yang akan datang.</p>`
         : mendatang.map(r => `<div class="flex items-center gap-2 bg-slate-800/70 border border-white/10 rounded px-3 py-2 mb-1.5">
@@ -13108,6 +13170,102 @@ async function renderTabInfoEkskul() {
       <p class="text-[10px] text-slate-500 mt-2">Agenda lengkap tersedia di tab "Agenda Kegiatan".</p>
     </div>`;
   }
+
+  // ---------- Kartu terpisah: PENGURUS (tabel Nama | Jabatan | Kelas, urut baku + A-Z/Z-A per kolom) ----------
+  const boxP = document.getElementById('info-pengurus-ekskul');
+  if (boxP) {
+    const ambilNilaiPengurus = (p, kolom) => kolom === 'jabatan' ? (petaJab[String(p.nis_nip)] || p.jabatan || '') : (kolom === 'kelas' ? p.tingkat_kelas : p.nama_lengkap);
+    const listPengurus = sortInfoPengurus.kolom ? terapkanSortKolom(pengurus, sortInfoPengurus, ambilNilaiPengurus) : pengurus;
+    const thP = (label, kolom) => `<th class="p-2 cursor-pointer select-none" onclick="gantiSortInfoEkskul('pengurus','${kolom}')">${label} ${ikonSortInfo('pengurus', kolom)}</th>`;
+    boxP.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
+      <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-user-tie"></i> Pengurus (${pengurus.length})</h3>
+      ${listPengurus.length === 0
+        ? `<p class="italic text-slate-400 text-[11px]">Tidak ada pengurus ekskul (kolom jabatan siswa tidak berisi jabatan ekstra).</p>`
+        : `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
+          <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${thP('Nama', 'nama')}${thP('Jabatan', 'jabatan')}${thP('Kelas', 'kelas')}<th class="p-2">Kontak</th></tr></thead>
+          <tbody>${listPengurus.map(p => `<tr class="border-b border-white/5 hover:bg-white/5">
+            <td class="p-2"><i class="fa-solid fa-star text-yellow-400 text-[9px]"></i> ${escapeHtml(p.nama_lengkap || '-')}</td>
+            <td class="p-2 border-l border-white/10"><span class="text-blue-300 font-bold">${escapeHtml(petaJab[String(p.nis_nip)] || p.jabatan || '-')}</span></td>
+            <td class="p-2 border-l border-white/10">${escapeHtml(p.tingkat_kelas || '-')}</td>
+            <td class="p-2 border-l border-white/10">${linkWA(p.no_telepon || '', `Assalamualaikum, kami menghubungi ${p.nama_lengkap || ''} (${petaJab[String(p.nis_nip)] || p.jabatan || ''}) ekstrakurikuler ${aktif}.`)}</td>
+          </tr>`).join('')}</tbody></table></div>`}
+    </div>`;
+  }
+
+  // ---------- Kartu terpisah: ANGGOTA (tabel Nama | Sub-Ekskul | Kelas, warna per Sub, A-Z/Z-A) ----------
+  const boxAg = document.getElementById('info-anggota-ekskul');
+  if (boxAg) {
+    const ambilNilaiAnggota = (a, kolom) => kolom === 'sub' ? (subMap[String(a.nis_nip)] || '') : (kolom === 'kelas' ? a.tingkat_kelas : a.nama_lengkap);
+    const listAnggota = sortInfoAnggota.kolom ? terapkanSortKolom(anggota, sortInfoAnggota, ambilNilaiAnggota) : anggota;
+    const thA = (label, kolom) => `<th class="p-2 cursor-pointer select-none" onclick="gantiSortInfoEkskul('anggota','${kolom}')">${label} ${ikonSortInfo('anggota', kolom)}</th>`;
+    boxAg.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
+      <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-users"></i> Anggota (${anggota.length})</h3>
+      ${anggota.length === 0
+        ? `<p class="italic text-slate-400 text-[11px]">Belum ada anggota aktif.</p>`
+        : `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
+          <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${thA('Nama', 'nama')}${thA('Sub-Ekskul', 'sub')}${thA('Kelas', 'kelas')}<th class="p-2">Kontak</th></tr></thead>
+          <tbody>${listAnggota.map((a, i) => {
+            const subSaya = subMap[String(a.nis_nip)] || '';
+            const w = subSaya ? warnaSub(subSaya, subs) : { border: 'border-white/10', text: 'text-slate-400', bg: '' };
+            return `<tr class="border-b border-white/5 hover:bg-white/5 border-l-4 ${w.border}">
+              <td class="p-2"><i class="fa-solid fa-user text-indigo-300 text-[9px]"></i> ${i + 1}. ${escapeHtml(a.nama_lengkap || '-')}</td>
+              <td class="p-2 border-l border-white/10">${subSaya ? `<span class="text-[9px] px-1.5 py-0.5 rounded ${w.bg} ${w.text} font-bold"><i class="fa-solid fa-circle text-[6px]"></i> ${escapeHtml(subSaya)}</span>` : '<span class="text-slate-500">-</span>'}</td>
+              <td class="p-2 border-l border-white/10">${escapeHtml(a.tingkat_kelas || '-')}</td>
+              <td class="p-2 border-l border-white/10">${linkWA(a.no_telepon || '', `Assalamualaikum, kami menghubungi ${a.nama_lengkap || ''} terkait kegiatan ${aktif}.`)}</td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`}
+    </div>`;
+  }
+}
+
+/** Export tabel Pengurus & Anggota (Info Ekskul) ke Excel (.xlsx). */
+function exportInfoEkskulExcel() {
+  const c = window.__cacheInfoEkskul;
+  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const data = [[`PENGURUS & ANGGOTA - ${c.aktif}`], [], ['Nama', 'Jabatan', 'Sub-Ekskul', 'Kelas']];
+  c.anggota.forEach(a => data.push([a.nama_lengkap || '', c.petaJab[String(a.nis_nip)] || a.jabatan || '', c.subMap[String(a.nis_nip)] || '', a.tingkat_kelas || '']));
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Pengurus & Anggota');
+  XLSX.writeFile(wb, `pengurus-anggota-${c.aktif || 'ekskul'}.xlsx`);
+}
+
+/** Cetak tabel Pengurus & Anggota (Info Ekskul) ke jendela print. */
+function exportInfoEkskulPDF() {
+  const c = window.__cacheInfoEkskul;
+  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  const trs = c.anggota.map(a => `<tr><td>${escapeHtml(a.nama_lengkap || '')}</td><td>${escapeHtml(c.petaJab[String(a.nis_nip)] || a.jabatan || '-')}</td><td>${escapeHtml(c.subMap[String(a.nis_nip)] || '-')}</td><td>${escapeHtml(a.tingkat_kelas || '-')}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pengurus & Anggota - ${escapeHtml(c.aktif)}</title>
+  <style>body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;} h1{font-size:15px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;} th{background:#eee;text-align:left;}</style></head><body>
+  <h1>Pengurus & Anggota — ${escapeHtml(c.aktif)}</h1>
+  <table><thead><tr><th>Nama</th><th>Jabatan</th><th>Sub-Ekskul</th><th>Kelas</th></tr></thead><tbody>${trs}</tbody></table>
+  <script>window.onload=()=>{window.print();};<\\/script></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return showToast('error', 'Popup diblokir browser. Izinkan popup untuk export PDF.');
+  w.document.write(html); w.document.close();
+}
+
+/** Bagikan ringkasan Pengurus & Anggota (Info Ekskul) via WhatsApp. */
+function exportInfoEkskulWA() {
+  const c = window.__cacheInfoEkskul;
+  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  let teks = `*PENGURUS & ANGGOTA - ${c.aktif}*\n\n`;
+  c.anggota.forEach((a, i) => {
+    const jab = c.petaJab[String(a.nis_nip)] || a.jabatan || '';
+    const sub = c.subMap[String(a.nis_nip)] || '';
+    teks += `${i + 1}. ${a.nama_lengkap || '-'}${jab ? ' (' + jab + ')' : ''}${sub ? ' [' + sub + ']' : ''} - ${a.tingkat_kelas || '-'}\n`;
+  });
+  Swal.fire({
+    title: '<i class="fa-brands fa-whatsapp"></i> Preview Pesan',
+    html: `<textarea id="ie_wa_preview" class="w-full h-52 bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none custom-scrollbar">${escapeHtml(teks)}</textarea>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-brands fa-whatsapp"></i> Kirim via WA',
+    preConfirm: () => document.getElementById('ie_wa_preview').value
+  }).then(res => {
+    if (!res.isConfirmed) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(res.value)}`, '_blank');
+  });
 }
 
 // ---------- TAB 1: PROFIL & ANGGOTA ----------
@@ -14098,10 +14256,15 @@ async function renderTabAgendaEkskul() {
         <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
         ${bolehKelola ? `<button onclick="formAgendaEkskul(true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Tambah Kegiatan</button>` : ''}
         <button onclick="shareAgendaEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
+        <button onclick="exportAgendaEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Export Excel"><i class="fa-solid fa-file-excel"></i></button>
+        <button onclick="exportAgendaEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Export PDF"><i class="fa-solid fa-file-pdf"></i></button>
+        ${bolehKelola ? `<button onclick="unduhTemplateAgendaEkskul()" class="bg-slate-600 hover:bg-slate-500 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Unduh Template Import"><i class="fa-solid fa-download"></i></button>` : ''}
+        ${bolehKelola ? `<label class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition cursor-pointer" title="Import Excel"><i class="fa-solid fa-file-import"></i> Import<input type="file" accept=".xlsx,.xls" class="hidden" onchange="importAgendaEkskulExcel(this)"></label>` : ''}
       </div>
       <div id="list-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
     </div>`;
   const { data: rows, error } = await supaClient.from('agenda_ekskul').select('*').eq('ekskul', aktif).order('tanggal', { ascending: false, nullsFirst: false });
+  window.__cacheAgendaEkskul = rows || [];
   const lb = document.getElementById('list-agenda-ekskul');
   if (!lb) return;
   const urut = urutkanAgendaEkskul(rows || []);
@@ -14115,6 +14278,86 @@ async function renderTabAgendaEkskul() {
             ${bolehKelola ? `<button onclick='formAgendaEkskul(false, ${JSON.stringify(r).replace(/'/g, "&#39;")})' class="w-6 h-6 bg-blue-600/20 hover:bg-blue-600 text-blue-400 rounded transition" title="Edit"><i class="fa-solid fa-pen text-[9px]"></i></button>` : ''}
             ${bolehHapus ? `<button onclick="hapusAgendaEkskul('${escJs(r.id)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button>` : ''}
           </div></div>`).join('')}</div>`;
+}
+
+/** Export daftar agenda ekskul aktif ke Excel (.xlsx). */
+function exportAgendaEkskulExcel() {
+  const aktif = window.__ekskulAktif;
+  const rows = urutkanAgendaEkskul(window.__cacheAgendaEkskul || []);
+  if (!rows.length) return showToast('error', 'Tidak ada agenda untuk diexport.');
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const data = [[`AGENDA KEGIATAN - ${aktif}`], [], ['Jadwal', 'Kegiatan', 'Keterangan']];
+  rows.forEach(r => data.push([labelJadwalAgenda(r), r.kegiatan || '', r.keterangan || '']));
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Agenda');
+  XLSX.writeFile(wb, `agenda-${aktif || 'ekskul'}.xlsx`);
+}
+
+/** Cetak daftar agenda ekskul aktif ke jendela print (PDF). */
+function exportAgendaEkskulPDF() {
+  const aktif = window.__ekskulAktif;
+  const rows = urutkanAgendaEkskul(window.__cacheAgendaEkskul || []);
+  if (!rows.length) return showToast('error', 'Tidak ada agenda untuk diexport.');
+  const trs = rows.map(r => `<tr><td>${escapeHtml(labelJadwalAgenda(r))}</td><td>${escapeHtml(r.kegiatan || '')}</td><td>${escapeHtml(r.keterangan || '-')}</td></tr>`).join('');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Agenda - ${escapeHtml(aktif)}</title>
+  <style>body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;} h1{font-size:15px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;} th{background:#eee;text-align:left;}</style></head><body>
+  <h1>Agenda Kegiatan — ${escapeHtml(aktif)}</h1>
+  <table><thead><tr><th>Jadwal</th><th>Kegiatan</th><th>Keterangan</th></tr></thead><tbody>${trs}</tbody></table>
+  <script>window.onload=()=>{window.print();};<\\/script></body></html>`;
+  const w = window.open('', '_blank');
+  if (!w) return showToast('error', 'Popup diblokir browser. Izinkan popup untuk export PDF.');
+  w.document.write(html); w.document.close();
+}
+
+/** Unduh template Excel untuk import massal agenda ekskul. */
+function unduhTemplateAgendaEkskul() {
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const data = [
+    ['Tanggal (YYYY-MM-DD, kosongkan jika berulang)', 'Hari (Senin,Selasa,... pisahkan koma jika berulang)', 'Kegiatan', 'Keterangan'],
+    ['2026-01-15', '', 'Latihan Rutin', 'Bawa perlengkapan sendiri'],
+    ['', 'Sabtu', 'Latihan Mingguan', 'Setiap Sabtu pagi']
+  ];
+  const ws = XLSX.utils.aoa_to_sheet(data);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Template Agenda');
+  XLSX.writeFile(wb, 'template-import-agenda-ekskul.xlsx');
+}
+
+/** Import massal agenda ekskul dari file Excel sesuai template. */
+async function importAgendaEkskulExcel(input) {
+  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) { input.value = ''; return showToast('error', 'Akses tidak diizinkan.'); }
+  const file = input.files && input.files[0];
+  if (!file) return;
+  const aktif = window.__ekskulAktif;
+  if (!aktif) { input.value = ''; return showToast('error', 'Pilih ekstrakurikuler dulu.'); }
+  try {
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' }).slice(1).filter(r => (r[2] || '').toString().trim());
+    if (!rows.length) { input.value = ''; return showToast('error', 'Tidak ada baris data valid pada file.'); }
+    Swal.fire({ title: `Mengimpor ${rows.length} agenda...`, didOpen: () => Swal.showLoading(), allowOutsideClick: false, showConfirmButton: false, background: '#1e293b', color: '#fff' });
+    let sukses = 0, gagal = 0;
+    for (const r of rows) {
+      const tanggal = String(r[0] || '').trim();
+      const hari = String(r[1] || '').trim();
+      const kegiatan = String(r[2] || '').trim();
+      const keterangan = String(r[3] || '').trim();
+      const payload = { ekskul: aktif, kegiatan, keterangan, tanggal: hari ? null : (tanggal || null), hari: hari || null };
+      const { error } = await supaClient.from('agenda_ekskul').insert(payload);
+      if (error) gagal++; else sukses++;
+    }
+    Swal.close();
+    input.value = '';
+    if (gagal > 0) showToast('error', `${sukses} berhasil, ${gagal} gagal diimpor.`);
+    else showToast('success', `${sukses} agenda berhasil diimpor.`);
+    renderTabAgendaEkskul();
+  } catch (e) {
+    input.value = '';
+    Swal.close();
+    showToast('error', 'Gagal membaca file: ' + (e.message || ''));
+  }
 }
 
 /** Normalisasi nomor HP untuk link WA (0/62). */
@@ -14732,6 +14975,38 @@ function exportKasUmumPDF() {
   w.document.close();
 }
 
+/** Bagikan ringkasan Kas Anggota (ekskul aktif, data hasil filter saat ini) via WhatsApp. */
+function exportKasAnggotaWA() {
+  const rows = window.__cacheIuranRows || [];
+  if (!rows.length) return showToast('error', 'Tidak ada data untuk dibagikan.');
+  const namaMap = window.__cacheNamaMapKasAnggota || {};
+  const labelStatusWA = (st) => st === 'lunas' ? 'Lunas' : (st === 'cicil' ? 'Cicil' : 'Menunggak');
+  const tinggalWA = (r) => r.status === 'lunas' ? 0 : Math.max(0, (Number(r.nominal) || 0) - (Number(r.nominal_dibayar) || 0));
+  const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const totalTerkumpul = rows.reduce((s, r) => s + (Number(r.nominal_dibayar) || (r.status === 'lunas' ? Number(r.nominal) || 0 : 0)), 0);
+  const totalTunggakan = rows.reduce((s, r) => s + tinggalWA(r), 0);
+  let teks = `*KAS ANGGOTA - ${window.__ekskulAktif || ''}*\n`;
+  teks += `Periode: ${filterKasAnggota.dari || '-'} s.d. ${filterKasAnggota.sampai || '-'}\n\n`;
+  teks += `Total Tagihan: ${formatRupiah(totalTagihan)}\n`;
+  teks += `Dana Terkumpul: ${formatRupiah(totalTerkumpul)}\n`;
+  teks += `Sisa Tunggakan: ${formatRupiah(totalTunggakan)}\n\n`;
+  teks += `*Rincian:*\n`;
+  rows.forEach((r, i) => {
+    teks += `${i + 1}. ${namaMap[r.nis_nip] || r.nis_nip} - ${r.periode_label} (${r.periode_tipe}): ${formatRupiah(r.nominal)} [${labelStatusWA(r.status)}]${tinggalWA(r) > 0 ? ` - sisa ${formatRupiah(tinggalWA(r))}` : ''}\n`;
+  });
+  Swal.fire({
+    title: '<i class="fa-brands fa-whatsapp"></i> Preview Pesan',
+    width: '520px',
+    html: `<textarea id="ka_wa_preview" class="w-full h-64 bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none custom-scrollbar">${escapeHtml(teks)}</textarea>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-brands fa-whatsapp"></i> Kirim via WA',
+    preConfirm: () => document.getElementById('ka_wa_preview').value
+  }).then(res => {
+    if (!res.isConfirmed) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(res.value)}`, '_blank');
+  });
+}
+
 /** Modal kelola kategori kas (tambah/edit deskripsi/nonaktifkan). */
 async function bukaKategoriKasModal() {
   const { data, error } = await supaClient.from('kategori_kas').select('*').order('nama');
@@ -14892,7 +15167,8 @@ function hitungRentangSemesterAktif() {
   if (cm >= 6) return { dari: `${cy}-07-01`, sampai: `${cy}-12-31` }; // Ganjil
   return { dari: `${cy}-01-01`, sampai: `${cy}-06-30` }; // Genap
 }
-let filterKasAnggota = { ...hitungRentangSemesterAktif(), status: '' };
+let filterKasAnggota = { ...hitungRentangSemesterAktif(), status: '', sub: '' };
+let filterTunggakan = { mode: 'semua', bulan: new Date().getMonth() + 1, tahun: new Date().getFullYear(), minggu: 'M1', dari: '', sampai: '' };
 const LABEL_MINGGU = ['M1', 'M2', 'M3', 'M4'];
 
 async function renderTabKasAnggotaEkskul() {
@@ -14901,17 +15177,20 @@ async function renderTabKasAnggotaEkskul() {
   const aktif = window.__ekskulAktif;
   const aksesKas = hakAksesKasUntuk(aktif);
   const bolehKelola = aksesKas === 'kelola';
+  const subs = await ambilSubEkskul(aktif);
+  if (filterKasAnggota.sub && !subs.some(s => s.nama_sub === filterKasAnggota.sub)) filterKasAnggota.sub = '';
 
   box.innerHTML = `
     <div class="p-4 space-y-3">
       <div class="flex gap-2 items-center justify-center flex-wrap">
         <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
         <button onclick="renderTabEkskul()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Refresh"><i class="fa-solid fa-rotate"></i> Refresh</button>
-        ${bolehKelola ? `<button onclick="formKasAnggota()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Catat Iuran Anggota</button>` : ''}
+        ${bolehKelola ? `<button onclick="formKasAnggota()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Buat Iuran Anggota</button>` : ''}
         ${bolehKelola ? `<button onclick="bukaDeskripsiIuranModal()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-tags"></i> Deskripsi Pembayaran</button>` : ''}
         ${bolehKelola ? `<button onclick="openImportKasAnggota()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-import"></i> Import Excel</button>` : ''}
-        <button onclick="exportKasAnggotaCSV()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
-        <button onclick="exportKasAnggotaPDF()" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
+        <button onclick="bukaOpsiExportKasAnggota('excel')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+        <button onclick="bukaOpsiExportKasAnggota('pdf')" class="bg-slate-600 hover:bg-slate-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-print"></i> Export PDF</button>
+        <button onclick="exportKasAnggotaWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
       </div>
       <div class="flex gap-2 items-center justify-center flex-wrap bg-white/5 border border-white/10 rounded-xl p-3">
         <label class="text-[10px] text-slate-400">Dari <input type="date" id="ka_dari" onchange="terapkanFilterKasAnggota()" value="${escJs(filterKasAnggota.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
@@ -14919,21 +15198,66 @@ async function renderTabKasAnggotaEkskul() {
         <select id="ka_status" onchange="terapkanFilterKasAnggota()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
           <option value="">Semua Status</option>
           <option value="lunas" ${filterKasAnggota.status === 'lunas' ? 'selected' : ''}>Lunas</option>
+          <option value="cicil" ${filterKasAnggota.status === 'cicil' ? 'selected' : ''}>Cicil</option>
           <option value="menunggak" ${filterKasAnggota.status === 'menunggak' ? 'selected' : ''}>Menunggak</option>
         </select>
+        ${subs.length ? `<select id="ka_sub" onchange="terapkanFilterKasAnggota()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
+          <option value="">Semua Sub-Ekskul</option>
+          ${subs.map(s => `<option value="${escJs(s.nama_sub)}" ${filterKasAnggota.sub === s.nama_sub ? 'selected' : ''}>${escapeHtml(s.nama_sub)}</option>`).join('')}
+        </select>` : ''}
         <button onclick="terapkanFilterKasAnggota()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1.5 rounded text-xs font-bold transition"><i class="fa-solid fa-filter"></i> Terapkan</button>
       </div>
       <div id="ka-cards" class="grid grid-cols-3 gap-2 sm:gap-3"></div>
       <div id="ka-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat matriks iuran...</div>
+      <div class="bg-white/5 border border-white/10 rounded-xl overflow-hidden">
+        <div class="flex items-center justify-between gap-2 p-3 cursor-pointer" onclick="toggleTunggakanKasAnggota()">
+          <div class="font-bold text-red-300 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Daftar Tunggakan</div>
+          <button id="ka-tunggakan-toggle-ikon" class="text-slate-400"><i class="fa-solid fa-chevron-up"></i></button>
+        </div>
+        <div id="ka-tunggakan-body" class="p-3 pt-0">
+          <div class="flex gap-2 items-center flex-wrap mb-2">
+            <select id="ktg_mode" onchange="terapkanFilterTunggakan()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">
+              <option value="semua" ${filterTunggakan.mode === 'semua' ? 'selected' : ''}>Semua</option>
+              <option value="semester" ${filterTunggakan.mode === 'semester' ? 'selected' : ''}>Semester</option>
+              <option value="bulan" ${filterTunggakan.mode === 'bulan' ? 'selected' : ''}>Bulan</option>
+              <option value="minggu" ${filterTunggakan.mode === 'minggu' ? 'selected' : ''}>Minggu</option>
+              <option value="rentang" ${filterTunggakan.mode === 'rentang' ? 'selected' : ''}>Dari-Sampai</option>
+            </select>
+            <div id="ktg_extra" class="flex gap-2 items-center flex-wrap"></div>
+          </div>
+          <div id="ka-tunggakan-tabel" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat tunggakan...</div>
+        </div>
+      </div>
     </div>`;
+  renderTunggakanExtraFilter();
   await muatKasAnggota();
 }
+
 
 function terapkanFilterKasAnggota() {
   filterKasAnggota.dari = document.getElementById('ka_dari')?.value || '';
   filterKasAnggota.sampai = document.getElementById('ka_sampai')?.value || '';
   filterKasAnggota.status = document.getElementById('ka_status')?.value || '';
+  filterKasAnggota.sub = document.getElementById('ka_sub')?.value || '';
   muatKasAnggota();
+}
+
+// Sort A-Z/Z-A per kolom untuk tabel Kas Anggota (Ekstrakurikuler/Nominal/Status/Tgl Bayar).
+let sortKasAnggota = { kolom: '', arah: 'asc' };
+function gantiSortKasAnggota(kolom) {
+  if (sortKasAnggota.kolom === kolom) sortKasAnggota.arah = sortKasAnggota.arah === 'asc' ? 'desc' : 'asc';
+  else { sortKasAnggota.kolom = kolom; sortKasAnggota.arah = 'asc'; }
+  muatKasAnggota();
+}
+function ikonSortKasAnggota(kolom) {
+  if (sortKasAnggota.kolom !== kolom) return '<i class="fa-solid fa-sort text-slate-500"></i>';
+  return sortKasAnggota.arah === 'asc' ? '<i class="fa-solid fa-sort-up text-yellow-300"></i>' : '<i class="fa-solid fa-sort-down text-yellow-300"></i>';
+}
+
+/** Angkatan sederhana dari tingkat_kelas ("X RPL 1" -> "X"; "XI"/"XII" dsb). */
+function angkatanDariTingkatKelas(tingkat_kelas) {
+  const m = String(tingkat_kelas || '').trim().match(/^(XII|XI|X)\b/i);
+  return m ? m[1].toUpperCase() : '';
 }
 
 async function muatKasAnggota() {
@@ -14950,7 +15274,7 @@ async function muatKasAnggota() {
   // Kartu ringkasan dihitung dari data hasil filter tanggal SAJA (tidak terpengaruh filter status)
   const totalLunas = rowsSemua.filter(r => r.status === 'lunas').length;
   const totalTagihan = rowsSemua.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-  const totalTerkumpul = rowsSemua.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  const totalTerkumpul = rowsSemua.reduce((s, r) => s + (Number(r.nominal_dibayar) || (r.status === 'lunas' ? Number(r.nominal) || 0 : 0)), 0);
 
   const cards = document.getElementById('ka-cards');
   if (cards) cards.innerHTML = `
@@ -14959,7 +15283,12 @@ async function muatKasAnggota() {
     <div class="bg-amber-900/30 border border-amber-500/30 rounded-xl p-2 sm:p-4"><div class="text-[9px] sm:text-[10px] text-amber-300 uppercase font-bold">Total Tagihan</div><div class="text-sm sm:text-lg font-bold text-white mt-1">${formatRupiah(totalTagihan)}</div></div>`;
 
   // Baris tabel: kartu tidak terdampak filter status, tapi tabel iya
-  const rows = filterKasAnggota.status ? rowsSemua.filter(r => r.status === filterKasAnggota.status) : rowsSemua;
+  let rows = filterKasAnggota.status ? rowsSemua.filter(r => r.status === filterKasAnggota.status) : rowsSemua;
+  // [REQ 2] Filter Sub-Ekstrakurikuler
+  const subMap = await ambilSubAnggota(aktif);
+  if (filterKasAnggota.sub) {
+    rows = rows.filter(r => (subMap[String(r.nis_nip)] || '') === filterKasAnggota.sub);
+  }
 
   const byNis = {};
   rows.forEach(r => { (byNis[r.nis_nip] = byNis[r.nis_nip] || []).push(r); });
@@ -14969,33 +15298,257 @@ async function muatKasAnggota() {
   if (!tabel) return;
   const namaMap = {};
   anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
-  const listNis = Object.keys(byNis);
+  window.__cacheNamaMapKasAnggota = namaMap;
+  // Flatten agar bisa diurutkan per kolom (Nama/Deskripsi/Nominal/Status/Tinggal Dibayar)
+  const hitungTinggal = (r) => {
+    const nominal = Number(r.nominal) || 0;
+    if (r.status === 'lunas') return 0;
+    const dibayar = Number(r.nominal_dibayar) || 0;
+    return Math.max(0, nominal - dibayar);
+  };
+  let flat = Object.keys(byNis).flatMap(nis => (byNis[nis] || []).map(r => ({
+    nis, r, nama: namaMap[nis] || nis, tinggal: hitungTinggal(r)
+  })));
+  if (sortKasAnggota.kolom) {
+    const ambil = (f) => {
+      switch (sortKasAnggota.kolom) {
+        case 'nama': return f.nama || '';
+        case 'deskripsi': return f.r.deskripsi_pembayaran || '';
+        case 'nominal': return Number(f.r.nominal) || 0;
+        case 'status': return f.r.status || '';
+        case 'tinggal': return f.tinggal;
+        default: return '';
+      }
+    };
+    flat.sort((a, b) => {
+      const va = ambil(a), vb = ambil(b);
+      if (typeof va === 'number' && typeof vb === 'number') return va - vb;
+      return String(va).localeCompare(String(vb), 'id');
+    });
+    if (sortKasAnggota.arah === 'desc') flat.reverse();
+  }
+  const th = (label, kolom, extra = '') => `<th class="p-2 ${extra} cursor-pointer select-none" onclick="gantiSortKasAnggota('${kolom}')">${label} ${ikonSortKasAnggota(kolom)}</th>`;
+  const labelStatus = (st) => st === 'lunas' ? 'Lunas' : (st === 'cicil' ? 'Cicil' : 'Menunggak');
+  const kelasStatus = (st) => st === 'lunas' ? 'bg-emerald-600/30 text-emerald-300' : (st === 'cicil' ? 'bg-amber-600/30 text-amber-300' : 'bg-red-600/30 text-red-300');
   tabel.outerHTML = error
     ? `<p class="italic p-2">Gagal memuat: ${escapeHtml(error.message)}</p>`
-    : !listNis.length
+    : !flat.length
       ? `<p class="italic p-2">Belum ada data iuran pada rentang tanggal ini.</p>`
       : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
       <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
-        <th class="p-2">Ekstrakurikuler</th><th class="p-2">Nama</th><th class="p-2">NIS</th><th class="p-2">Periode</th><th class="p-2 text-right">Nominal</th><th class="p-2">Status</th><th class="p-2">Tgl Bayar</th>${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
+        ${th('Nama', 'nama')}<th class="p-2">Periode</th>${th('Deskripsi Pembayaran', 'deskripsi')}${th('Nominal', 'nominal', 'text-right')}${th('Status', 'status')}<th class="p-2">Tgl Bayar</th>${th('Tinggal Dibayar', 'tinggal', 'text-right')}${bolehKelola ? '<th class="p-2">Aksi</th>' : ''}
       </tr></thead>
-      <tbody>${listNis.flatMap(nis => (byNis[nis] || []).map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
-        <td class="p-2">${escapeHtml(aktif || '-')}</td>
-        <td class="p-2">${escapeHtml(namaMap[nis] || nis)}</td>
-        <td class="p-2">${escapeHtml(nis)}</td>
+      <tbody>${flat.map(f => { const r = f.r, nis = f.nis; return `<tr class="border-b border-white/5 hover:bg-white/5">
+
+        <td class="p-2">${escapeHtml(f.nama)}</td>
         <td class="p-2">${escapeHtml(r.periode_label)} <span class="text-slate-500">(${escapeHtml(r.periode_tipe)})</span></td>
+        <td class="p-2">${escapeHtml(r.deskripsi_pembayaran || '-')}</td>
         <td class="p-2 text-right">${formatRupiah(r.nominal)}</td>
-        <td class="p-2"><span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${r.status === 'lunas' ? 'bg-emerald-600/30 text-emerald-300' : 'bg-red-600/30 text-red-300'}">${r.status === 'lunas' ? 'Lunas' : 'Menunggak'}</span></td>
-        <td class="p-2">${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
-        ${bolehKelola ? `<td class="p-2"><button onclick="hapusIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}','${escJs(r.tahun)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>` : ''}
-      </tr>`)).join('')}</tbody></table></div>`;
+        <td class="p-2">${bolehKelola
+      ? `<button onclick="ubahStatusIuran('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}','${escJs(r.tahun)}')" class="px-2 py-0.5 rounded-full text-[9px] font-bold ${kelasStatus(r.status)} hover:brightness-125 transition" title="Klik untuk ubah status">${labelStatus(r.status)} <i class="fa-solid fa-pen ml-0.5 text-[7px]"></i></button>`
+      : `<span class="px-2 py-0.5 rounded-full text-[9px] font-bold ${kelasStatus(r.status)}">${labelStatus(r.status)}</span>`
+    }</td>
+        <td class="p-2">${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : (r.tanggal_akhir_bayar ? `<span class="text-slate-500">s.d. ${escapeHtml(String(r.tanggal_akhir_bayar).split('T')[0])}</span>` : '-')}</td>
+        <td class="p-2 text-right ${f.tinggal > 0 ? 'text-red-300 font-bold' : 'text-emerald-300'}">${formatRupiah(f.tinggal)}</td>
+        ${bolehKelola ? `<td class="p-2 flex gap-1"><button onclick="editIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}','${escJs(r.tahun)}')" class="w-6 h-6 bg-blue-600/20 hover:bg-blue-600 text-blue-300 rounded transition" title="Edit"><i class="fa-solid fa-pen text-[9px]"></i></button><button onclick="hapusIuranAnggota('${escJs(nis)}','${escJs(r.periode_tipe)}','${escJs(r.periode_label)}','${escJs(r.tahun)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button></td>` : ''}
+      </tr>`; }).join('')}</tbody></table></div>`;
+  muatTunggakanKasAnggota();
 }
 
+
+
+
+
+// ===== Daftar Tunggakan (collapsible, filter periode independen dari filter utama) =====
+function toggleTunggakanKasAnggota() {
+  const body = document.getElementById('ka-tunggakan-body');
+  const ikon = document.getElementById('ka-tunggakan-toggle-ikon');
+  if (!body || !ikon) return;
+  const tersembunyi = body.classList.toggle('hidden');
+  ikon.innerHTML = tersembunyi ? '<i class="fa-solid fa-chevron-down"></i>' : '<i class="fa-solid fa-chevron-up"></i>';
+}
+
+function renderTunggakanExtraFilter() {
+  const wrap = document.getElementById('ktg_extra');
+  if (!wrap) return;
+  const bulanOpts = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}" ${filterTunggakan.bulan === i + 1 ? 'selected' : ''}>${b}</option>`).join('');
+  if (filterTunggakan.mode === 'bulan') {
+    wrap.innerHTML = `<select id="ktg_bulan" onchange="terapkanFilterTunggakan()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">${bulanOpts}</select>
+      <input type="number" id="ktg_tahun" value="${filterTunggakan.tahun}" onchange="terapkanFilterTunggakan()" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none w-20">`;
+  } else if (filterTunggakan.mode === 'minggu') {
+    wrap.innerHTML = `<select id="ktg_bulan" onchange="terapkanFilterTunggakan()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">${bulanOpts}</select>
+      <select id="ktg_minggu" onchange="terapkanFilterTunggakan()" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1 text-xs text-white outline-none">${LABEL_MINGGU.map(m => `<option value="${m}" ${filterTunggakan.minggu === m ? 'selected' : ''}>${m}</option>`).join('')}</select>
+      <input type="number" id="ktg_tahun" value="${filterTunggakan.tahun}" onchange="terapkanFilterTunggakan()" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none w-20">`;
+  } else if (filterTunggakan.mode === 'semester') {
+    wrap.innerHTML = `<input type="number" id="ktg_tahun" value="${filterTunggakan.tahun}" onchange="terapkanFilterTunggakan()" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none w-20">`;
+  } else if (filterTunggakan.mode === 'rentang') {
+    wrap.innerHTML = `<label class="text-[10px] text-slate-400">Dari <input type="date" id="ktg_dari" onchange="terapkanFilterTunggakan()" value="${escJs(filterTunggakan.dari)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>
+      <label class="text-[10px] text-slate-400">Sampai <input type="date" id="ktg_sampai" onchange="terapkanFilterTunggakan()" value="${escJs(filterTunggakan.sampai)}" style="color-scheme: dark;" class="bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none ml-1"></label>`;
+  } else {
+    wrap.innerHTML = '';
+  }
+}
+
+function terapkanFilterTunggakan() {
+  filterTunggakan.mode = document.getElementById('ktg_mode')?.value || 'semua';
+  renderTunggakanExtraFilter();
+  filterTunggakan.bulan = Number(document.getElementById('ktg_bulan')?.value) || filterTunggakan.bulan;
+  filterTunggakan.minggu = document.getElementById('ktg_minggu')?.value || filterTunggakan.minggu;
+  filterTunggakan.tahun = Number(document.getElementById('ktg_tahun')?.value) || filterTunggakan.tahun;
+  filterTunggakan.dari = document.getElementById('ktg_dari')?.value || '';
+  filterTunggakan.sampai = document.getElementById('ktg_sampai')?.value || '';
+  muatTunggakanKasAnggota();
+}
+
+/** Tanggal efektif per row iuran, sama seperti logika RPC iuran_anggota_rentang. */
+function tanggalEfektifIuran(r) {
+  if (r.tanggal_bayar) return String(r.tanggal_bayar).split('T')[0];
+  if (r.periode_tipe === 'harian' && /^\d{4}-\d{2}-\d{2}$/.test(r.periode_label || '')) return r.periode_label;
+  const b = String(r.bulan || 1).padStart(2, '0');
+  return `${r.tahun}-${b}-01`;
+}
+
+/** Menghasilkan tabel Tunggakan berdasarkan filterTunggakan, dari cache __cacheIuranRows (status != lunas). */
+function muatTunggakanKasAnggota() {
+  const tabel = document.getElementById('ka-tunggakan-tabel');
+  if (!tabel) return;
+  const semua = (window.__cacheIuranRows || []).filter(r => r.status !== 'lunas');
+  let rows = semua;
+  const mode = filterTunggakan.mode;
+  if (mode === 'bulan') {
+    rows = semua.filter(r => Number(r.tahun) === filterTunggakan.tahun && Number(r.bulan) === filterTunggakan.bulan);
+  } else if (mode === 'minggu') {
+    rows = semua.filter(r => Number(r.tahun) === filterTunggakan.tahun && Number(r.bulan) === filterTunggakan.bulan && r.periode_tipe === 'mingguan' && r.periode_label === filterTunggakan.minggu);
+  } else if (mode === 'semester') {
+    rows = semua.filter(r => Number(r.tahun) === filterTunggakan.tahun);
+  } else if (mode === 'rentang') {
+    rows = semua.filter(r => {
+      const tgl = tanggalEfektifIuran(r);
+      if (filterTunggakan.dari && tgl < filterTunggakan.dari) return false;
+      if (filterTunggakan.sampai && tgl > filterTunggakan.sampai) return false;
+      return true;
+    });
+  }
+  const namaMap = window.__cacheNamaMapKasAnggota || {};
+  const totalTunggakan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+  tabel.innerHTML = !rows.length
+    ? `<p class="italic p-2">Tidak ada tunggakan pada periode ini.</p>`
+    : `<div class="bg-white/5 border border-white/10 rounded-xl overflow-x-auto"><table class="w-full text-[11px] text-left">
+      <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
+        <th class="p-2">Nama</th><th class="p-2">NIS</th><th class="p-2">Periode</th><th class="p-2">Deskripsi</th><th class="p-2 text-right">Nominal</th>
+      </tr></thead>
+      <tbody>${rows.map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
+        <td class="p-2">${escapeHtml(namaMap[r.nis_nip] || r.nis_nip)}</td>
+        <td class="p-2">${escapeHtml(r.nis_nip)}</td>
+        <td class="p-2">${escapeHtml(r.periode_label)} <span class="text-slate-500">(${escapeHtml(r.periode_tipe)})</span></td>
+        <td class="p-2">${escapeHtml(r.deskripsi_pembayaran || '-')}</td>
+        <td class="p-2 text-right text-red-300 font-bold">${formatRupiah(r.nominal)}</td>
+      </tr>`).join('')}</tbody>
+      <tfoot><tr><td colspan="4" class="p-2 font-bold text-right">TOTAL TUNGGAKAN</td><td class="p-2 text-right font-bold text-red-300">${formatRupiah(totalTunggakan)}</td></tr></tfoot>
+      </table></div>`;
+}
 
 /** Ambil daftar deskripsi iuran tersimpan untuk ekskul tertentu (untuk dropdown "Deskripsi Pembayaran"). */
 async function ambilDeskripsiIuran(ekskul) {
   const { data, error } = await supaClient.from('deskripsi_iuran').select('*').eq('ekskul', ekskul).order('judul');
   return error ? [] : (data || []);
 }
+
+/** Klik cepat pada badge Status di tabel Kas Anggota: buka popup edit status (Lunas/Menunggak/Cicil). */
+async function ubahStatusIuran(nis, periode_tipe, periode_label, tahun) {
+  return editIuranAnggota(nis, periode_tipe, periode_label, tahun);
+}
+
+/** Edit satu baris catatan iuran anggota (nominal/deskripsi/status/tanggal bayar). Periode & anggota tetap (kunci komposit). */
+async function editIuranAnggota(nis, periode_tipe, periode_label, tahun) {
+  const aktif = window.__ekskulAktif;
+  if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
+  const rows = window.__cacheIuranRows || [];
+  const row = rows.find(r => r.nis_nip === nis && r.periode_tipe === periode_tipe && r.periode_label === periode_label && Number(r.tahun) === Number(tahun));
+  if (!row) return showToast('error', 'Data tidak ditemukan, muat ulang halaman.');
+  const deskripsiList = await ambilDeskripsiIuran(aktif);
+  Swal.fire({
+    title: 'Edit Iuran Anggota',
+    width: '520px',
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
+      <div class="text-[10px] text-slate-400">NIS: <b>${escapeHtml(nis)}</b> &bull; Periode: <b>${escapeHtml(periode_label)}</b> (${escapeHtml(periode_tipe)}) &bull; Tahun: <b>${escapeHtml(String(tahun))}</b></div>
+      <label class="font-bold text-yellow-300 block mt-2">Deskripsi Pembayaran</label>
+      <select id="eia_deskripsi_pilih" onchange="const v=this.value; const el=document.getElementById('eia_deskripsi'); if(v==='__custom__'){el.value='';el.focus();}else{el.value=v;}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="">-- Pilih deskripsi tersimpan --</option>
+        ${deskripsiList.map(d => `<option value="${escJs(d.judul)}">${escapeHtml(d.judul)}</option>`).join('')}
+        <option value="__custom__">+ Deskripsi baru (ketik manual)</option>
+      </select>
+      <input id="eia_deskripsi" value="${escJs(row.deskripsi_pembayaran || '')}" placeholder="Cth: Iuran Kas Bulanan" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
+      <input type="number" min="0" id="eia_nominal" value="${Number(row.nominal) || 0}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <label class="font-bold text-yellow-300 block mt-2">Status *</label>
+      <select id="eia_status" onchange="ubahStatusEditIuran()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="lunas" ${row.status === 'lunas' ? 'selected' : ''}>Lunas</option>
+        <option value="cicil" ${row.status === 'cicil' ? 'selected' : ''}>Cicil</option>
+        <option value="menunggak" ${row.status === 'menunggak' ? 'selected' : ''}>Menunggak</option>
+      </select>
+      <div id="eia_tgl_wrap"></div>
+      <div id="eia_cicil_wrap"></div>
+    </div>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan',
+    didOpen: () => { window.__eiaRowSementara = row; ubahStatusEditIuran(); },
+    preConfirm: () => {
+      const deskripsi_pembayaran = document.getElementById('eia_deskripsi').value.trim();
+      const nominal = Number(document.getElementById('eia_nominal').value) || 0;
+      const status = document.getElementById('eia_status').value;
+      const tanggal_bayar = status === 'lunas' ? (document.getElementById('eia_tglbayar')?.value || null) : null;
+      const tanggal_akhir_bayar = (status === 'menunggak' || status === 'cicil') ? (document.getElementById('eia_tglakhir')?.value || null) : null;
+      const nominal_dibayar = status === 'lunas' ? nominal : (status === 'cicil' ? (Number(document.getElementById('eia_dibayar')?.value) || 0) : 0);
+      if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
+      if (status === 'cicil' && nominal_dibayar >= nominal) { Swal.showValidationMessage('Nominal dibayar harus lebih kecil dari nominal tagihan pada status Cicil.'); return false; }
+      return { deskripsi_pembayaran, nominal, status, tanggal_bayar, tanggal_akhir_bayar, nominal_dibayar };
+    }
+  }).then(async (res) => {
+    if (!res.isConfirmed) return;
+    const d = res.value;
+    try {
+      if (d.deskripsi_pembayaran) {
+        const ada = (await ambilDeskripsiIuran(aktif)).some(x => x.judul.toLowerCase() === d.deskripsi_pembayaran.toLowerCase());
+        if (!ada) await supaClient.from('deskripsi_iuran').insert({ ekskul: aktif, judul: d.deskripsi_pembayaran });
+      }
+      const { error } = await supaClient.from('iuran_anggota').update({
+        deskripsi_pembayaran: d.deskripsi_pembayaran, nominal: d.nominal, status: d.status,
+        tanggal_bayar: d.tanggal_bayar, tanggal_akhir_bayar: d.tanggal_akhir_bayar, nominal_dibayar: d.nominal_dibayar
+      }).eq('ekskul', aktif).eq('nis_nip', nis).eq('periode_tipe', periode_tipe).eq('periode_label', periode_label).eq('tahun', Number(tahun));
+      if (error) throw error;
+      showToast('success', 'Catatan iuran diperbarui');
+      renderTabEkskul();
+    } catch (e) {
+      Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' });
+    }
+  });
+}
+
+/** Ganti input Tanggal Bayar/Tenggat/Nominal Dibayar di form Edit Iuran sesuai status dipilih. */
+function ubahStatusEditIuran() {
+  const status = document.getElementById('eia_status')?.value || 'lunas';
+  const row = window.__eiaRowSementara || {};
+  const tglWrap = document.getElementById('eia_tgl_wrap');
+  const cicilWrap = document.getElementById('eia_cicil_wrap');
+  if (tglWrap) {
+    if (status === 'lunas') {
+      tglWrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal Bayar</label>
+        <input type="date" id="eia_tglbayar" value="${row.tanggal_bayar ? escJs(String(row.tanggal_bayar).split('T')[0]) : new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+    } else {
+      tglWrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal Akhir Pembayaran</label>
+        <input type="date" id="eia_tglakhir" value="${row.tanggal_akhir_bayar ? escJs(String(row.tanggal_akhir_bayar).split('T')[0]) : ''}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+    }
+  }
+  if (cicilWrap) {
+    cicilWrap.innerHTML = status === 'cicil'
+      ? `<label class="font-bold text-yellow-300 block mt-2">Nominal Sudah Dibayar (Rp) *</label>
+         <input type="number" min="0" id="eia_dibayar" value="${Number(row.nominal_dibayar) || 0}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`
+      : '';
+  }
+}
+
+
 
 /** Modal kelola "Deskripsi Pembayaran" (tambah/edit/hapus) khusus ekskul aktif. */
 async function bukaDeskripsiIuranModal() {
@@ -15059,28 +15612,39 @@ async function formKasAnggota() {
   if (hakAksesKasUntuk(aktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
   const anggota = await ambilAnggotaEkskul(aktif);
   if (!anggota.length) return showToast('error', 'Belum ada anggota terdaftar di ekskul ini.');
+  const subs = await ambilSubEkskul(aktif);
+  const subMap = await ambilSubAnggota(aktif);
   const deskripsiList = await ambilDeskripsiIuran(aktif);
   const tipeTersimpan = localStorage.getItem('sisip_kia_tipe_default') || 'harian';
   const urutTipe = ['harian', 'mingguan', 'bulanan'];
   const labelTipe = { harian: 'Harian', mingguan: 'Mingguan', bulanan: 'Bulanan' };
+  const angkatanSet = [...new Set(anggota.map(a => angkatanDariTingkatKelas(a.tingkat_kelas)).filter(Boolean))].sort();
+  const anggotaUrut = [...anggota].sort((a, b) => String(a.nama_lengkap || '').localeCompare(String(b.nama_lengkap || ''), 'id'));
   Swal.fire({
-    title: 'Catat Iuran Anggota',
-    width: '620px',
+    title: 'Buat Iuran Anggota',
+    width: '640px',
     html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
       <label class="font-bold text-yellow-300">Anggota * <span class="text-slate-500 font-normal">(centang satu atau lebih)</span></label>
-      <div class="flex gap-1 mb-1">
+      <div class="flex gap-1 mb-1 flex-wrap items-center">
         <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=true)" class="text-[9px] px-2 py-0.5 rounded bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white transition">Ceklis Semua</button>
         <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=false)" class="text-[9px] px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600 text-red-200 hover:text-white transition">Hapus Ceklis</button>
+        <button type="button" onclick="urutkanAnggotaIuranForm(this)" data-arah="asc" class="text-[9px] px-2 py-0.5 rounded bg-slate-600/40 hover:bg-slate-600 text-slate-200 hover:text-white transition"><i class="fa-solid fa-arrow-down-a-z"></i> A-Z / Z-A</button>
+        ${subs.length ? `<select id="kia_pilih_sub" class="bg-slate-700 border border-white/20 rounded px-1 py-0.5 text-[9px] text-white outline-none"><option value="">-- Sub-Ekskul --</option>${subs.map(s => `<option value="${escJs(s.nama_sub)}">${escapeHtml(s.nama_sub)}</option>`).join('')}</select>
+        <button type="button" onclick="pilihAnggotaIuranPerSub()" class="text-[9px] px-2 py-0.5 rounded bg-indigo-600/40 hover:bg-indigo-600 text-indigo-200 hover:text-white transition">Ceklis Sub</button>` : ''}
+        ${angkatanSet.length ? `<select id="kia_pilih_angkatan" class="bg-slate-700 border border-white/20 rounded px-1 py-0.5 text-[9px] text-white outline-none"><option value="">-- Angkatan --</option>${angkatanSet.map(a => `<option value="${escJs(a)}">${escapeHtml(a)}</option>`).join('')}</select>
+        <button type="button" onclick="pilihAnggotaIuranPerAngkatan()" class="text-[9px] px-2 py-0.5 rounded bg-purple-600/40 hover:bg-purple-600 text-purple-200 hover:text-white transition">Ceklis Angkatan</button>` : ''}
       </div>
-      <div class="max-h-32 overflow-auto custom-scrollbar border border-white/10 rounded-lg p-1.5 grid grid-cols-1 gap-0.5">
-        ${anggota.map(a => `<label class="flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white/5 cursor-pointer"><input type="checkbox" class="kia-chk w-3 h-3 accent-yellow-500" value="${escJs(a.nis_nip)}"> ${escapeHtml(a.nama_lengkap)} (${escapeHtml(a.nis_nip)})</label>`).join('')}
+      <div id="kia_daftar" class="max-h-32 overflow-auto custom-scrollbar border border-white/10 rounded-lg p-1.5 grid grid-cols-1 gap-0.5">
+        ${anggotaUrut.map(a => `<label class="kia-item flex items-center gap-1.5 text-[10px] px-1 py-0.5 rounded hover:bg-white/5 cursor-pointer" data-nama="${escJs(a.nama_lengkap || '')}" data-sub="${escJs(subMap[String(a.nis_nip)] || '')}" data-angkatan="${escJs(angkatanDariTingkatKelas(a.tingkat_kelas))}"><input type="checkbox" class="kia-chk w-3 h-3 accent-yellow-500" value="${escJs(a.nis_nip)}"> ${escapeHtml(a.nama_lengkap)} (${escapeHtml(a.nis_nip)})${subMap[String(a.nis_nip)] ? ` <span class="text-slate-500">[${escapeHtml(subMap[String(a.nis_nip)])}]</span>` : ''}</label>`).join('')}
       </div>
       <label class="font-bold text-yellow-300 block mt-2">Tipe Periode *</label>
       <select id="kia_tipe" onchange="ubahTipePeriodeIuran(); localStorage.setItem('sisip_kia_tipe_default', this.value);" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
         ${urutTipe.map(t => `<option value="${t}" ${tipeTersimpan === t ? 'selected' : ''}>${labelTipe[t]}</option>`).join('')}
       </select>
-      <label class="font-bold text-yellow-300 block mt-2">Tahun *</label>
-      <input type="number" id="kia_tahun" value="${new Date().getFullYear()}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <div id="kia_tahun_wrap">
+        <label class="font-bold text-yellow-300 block mt-2">Tahun *</label>
+        <input type="number" id="kia_tahun" value="${new Date().getFullYear()}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      </div>
       <div id="kia_periode_wrap"></div>
       <label class="font-bold text-yellow-300 block mt-2">Deskripsi Pembayaran</label>
       <select id="kia_deskripsi_pilih" onchange="const v=this.value; const el=document.getElementById('kia_deskripsi'); if(v==='__custom__'){el.value='';el.focus();}else{el.value=v;}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
@@ -15092,29 +15656,29 @@ async function formKasAnggota() {
       <label class="font-bold text-yellow-300 block mt-2">Nominal (Rp) *</label>
       <input type="number" min="0" id="kia_nominal" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Status *</label>
-      <select id="kia_status" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <select id="kia_status" onchange="ubahStatusFormIuran()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
         <option value="lunas">Lunas</option><option value="menunggak">Menunggak</option>
       </select>
-      <label class="font-bold text-yellow-300 block mt-2">Tanggal Bayar</label>
-      <input type="date" id="kia_tglbayar" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <div id="kia_tgl_wrap"></div>
     </div>`,
     background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
     confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan',
-    didOpen: () => ubahTipePeriodeIuran(),
+    didOpen: () => { ubahTipePeriodeIuran(); ubahStatusFormIuran(); },
     preConfirm: () => {
       const nisList = [...document.querySelectorAll('.kia-chk:checked')].map(c => c.value);
       const periode_tipe = document.getElementById('kia_tipe').value;
-      const tahun = Number(document.getElementById('kia_tahun').value) || new Date().getFullYear();
+      const tahun = Number(document.getElementById('kia_tahun')?.value) || new Date().getFullYear();
       const periode_label = document.getElementById('kia_periode_label')?.value || '';
       const bulan = document.getElementById('kia_bulan_val') ? Number(document.getElementById('kia_bulan_val').value) : null;
       const deskripsi_pembayaran = document.getElementById('kia_deskripsi').value.trim();
       const nominal = Number(document.getElementById('kia_nominal').value) || 0;
       const status = document.getElementById('kia_status').value;
-      const tanggal_bayar = document.getElementById('kia_tglbayar').value || null;
+      const tanggal_bayar = status === 'lunas' ? (document.getElementById('kia_tglbayar')?.value || null) : null;
+      const tanggal_akhir_bayar = status === 'menunggak' ? (document.getElementById('kia_tglakhir')?.value || null) : null;
       if (!nisList.length) { Swal.showValidationMessage('Pilih minimal 1 anggota.'); return false; }
       if (!periode_label) { Swal.showValidationMessage('Periode wajib diisi.'); return false; }
       if (!nominal || nominal <= 0) { Swal.showValidationMessage('Nominal wajib diisi (> 0).'); return false; }
-      return { nisList, periode_tipe, tahun, bulan, periode_label, deskripsi_pembayaran, nominal, status, tanggal_bayar };
+      return { nisList, periode_tipe, tahun, bulan, periode_label, deskripsi_pembayaran, nominal, status, tanggal_bayar, tanggal_akhir_bayar };
     }
   }).then(async (res) => {
     if (!res.isConfirmed) return;
@@ -15142,7 +15706,8 @@ async function formKasAnggota() {
       const payloads = d.nisList.map(nis_nip => ({
         ekskul: aktif, nis_nip, periode_tipe: d.periode_tipe, periode_label: d.periode_label,
         tahun: d.tahun, bulan: d.bulan, deskripsi_pembayaran: d.deskripsi_pembayaran, nominal: d.nominal,
-        status: d.status, tanggal_bayar: d.tanggal_bayar, dicatat_oleh
+        status: d.status, tanggal_bayar: d.tanggal_bayar, tanggal_akhir_bayar: d.tanggal_akhir_bayar,
+        nominal_dibayar: d.status === 'lunas' ? d.nominal : 0, dicatat_oleh
       }));
       const { error } = await supaClient.from('iuran_anggota')
         .upsert(payloads, { onConflict: 'ekskul,nis_nip,periode_tipe,periode_label,tahun' });
@@ -15167,11 +15732,60 @@ async function formKasAnggota() {
   });
 }
 
-/** Ganti input periode di form Kas Anggota sesuai tipe (bulanan/mingguan/harian). */
+/** Urutkan daftar anggota di form Buat Iuran Anggota (A-Z / Z-A, toggle). */
+function urutkanAnggotaIuranForm(btn) {
+  const wrap = document.getElementById('kia_daftar');
+  if (!wrap) return;
+  const arah = btn.dataset.arah === 'asc' ? 'desc' : 'asc';
+  btn.dataset.arah = arah;
+  const items = [...wrap.querySelectorAll('.kia-item')];
+  items.sort((a, b) => {
+    const c = String(a.dataset.nama || '').localeCompare(String(b.dataset.nama || ''), 'id');
+    return arah === 'asc' ? c : -c;
+  });
+  items.forEach(el => wrap.appendChild(el));
+}
+
+/** Centang semua anggota pada Sub-Ekskul yang dipilih di form Buat Iuran Anggota. */
+function pilihAnggotaIuranPerSub() {
+  const sub = document.getElementById('kia_pilih_sub')?.value || '';
+  if (!sub) return showToast('error', 'Pilih Sub-Ekskul terlebih dahulu.');
+  document.querySelectorAll('.kia-item').forEach(el => {
+    if (el.dataset.sub === sub) el.querySelector('.kia-chk').checked = true;
+  });
+}
+
+/** Centang semua anggota pada Angkatan yang dipilih di form Buat Iuran Anggota. */
+function pilihAnggotaIuranPerAngkatan() {
+  const angkatan = document.getElementById('kia_pilih_angkatan')?.value || '';
+  if (!angkatan) return showToast('error', 'Pilih Angkatan terlebih dahulu.');
+  document.querySelectorAll('.kia-item').forEach(el => {
+    if (el.dataset.angkatan === angkatan) el.querySelector('.kia-chk').checked = true;
+  });
+}
+
+/** Ganti input Tanggal Bayar/Tanggal Akhir Pembayaran sesuai status yang dipilih di form Buat Iuran Anggota. */
+function ubahStatusFormIuran() {
+  const status = document.getElementById('kia_status')?.value || 'lunas';
+  const wrap = document.getElementById('kia_tgl_wrap');
+  if (!wrap) return;
+  if (status === 'lunas') {
+    wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal Bayar</label>
+      <input type="date" id="kia_tglbayar" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+  } else {
+    wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal Akhir Pembayaran</label>
+      <input type="date" id="kia_tglakhir" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+  }
+}
+
+/** Ganti input periode di form Kas Anggota sesuai tipe (bulanan/mingguan/harian). Sembunyikan
+ *  field Tahun saat tipe=Harian (tanggal lengkap sudah memuat tahunnya). */
 function ubahTipePeriodeIuran() {
   const tipe = document.getElementById('kia_tipe')?.value || 'bulanan';
   const wrap = document.getElementById('kia_periode_wrap');
+  const tahunWrap = document.getElementById('kia_tahun_wrap');
   if (!wrap) return;
+  if (tahunWrap) tahunWrap.classList.toggle('hidden', tipe === 'harian');
   const bulanOpts = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}">${b}</option>`).join('');
   if (tipe === 'bulanan') {
     wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Bulan *</label>
@@ -15183,11 +15797,15 @@ function ubahTipePeriodeIuran() {
       <label class="font-bold text-yellow-300 block mt-2">Minggu ke *</label>
       <select id="kia_periode_label" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${LABEL_MINGGU.map(m => `<option value="${m}">${m}</option>`).join('')}</select>`;
   } else {
+    const thn = new Date().getFullYear();
     wrap.innerHTML = `<label class="font-bold text-yellow-300 block mt-2">Tanggal *</label>
-      <input type="date" id="kia_periode_label" onchange="const d=this.value?new Date(this.value):null; const b=document.getElementById('kia_bulan_val'); if(b&&d) b.value=d.getMonth()+1;" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+      <input type="date" id="kia_periode_label" onchange="const d=this.value?new Date(this.value):null; const b=document.getElementById('kia_bulan_val'); if(b&&d) b.value=d.getMonth()+1; const t=document.getElementById('kia_tahun'); if(t&&d) t.value=d.getFullYear();" value="${new Date().toISOString().split('T')[0]}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <input type="hidden" id="kia_bulan_val" value="${new Date().getMonth() + 1}">`;
+    const tahunInput = document.getElementById('kia_tahun');
+    if (tahunInput) tahunInput.value = thn;
   }
 }
+
 
 async function hapusIuranAnggota(nis, periode_tipe, periode_label, tahun) {
   if (hakAksesKasUntuk(window.__ekskulAktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
@@ -15200,60 +15818,210 @@ async function hapusIuranAnggota(nis, periode_tipe, periode_label, tahun) {
   renderTabEkskul();
 }
 
-/** Export tabel Kas Anggota yang sedang tampil ke file Excel (.xlsx) via SheetJS. */
-function exportKasAnggotaCSV() {
-  const rows = window.__cacheIuranRows || [];
-  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
-  const header = ['Ekstrakurikuler', 'NIS', 'Periode', 'Tipe', 'Tahun', 'Deskripsi Pembayaran', 'Nominal', 'Status', 'Tanggal Bayar'];
-  const data = [[`KAS ANGGOTA - ${window.__ekskulAktif || ''}`], [], header];
-  rows.forEach(r => {
-    data.push([
-      window.__ekskulAktif || '',
-      r.nis_nip || '',
-      r.periode_label || '',
-      r.periode_tipe || '',
-      r.tahun || '',
-      r.deskripsi_pembayaran || '',
-      Number(r.nominal) || 0,
-      r.status === 'lunas' ? 'Lunas' : 'Menunggak',
-      r.tanggal_bayar ? String(r.tanggal_bayar).split('T')[0] : ''
-    ]);
+/** Hitung rentang tanggal {dari, sampai} (string YYYY-MM-DD atau null) dari mode + parameter. */
+function hitungRentangWaktuOpsi(mode, tahun, bulan, dari, sampai) {
+  if (mode === 'bulan') {
+    const t = tahun, b = String(bulan).padStart(2, '0');
+    const akhir = new Date(t, bulan, 0).getDate();
+    return { dari: `${t}-${b}-01`, sampai: `${t}-${b}-${String(akhir).padStart(2, '0')}` };
+  }
+  if (mode === 'minggu') {
+    const t = tahun, b = String(bulan).padStart(2, '0');
+    const akhir = new Date(tahun, bulan, 0).getDate();
+    return { dari: `${t}-${b}-01`, sampai: `${t}-${b}-${String(akhir).padStart(2, '0')}` };
+  }
+  if (mode === 'semester') {
+    const bulanAcuan = new Date().getMonth() + 1;
+    return bulanAcuan >= 6 ? { dari: `${tahun}-07-01`, sampai: `${tahun}-12-31` } : { dari: `${tahun}-01-01`, sampai: `${tahun}-06-30` };
+  }
+  if (mode === 'rentang') return { dari: dari || null, sampai: sampai || null };
+  return { dari: null, sampai: null };
+}
+
+function renderOpsiExportWaktuExtra() {
+  const mode = document.getElementById('oke_waktu')?.value || 'bulan';
+  const wrap = document.getElementById('oke_waktu_extra');
+  if (!wrap) return;
+  const thnSkr = new Date().getFullYear();
+  const blnSkr = new Date().getMonth() + 1;
+  const bulanOpts = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((b, i) => `<option value="${i + 1}" ${blnSkr === i + 1 ? 'selected' : ''}>${b}</option>`).join('');
+  if (mode === 'bulan' || mode === 'minggu') {
+    wrap.innerHTML = `<select id="oke_bulan" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none mt-1">${bulanOpts}</select>
+      <input type="number" id="oke_tahun" value="${thnSkr}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none mt-1">`;
+  } else if (mode === 'semester') {
+    wrap.innerHTML = `<input type="number" id="oke_tahun" value="${thnSkr}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none mt-1">`;
+  } else if (mode === 'rentang') {
+    wrap.innerHTML = `<input type="date" id="oke_dari" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none mt-1">
+      <input type="date" id="oke_sampai" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none mt-1">`;
+  } else {
+    wrap.innerHTML = '';
+  }
+}
+
+function renderOpsiExportCakupanExtra() {
+  const cakupan = document.getElementById('oke_cakupan')?.value || 'aktif';
+  const wrap = document.getElementById('oke_gabung_wrap');
+  if (wrap) wrap.classList.toggle('hidden', cakupan !== 'semua');
+}
+
+/** Buka dialog opsi export (waktu, cakupan ekskul, gabung/pisah) sebelum export Excel/PDF. */
+async function bukaOpsiExportKasAnggota(format) {
+  const daftar = window.__daftarEkskul || [];
+  const aktif = window.__ekskulAktif;
+  Swal.fire({
+    title: `<i class="fa-solid fa-${format === 'excel' ? 'file-excel' : 'print'}"></i> Opsi Export ${format === 'excel' ? 'Excel' : 'PDF'}`,
+    width: '480px',
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
+      <label class="font-bold text-yellow-300 block">Jenis Laporan</label>
+      <select id="oke_jenis" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="kas">Kas Anggota (semua)</option>
+        <option value="tunggakan">Daftar Tunggakan (menunggak/cicil)</option>
+      </select>
+      <label class="font-bold text-yellow-300 block mt-2">Waktu</label>
+      <select id="oke_waktu" onchange="renderOpsiExportWaktuExtra()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="bulan">Bulan</option>
+        <option value="minggu">Minggu</option>
+        <option value="semester">Semester</option>
+        <option value="rentang">Dari-Sampai</option>
+      </select>
+      <div id="oke_waktu_extra"></div>
+      <label class="font-bold text-yellow-300 block mt-2">Cakupan Ekstrakurikuler</label>
+      <select id="oke_cakupan" onchange="renderOpsiExportCakupanExtra()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+        <option value="aktif">Hanya "${escapeHtml(aktif || '-')}" (sedang dibuka)</option>
+        <option value="semua">Semua Ekstrakurikuler</option>
+      </select>
+      <div id="oke_gabung_wrap" class="hidden">
+        <label class="font-bold text-yellow-300 block mt-2">Format Berkas</label>
+        <select id="oke_gabung" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+          <option value="gabung">Gabung dalam satu berkas</option>
+          <option value="pisah">Pisah per ekstrakurikuler</option>
+        </select>
+      </div>
+    </div>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal',
+    confirmButtonText: '<i class="fa-solid fa-download"></i> Export',
+    didOpen: () => { renderOpsiExportWaktuExtra(); renderOpsiExportCakupanExtra(); },
+    preConfirm: () => {
+      const jenis = document.getElementById('oke_jenis').value;
+      const waktu = document.getElementById('oke_waktu').value;
+      const tahun = Number(document.getElementById('oke_tahun')?.value) || new Date().getFullYear();
+      const bulan = Number(document.getElementById('oke_bulan')?.value) || (new Date().getMonth() + 1);
+      const dari = document.getElementById('oke_dari')?.value || '';
+      const sampai = document.getElementById('oke_sampai')?.value || '';
+      const cakupan = document.getElementById('oke_cakupan').value;
+      const gabung = document.getElementById('oke_gabung')?.value || 'gabung';
+      if (waktu === 'rentang' && (!dari || !sampai)) { Swal.showValidationMessage('Isi tanggal dari & sampai.'); return false; }
+      const rentang = hitungRentangWaktuOpsi(waktu, tahun, bulan, dari, sampai);
+      const ekskulList = cakupan === 'semua' ? daftar : [aktif];
+      return { ...rentang, ekskulList, gabung: cakupan === 'semua' ? gabung : 'gabung', jenis };
+    }
+  }).then(res => {
+    if (!res.isConfirmed) return;
+    if (format === 'excel') exportKasAnggotaCSV(res.value);
+    else exportKasAnggotaPDF(res.value);
   });
-  const ws = XLSX.utils.aoa_to_sheet(data);
+}
+
+/** Ambil baris iuran untuk satu ekskul & rentang tanggal tertentu (dipakai export multi-ekskul). */
+async function ambilIuranUntukExport(ekskul, dari, sampai) {
+  const { data, error } = await supaClient.rpc('iuran_anggota_rentang', { p_ekskul: ekskul, p_dari: dari || null, p_sampai: sampai || null });
+  return error ? [] : (data || []);
+}
+
+/** Saring baris sesuai Jenis Laporan (kas = semua, tunggakan = status menunggak/cicil). */
+function saringRowsJenisLaporan(rows, jenis) {
+  if (jenis !== 'tunggakan') return rows;
+  return (rows || []).filter(r => r.status !== 'lunas');
+}
+
+/** Export tabel Kas Anggota ke file Excel (.xlsx) via SheetJS, sesuai opsi waktu/cakupan/gabung/jenis. */
+async function exportKasAnggotaCSV(opts) {
+  opts = opts || { dari: null, sampai: null, ekskulList: [window.__ekskulAktif], gabung: 'gabung', jenis: 'kas' };
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const judulLaporan = opts.jenis === 'tunggakan' ? 'DAFTAR TUNGGAKAN' : 'KAS ANGGOTA';
+  const header = ['Ekstrakurikuler', 'Nama', 'NIS', 'Periode', 'Tipe', 'Tahun', 'Deskripsi Pembayaran', 'Nominal', 'Status', 'Tanggal Bayar', 'Tinggal Dibayar'];
+  const labelStatusExp = (st) => st === 'lunas' ? 'Lunas' : (st === 'cicil' ? 'Cicil' : 'Menunggak');
+  const tinggalExp = (r) => r.status === 'lunas' ? 0 : Math.max(0, (Number(r.nominal) || 0) - (Number(r.nominal_dibayar) || 0));
+  const buatBaris = (ekskul, rows, namaMap) => rows.map(r => [
+    ekskul, namaMap[r.nis_nip] || r.nis_nip || '', r.nis_nip || '', r.periode_label || '', r.periode_tipe || '', r.tahun || '',
+    r.deskripsi_pembayaran || '', Number(r.nominal) || 0, labelStatusExp(r.status),
+    r.tanggal_bayar ? String(r.tanggal_bayar).split('T')[0] : '', tinggalExp(r)
+  ]);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Kas Anggota');
+  let adaData = false;
+  if (opts.gabung === 'pisah' && opts.ekskulList.length > 1) {
+    for (const ekskul of opts.ekskulList) {
+      const rowsMentah = ekskul === window.__ekskulAktif ? (window.__cacheIuranRows || []) : await ambilIuranUntukExport(ekskul, opts.dari, opts.sampai);
+      const rows = saringRowsJenisLaporan(rowsMentah, opts.jenis);
+      if (!rows.length) continue;
+      adaData = true;
+      const anggota = await ambilAnggotaEkskul(ekskul);
+      const namaMap = {}; anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
+      const data = [[`${judulLaporan} - ${ekskul}`], [], header, ...buatBaris(ekskul, rows, namaMap)];
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), ekskul.substring(0, 31));
+    }
+  } else {
+    const data = [[judulLaporan], [], header];
+    for (const ekskul of opts.ekskulList) {
+      const rowsMentah = ekskul === window.__ekskulAktif ? (window.__cacheIuranRows || []) : await ambilIuranUntukExport(ekskul, opts.dari, opts.sampai);
+      const rows = saringRowsJenisLaporan(rowsMentah, opts.jenis);
+      if (!rows.length) continue;
+      adaData = true;
+      const anggota = await ambilAnggotaEkskul(ekskul);
+      const namaMap = {}; anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
+      data.push(...buatBaris(ekskul, rows, namaMap));
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(data), 'Kas Anggota');
+  }
+  if (!adaData) return showToast('error', 'Tidak ada data untuk diexport.');
   XLSX.writeFile(wb, `kas-anggota-${window.__ekskulAktif || 'ekskul'}.xlsx`);
 }
 
-/** Cetak laporan Kas Anggota ke jendela print khusus. */
-function exportKasAnggotaPDF() {
-  const rows = window.__cacheIuranRows || [];
-  if (!rows.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  const trs = rows.map(r => `<tr>
-    <td>${escapeHtml(window.__ekskulAktif || '')}</td>
-    <td>${escapeHtml(r.nis_nip || '')}</td>
-    <td>${escapeHtml(r.periode_label || '')} (${escapeHtml(r.periode_tipe || '')})</td>
-    <td>${escapeHtml(r.deskripsi_pembayaran || '-')}</td>
-    <td style="text-align:right">${formatRupiah(r.nominal)}</td>
-    <td>${r.status === 'lunas' ? 'Lunas' : 'Menunggak'}</td>
-    <td>${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
-  </tr>`).join('');
-  const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-  const totalTerkumpul = rows.filter(r => r.status === 'lunas').reduce((s, r) => s + (Number(r.nominal) || 0), 0);
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Laporan Kas Anggota - ${escapeHtml(window.__ekskulAktif || '')}</title>
+/** Cetak laporan Kas Anggota ke jendela print khusus, sesuai opsi waktu/cakupan/jenis. */
+async function exportKasAnggotaPDF(opts) {
+  opts = opts || { dari: null, sampai: null, ekskulList: [window.__ekskulAktif], gabung: 'gabung', jenis: 'kas' };
+  const judulLaporan = opts.jenis === 'tunggakan' ? 'Laporan Daftar Tunggakan' : 'Laporan Kas Anggota';
+  const labelStatusExp = (st) => st === 'lunas' ? 'Lunas' : (st === 'cicil' ? 'Cicil' : 'Menunggak');
+  const tinggalExp = (r) => r.status === 'lunas' ? 0 : Math.max(0, (Number(r.nominal) || 0) - (Number(r.nominal_dibayar) || 0));
+  let bodySections = '';
+  let adaData = false;
+  for (const ekskul of opts.ekskulList) {
+    const rowsMentah = ekskul === window.__ekskulAktif ? (window.__cacheIuranRows || []) : await ambilIuranUntukExport(ekskul, opts.dari, opts.sampai);
+    const rows = saringRowsJenisLaporan(rowsMentah, opts.jenis);
+    if (!rows.length) continue;
+    adaData = true;
+    const anggota = await ambilAnggotaEkskul(ekskul);
+    const namaMap = {}; anggota.forEach(a => { namaMap[a.nis_nip] = a.nama_lengkap; });
+    const trs = rows.map(r => `<tr>
+      <td>${escapeHtml(ekskul)}</td>
+      <td>${escapeHtml(namaMap[r.nis_nip] || r.nis_nip || '')}</td>
+      <td>${escapeHtml(r.nis_nip || '')}</td>
+      <td>${escapeHtml(r.periode_label || '')} (${escapeHtml(r.periode_tipe || '')})</td>
+      <td>${escapeHtml(r.deskripsi_pembayaran || '-')}</td>
+      <td style="text-align:right">${formatRupiah(r.nominal)}</td>
+      <td>${labelStatusExp(r.status)}</td>
+      <td>${r.tanggal_bayar ? escapeHtml(String(r.tanggal_bayar).split('T')[0]) : '-'}</td>
+      <td style="text-align:right">${formatRupiah(tinggalExp(r))}</td>
+    </tr>`).join('');
+    const totalTagihan = rows.reduce((s, r) => s + (Number(r.nominal) || 0), 0);
+    const totalTerkumpul = rows.reduce((s, r) => s + (Number(r.nominal_dibayar) || (r.status === 'lunas' ? Number(r.nominal) || 0 : 0)), 0);
+    bodySections += `
+    <h2>Ekstrakurikuler: ${escapeHtml(ekskul)}</h2>
+    <table><thead><tr><th>Ekstrakurikuler</th><th>Nama</th><th>NIS</th><th>Periode</th><th>Deskripsi Pembayaran</th><th>Nominal</th><th>Status</th><th>Tgl Bayar</th><th>Tinggal Dibayar</th></tr></thead>
+    <tbody>${trs}</tbody>
+    <tfoot><tr><td colspan="5">TOTAL TAGIHAN / TERKUMPUL</td><td style="text-align:right">${formatRupiah(totalTagihan)}</td><td colspan="3" style="text-align:right">${formatRupiah(totalTerkumpul)}</td></tr></tfoot>
+    </table>`;
+  }
+  if (!adaData) return showToast('error', 'Tidak ada data untuk diexport.');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtml(judulLaporan)}</title>
   <style>
     body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;}
-    h1{font-size:15px;margin-bottom:2px;} h2{font-size:12px;font-weight:normal;color:#444;margin-top:0;}
-    table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;}
+    h1{font-size:15px;margin-bottom:2px;} h2{font-size:12px;font-weight:normal;color:#444;margin-top:16px;}
+    table{width:100%;border-collapse:collapse;margin-top:8px;} th,td{border:1px solid #999;padding:5px 6px;}
     th{background:#eee;text-align:left;} tfoot td{font-weight:bold;background:#f5f5f5;}
   </style></head><body>
-  <h1>Laporan Kas Anggota</h1>
-  <h2>Ekstrakurikuler: ${escapeHtml(window.__ekskulAktif || '')}</h2>
-  <table><thead><tr><th>Ekstrakurikuler</th><th>NIS</th><th>Periode</th><th>Deskripsi Pembayaran</th><th>Nominal</th><th>Status</th><th>Tgl Bayar</th></tr></thead>
-  <tbody>${trs}</tbody>
-  <tfoot><tr><td colspan="4">TOTAL TAGIHAN / TERKUMPUL</td><td style="text-align:right">${formatRupiah(totalTagihan)}</td><td colspan="2" style="text-align:right">${formatRupiah(totalTerkumpul)}</td></tr></tfoot>
-  </table>
+  <h1>${escapeHtml(judulLaporan)}</h1>
+  ${bodySections}
   <script>window.onload=()=>{window.print();};<\\/script>
   </body></html>`;
   const w = window.open('', '_blank');
