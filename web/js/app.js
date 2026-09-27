@@ -3398,6 +3398,32 @@ function shareKehadiranWA() {
 // 4C. PRATINJAU IMPORT EXCEL (Terapkan / Reupload / Batal) — dipakai semua modul import
 // ==========================================
 
+/** Konversi angka serial tanggal Excel (basis 1899-12-30) menjadi string ISO YYYY-MM-DD. */
+function serialExcelKeISO(serial) {
+  const ms = Math.round((Number(serial) - 25569) * 86400 * 1000); // 25569 = hari antara 1899-12-30 dan 1970-01-01
+  const d = new Date(ms);
+  if (isNaN(d.getTime())) return '';
+  const yyyy = d.getUTCFullYear();
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+/** Format tanggal ISO (YYYY-MM-DD) atau objek Date menjadi format Indonesia DD-MM-YYYY (tampilan saja). */
+function formatTanggalIndo(nilai) {
+  if (!nilai) return '';
+  let iso = nilai;
+  if (nilai instanceof Date) {
+    const yyyy = nilai.getFullYear();
+    const mm = String(nilai.getMonth() + 1).padStart(2, '0');
+    const dd = String(nilai.getDate()).padStart(2, '0');
+    iso = `${yyyy}-${mm}-${dd}`;
+  }
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso));
+  if (!m) return String(nilai);
+  return `${m[3]}-${m[2]}-${m[1]}`;
+}
+
 /** Baca file Excel (sheet pertama) → array-of-arrays. Validasi ukuran & sheet kosong. */
 function bacaExcelPertama(file, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -8165,7 +8191,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             <button onclick="exportExcelMurid()" class="h-8 bg-emerald-600 hover:bg-emerald-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Export ke Excel"><i class="fa-solid fa-file-excel"></i> <span class="hidden sm:inline">Excel</span></button>
                             <button onclick="exportPdfMurid()" class="h-8 bg-rose-600 hover:bg-rose-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Export ke PDF"><i class="fa-solid fa-file-pdf"></i> <span class="hidden sm:inline">PDF</span></button>
                             <button onclick="openExportQRMurid()" class="h-8 bg-indigo-600 hover:bg-indigo-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Export QR Kartu Murid"><i class="fa-solid fa-qrcode"></i> <span class="hidden sm:inline">QR</span></button>
-                            <button onclick="openImportMurid()" class="h-8 bg-teal-600 hover:bg-teal-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Import Data Murid (Excel)"><i class="fa-solid fa-file-import"></i> <span class="hidden sm:inline">Import</span></button>
+                            ${bisaImportMuridAktif() ? `<button onclick="openImportMurid()" class="h-8 bg-teal-600 hover:bg-teal-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Import Data Murid (Excel) — admin atau guru (wali kelas/pembina ekskul)"><i class="fa-solid fa-file-import"></i> <span class="hidden sm:inline">Import</span></button>` : ''}
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
@@ -8231,7 +8257,7 @@ async function exportExcelMurid() {
     "Tingkat/Kelas": d.tingkat_kelas || "",
     "Wali Kelas": petaWali[d.tingkat_kelas] || "",
     "Jenis Kelamin": d.jenis_kelamin || "",
-    "Tgl Lahir": d.tgl_lahir ? String(d.tgl_lahir).split('T')[0] : "",
+    "Tgl Lahir": d.tgl_lahir ? formatTanggalIndo(String(d.tgl_lahir).split('T')[0]) : "",
     "Agama": d.agama || "",
     "Golongan Darah": d.golongan_darah || "",
     "Ekstrakurikuler": d.ekstrakurikuler || "",
@@ -9401,7 +9427,7 @@ function downloadTemplateMurid() {
 
     const dataRows = [
         ["FORMAT IMPORT DATA MURID"],
-        ["INFO", "Isi baris di bawah header dengan data murid. Kolom NIS dan Nama Lengkap wajib diisi. Tgl Lahir format YYYY-MM-DD. Ekskul pisah dengan koma. Password kosong = otomatis 123456."],
+        ["INFO", "Isi baris di bawah header dengan data murid. Kolom NIS dan Nama Lengkap wajib diisi. Tgl Lahir bisa diisi format tanggal Excel (DD-MM-YYYY / cell Date) atau teks YYYY-MM-DD — akan dikonversi otomatis. Ekskul pisah dengan koma. Password kosong = otomatis 123456."],
         headers
     ];
 
@@ -9413,7 +9439,7 @@ function downloadTemplateMurid() {
 
 async function previewImportMurid(file) {
     try {
-        const jsonArray = await bacaExcelPertama(file);
+        const jsonArray = await bacaExcelPertama(file, { cellDates: true });
         if(jsonArray.length < 3) throw new Error("Format template tidak dikenali.");
 
         const headers = jsonArray[2].map(h => String(h || '').trim());
@@ -9426,11 +9452,31 @@ async function previewImportMurid(file) {
             return (i !== -1 && row[i] !== undefined) ? String(row[i]).trim() : '';
         };
 
+        /** Kolom Tgl Lahir bisa berupa objek Date (cell Excel bertipe tanggal), angka serial Excel
+         *  (fallback bila cellDates gagal dideteksi), atau teks manual — selalu dinormalisasi ke ISO YYYY-MM-DD. */
+        const ambilTglLahir = (row) => {
+            const i = idxOf('Tgl Lahir');
+            if (i === -1 || row[i] === undefined || row[i] === '') return '';
+            const v = row[i];
+            if (v instanceof Date) {
+                const yyyy = v.getFullYear();
+                const mm = String(v.getMonth() + 1).padStart(2, '0');
+                const dd = String(v.getDate()).padStart(2, '0');
+                return `${yyyy}-${mm}-${dd}`;
+            }
+            if (typeof v === 'number') return serialExcelKeISO(v);
+            const s = String(v).trim();
+            // Terima juga format Indonesia DD-MM-YYYY atau DD/MM/YYYY dari input manual
+            const mIndo = /^(\d{2})[-\/](\d{2})[-\/](\d{4})$/.exec(s);
+            if (mIndo) return `${mIndo[3]}-${mIndo[2]}-${mIndo[1]}`;
+            return s;
+        };
+
         const rows = [];
         for(let i=3; i<jsonArray.length; i++) {
             const row = jsonArray[i];
             if (!row || !row[idxNis]) continue;
-            const tglLahirRaw = ambil(row, 'Tgl Lahir');
+            const tglLahirRaw = ambilTglLahir(row);
             rows.push({
                 nis: String(row[idxNis]).trim(),
                 nisn: ambil(row, 'NISN'),
@@ -9442,6 +9488,7 @@ async function previewImportMurid(file) {
                 tgl_lahir: tglLahirRaw,
                 agama: ambil(row, 'Agama'),
                 golongan_darah: ambil(row, 'Golongan Darah'),
+
                 ekstrakurikuler: ambil(row, 'Ekstrakurikuler'),
                 jabatan: ambil(row, 'Jabatan Kelas'),
                 nama_ayah: ambil(row, 'Nama Orang tua Ayah'),
@@ -9479,7 +9526,7 @@ async function previewImportMurid(file) {
             const masalah = [];
             const sel = {
                 nis: { v: r.nis }, nama: { v: r.nama_lengkap }, kelas: { v: r.tingkat_kelas },
-                nisn: { v: r.nisn }, jk: { v: r.jenis_kelamin }, tgl: { v: r.tgl_lahir },
+                nisn: { v: r.nisn }, jk: { v: r.jenis_kelamin }, tgl: { v: formatTanggalIndo(r.tgl_lahir) },
                 ekskul: { v: r.ekstrakurikuler }, jab: { v: r.jabatan }
             };
             let status = 'ok', alasan = '';
@@ -9496,8 +9543,8 @@ async function previewImportMurid(file) {
             }
             if (r.tgl_lahir && !/^\d{4}-\d{2}-\d{2}/.test(r.tgl_lahir)) {
                 if (status === 'ok') status = 'warn';
-                alasan = alasan || 'Format Tgl Lahir bukan YYYY-MM-DD';
-                sel.tgl = { v: r.tgl_lahir, cls: 'warn', alasan: 'Format tanggal di luar standar — pastikan YYYY-MM-DD' };
+                alasan = alasan || 'Format Tgl Lahir tidak dikenali';
+                sel.tgl = { v: r.tgl_lahir, cls: 'warn', alasan: 'Format tanggal di luar standar — pastikan DD-MM-YYYY atau cell Date Excel' };
             }
             if (r.password && r.password.length < 6) {
                 if (status === 'ok') status = 'warn';
@@ -10250,6 +10297,14 @@ function waliKelasAktif() {
 function ekskulDiampuAktif() {
     const u = barisGuruSesi();
     return String(u.ekstrakurikuler || u["Ekstrakurikuler"] || u["Ekskul"] || '').split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/** Guru boleh Import Data Murid hanya jika ia wali kelas ATAU pembina ekskul (selain admin).
+ *  Selaras dengan RPC import_akun_murid: admin selalu bisa; guru butuh wali_kelas/ekstrakurikuler terisi. */
+function bisaImportMuridAktif() {
+    if (isAdminAktif()) return true;
+    if (((currentUser || {}).role) !== 'guru') return false;
+    return !!waliKelasAktif() || ekskulDiampuAktif().length > 0;
 }
 
 
