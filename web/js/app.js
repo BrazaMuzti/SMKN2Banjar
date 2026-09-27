@@ -13250,7 +13250,7 @@ async function renderTabInfoEkskul() {
   // ---------- Kartu terpisah: ANGGOTA (tabel Nama | Sub-Ekskul | Kelas, warna per Sub, A-Z/Z-A) ----------
   const boxAg = document.getElementById('info-anggota-ekskul');
   if (boxAg) {
-    const ambilNilaiAnggota = (a, kolom) => kolom === 'sub' ? (subMap[String(a.nis_nip)] || '') : (kolom === 'kelas' ? a.tingkat_kelas : a.nama_lengkap);
+    const ambilNilaiAnggota = (a, kolom) => kolom === 'sub' ? (subMap[String(a.nis_nip)] || []).join(', ') : (kolom === 'kelas' ? a.tingkat_kelas : a.nama_lengkap);
     const listAnggota = sortInfoAnggota.kolom ? terapkanSortKolom(anggota, sortInfoAnggota, ambilNilaiAnggota) : anggota;
     const thA = (label, kolom) => `<th class="p-2 cursor-pointer select-none" onclick="gantiSortInfoEkskul('anggota','${kolom}')">${label} ${ikonSortInfo('anggota', kolom)}</th>`;
     boxAg.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
@@ -13260,11 +13260,11 @@ async function renderTabInfoEkskul() {
         : `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
           <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${thA('Nama', 'nama')}${thA('Sub-Ekskul', 'sub')}${thA('Kelas', 'kelas')}<th class="p-2">Kontak</th></tr></thead>
           <tbody>${listAnggota.map((a, i) => {
-            const subSaya = subMap[String(a.nis_nip)] || '';
-            const w = subSaya ? warnaSub(subSaya, subs) : { border: 'border-white/10', text: 'text-slate-400', bg: '' };
+            const subSaya = subMap[String(a.nis_nip)] || [];
+            const w = subSaya.length ? warnaSub(subSaya[0], subs) : { border: 'border-white/10', text: 'text-slate-400', bg: '' };
             return `<tr class="border-b border-white/5 hover:bg-white/5 border-l-4 ${w.border}">
               <td class="p-2"><i class="fa-solid fa-user text-indigo-300 text-[9px]"></i> ${i + 1}. ${escapeHtml(a.nama_lengkap || '-')}</td>
-              <td class="p-2 border-l border-white/10">${subSaya ? `<span class="text-[9px] px-1.5 py-0.5 rounded ${w.bg} ${w.text} font-bold"><i class="fa-solid fa-circle text-[6px]"></i> ${escapeHtml(subSaya)}</span>` : '<span class="text-slate-500">-</span>'}</td>
+              <td class="p-2 border-l border-white/10">${subSaya.length ? subSaya.map(s => { const ws = warnaSub(s, subs); return `<span class="text-[9px] px-1.5 py-0.5 rounded ${ws.bg} ${ws.text} font-bold mr-1"><i class="fa-solid fa-circle text-[6px]"></i> ${escapeHtml(s)}</span>`; }).join('') : '<span class="text-slate-500">-</span>'}</td>
               <td class="p-2 border-l border-white/10">${escapeHtml(a.tingkat_kelas || '-')}</td>
               <td class="p-2 border-l border-white/10">${linkWA(a.no_telepon || '', `Assalamualaikum, kami menghubungi ${a.nama_lengkap || ''} terkait kegiatan ${aktif}.`)}</td>
             </tr>`;
@@ -13279,7 +13279,7 @@ function exportInfoEkskulExcel() {
   if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
   if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
   const data = [[`PENGURUS & ANGGOTA - ${c.aktif}`], [], ['Nama', 'Jabatan', 'Sub-Ekskul', 'Kelas']];
-  c.anggota.forEach(a => data.push([a.nama_lengkap || '', c.petaJab[String(a.nis_nip)] || a.jabatan || '', c.subMap[String(a.nis_nip)] || '', a.tingkat_kelas || '']));
+  c.anggota.forEach(a => data.push([a.nama_lengkap || '', c.petaJab[String(a.nis_nip)] || a.jabatan || '', (c.subMap[String(a.nis_nip)] || []).join(', '), a.tingkat_kelas || '']));
   const ws = XLSX.utils.aoa_to_sheet(data);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Pengurus & Anggota');
@@ -13290,7 +13290,7 @@ function exportInfoEkskulExcel() {
 function exportInfoEkskulPDF() {
   const c = window.__cacheInfoEkskul;
   if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  const trs = c.anggota.map(a => `<tr><td>${escapeHtml(a.nama_lengkap || '')}</td><td>${escapeHtml(c.petaJab[String(a.nis_nip)] || a.jabatan || '-')}</td><td>${escapeHtml(c.subMap[String(a.nis_nip)] || '-')}</td><td>${escapeHtml(a.tingkat_kelas || '-')}</td></tr>`).join('');
+  const trs = c.anggota.map(a => `<tr><td>${escapeHtml(a.nama_lengkap || '')}</td><td>${escapeHtml(c.petaJab[String(a.nis_nip)] || a.jabatan || '-')}</td><td>${escapeHtml((c.subMap[String(a.nis_nip)] || []).join(', ') || '-')}</td><td>${escapeHtml(a.tingkat_kelas || '-')}</td></tr>`).join('');
   const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pengurus & Anggota - ${escapeHtml(c.aktif)}</title>
   <style>body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;} h1{font-size:15px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;} th{background:#eee;text-align:left;}</style></head><body>
   <h1>Pengurus & Anggota — ${escapeHtml(c.aktif)}</h1>
@@ -13405,9 +13405,9 @@ async function renderTabProfilEkskul() {
   };
   // Filter anggota sesuai filter sub-ekskul aktif
   const anggotaTampil = anggota.filter(a => {
-    const subSaya = subMap[String(a.nis_nip)] || '';
-    if (filterSubAnggotaProfil === '__tanpa__') return !subSaya;
-    if (filterSubAnggotaProfil) return subSaya === filterSubAnggotaProfil;
+    const subSaya = subMap[String(a.nis_nip)] || [];
+    if (filterSubAnggotaProfil === '__tanpa__') return !subSaya.length;
+    if (filterSubAnggotaProfil) return subSaya.includes(filterSubAnggotaProfil);
     return true;
   });
 
@@ -13428,13 +13428,10 @@ async function renderTabProfilEkskul() {
           ${anggotaTampil.map((a, i) => {
             const jabEkskul = petaJab[String(a.nis_nip)] || '';
             const isPengurus = jabEkskul || /Ekstra/i.test(a.jabatan || '');
-            const subSaya = subMap[String(a.nis_nip)] || '';
-            const optSub = ['<option value="">— sub —</option>']
-              .concat(subs.map(s => `<option value="${escJs(s.nama_sub)}" ${s.nama_sub === subSaya ? 'selected' : ''}>${escapeHtml(s.nama_sub)}</option>`))
-              .join('');
+            const subSaya = subMap[String(a.nis_nip)] || [];
             const ddSub = bolehKelolaAnggota && subs.length
-              ? `<select onchange="setSubAnggota('${escJs(a.nis_nip)}', window.__ekskulAktif, this.value)" class="bg-slate-700 border border-white/20 rounded px-1 py-0.5 text-[9px] text-white outline-none max-w-[110px]" title="Sub-Ekstrakurikuler anggota">${optSub}</select>`
-              : (subSaya ? `<span class="text-[9px] bg-indigo-900/50 text-indigo-300 px-1.5 py-0.5 rounded">${escapeHtml(subSaya)}</span>` : '');
+              ? `<button type="button" onclick="formPilihSubAnggota('${escJs(a.nis_nip)}', '${escJs(a.nama_lengkap || '')}')" class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-900/40 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 transition max-w-[130px] truncate" title="Atur Sub-Ekstrakurikuler (boleh lebih dari satu)"><i class="fa-solid fa-sitemap"></i> ${subSaya.length ? escapeHtml(subSaya.join(', ')) : 'Pilih Sub'}</button>`
+              : (subSaya.length ? subSaya.map(s => `<span class="text-[9px] bg-indigo-900/50 text-indigo-300 px-1.5 py-0.5 rounded">${escapeHtml(s)}</span>`).join(' ') : '');
             return `<div class="flex items-center justify-between bg-slate-800/70 border border-white/10 rounded px-2 py-1.5 gap-2">
               <div class="min-w-0">
                 <div class="text-[11px] text-slate-200 truncate">${i + 1}. ${escapeHtml(a.nama_lengkap || '-')} <span class="text-[9px] text-indigo-300">(${escapeHtml(a.tingkat_kelas || '-')})</span> ${isPengurus ? `<span class="text-[9px] bg-yellow-900/50 text-yellow-300 px-1.5 py-0.5 rounded">${escapeHtml(jabEkskul || a.jabatan || '')}</span>` : ''}</div>
@@ -13478,6 +13475,35 @@ function gantiFilterSubAnggotaProfil(sub) {
   filterSubAnggotaProfil = sub || '';
   renderTabProfilEkskul();
 }
+
+/** [MULTI-SUB] Popup checklist untuk mengatur sub-ekstrakurikuler seorang anggota (boleh pilih >1). */
+async function formPilihSubAnggota(nis, namaLengkap) {
+  const aktif = window.__ekskulAktif;
+  if (!aktif) return;
+  if (!ekskulAksesTermasukUntuk(aktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  const subs = await ambilSubEkskul(aktif);
+  if (!subs.length) return showToast('info', 'Belum ada Sub-Ekstrakurikuler pada ekskul ini.');
+  const subMap = await ambilSubAnggota(aktif);
+  const subSaya = new Set(subMap[String(nis)] || []);
+  const { value: hasil } = await Swal.fire({
+    title: `Sub-Ekstrakurikuler — ${escapeHtml(namaLengkap || '')}`,
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+      ${subs.map(s => `<label class="flex items-center gap-2 bg-slate-800/60 border border-white/10 rounded px-2 py-1.5 cursor-pointer hover:bg-slate-700/60">
+        <input type="checkbox" class="chk-sub-anggota" value="${escJs(s.nama_sub)}" ${subSaya.has(s.nama_sub) ? 'checked' : ''}>
+        <span>${escapeHtml(s.nama_sub)}</span>
+      </label>`).join('')}
+    </div>`,
+    background: '#1e293b', color: '#fff',
+    showCancelButton: true,
+    confirmButtonText: 'Simpan',
+    cancelButtonText: 'Batal',
+    preConfirm: () => Array.from(document.querySelectorAll('.chk-sub-anggota:checked')).map(el => el.value)
+  });
+  if (hasil === undefined) return; // dibatalkan
+  const ok = await setSubAnggota(nis, aktif, hasil);
+  if (ok) { showToast('success', 'Sub-Ekstrakurikuler diperbarui.'); renderTabProfilEkskul(); }
+}
+
 
 // ---------- [REQ 1a] KELOLA JABATAN ANGGOTA EKSKUL (akun.jabatan_ekskul_map) ----------
 /** Simpan jabatan satu anggota pada satu ekskul: ubah kunci ekskul pada kolom jabatan_ekskul_map. */
@@ -13643,8 +13669,8 @@ function renderDaftarTambahAnggota() {
     if (thn && (m.tahun_pelajaran || '') !== thn) return false;
     if (kls && (m.tingkat_kelas || '') !== kls) return false;
     // [REQ 1a] Filter Sub-Ekskul kandidat (berdasar penandaan sub di modal ini)
-    if (subF === '__tanpa__') { if (petaSub[m.nis_nip]) return false; }
-    else if (subF && (petaSub[m.nis_nip] || '') !== subF) return false;
+    if (subF === '__tanpa__') { if ((petaSub[m.nis_nip] || []).length) return false; }
+    else if (subF && !(petaSub[m.nis_nip] || []).includes(subF)) return false;
     if (cari && !String(m.nama_lengkap || '').toLowerCase().includes(cari) && !String(m.nis_nip || '').includes(cari)) return false;
     return true;
   });
@@ -13661,16 +13687,13 @@ function renderDaftarTambahAnggota() {
         const anggotaSekarang = String(m.ekstrakurikuler || '').split(',').map(e => e.trim()).filter(Boolean);
         const sudah = anggotaSekarang.includes(ekskul);
         const cek = terpilih.has(m.nis_nip);
-        const subSaya = (window.__taSub || {})[m.nis_nip] || '';
-        const optSub = ['<option value="">—</option>']
-          .concat((window.__taSubList || []).map(n => `<option value="${escJs(n)}" ${n === subSaya ? 'selected' : ''}>${escapeHtml(n)}</option>`))
-          .join('');
+        const subSaya = (window.__taSub || {})[m.nis_nip] || [];
         return `<tr class="text-[11px] hover:bg-white/5 ${sudah ? 'bg-green-900/10' : ''}">
           <td class="p-2 border-b border-white/5 text-center"><input type="checkbox" ${cek ? 'checked' : ''} onchange="toggleTambahAnggota('${escJs(m.nis_nip)}', this.checked)" class="w-4 h-4 accent-teal-500 cursor-pointer"></td>
           <td class="p-2 border-b border-white/5 text-slate-300">${escapeHtml(m.nis_nip || '-')}</td>
           <td class="p-2 border-b border-white/5 text-white font-bold">${escapeHtml(m.nama_lengkap || '-')} ${sudah ? `<span class="text-[9px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded ml-1">Anggota</span>` : ''}</td>
           <td class="p-2 border-b border-white/5 text-indigo-300">${escapeHtml(m.tingkat_kelas || '-')}</td>
-          <td class="p-2 border-b border-white/5"><select onchange="setSubTambahAnggota('${escJs(m.nis_nip)}', this.value)" class="bg-slate-700 border border-white/20 rounded px-1 py-0.5 text-[10px] text-white outline-none max-w-[120px]">${optSub}</select></td>
+          <td class="p-2 border-b border-white/5"><button type="button" onclick="formPilihSubTambahAnggota('${escJs(m.nis_nip)}', '${escJs(m.nama_lengkap || '')}')" class="text-[9px] px-1.5 py-0.5 rounded bg-indigo-900/40 hover:bg-indigo-600 text-indigo-300 hover:text-white border border-indigo-500/30 transition max-w-[130px] truncate" title="Pilih Sub (boleh lebih dari satu)">${subSaya.length ? escapeHtml(subSaya.join(', ')) : '— pilih —'}</button></td>
           <td class="p-2 border-b border-white/5 text-slate-400">${escapeHtml(anggotaSekarang.join(', ') || '-')}</td>
         </tr>`;
       }).join('')}</tbody></table>
@@ -13753,10 +13776,29 @@ async function formTambahAnggotaEkskul() {
   });
 }
 
-/** [REQ 1] Ubah pilihan Sub-Ekskul pada modal Tambah Anggota (di memori; disimpan saat konfirmasi). */
-function setSubTambahAnggota(nis, sub) {
+/** [MULTI-SUB] Popup checklist untuk memilih Sub-Ekskul kandidat pada modal Tambah Anggota (di memori). */
+async function formPilihSubTambahAnggota(nis, namaLengkap) {
+  const daftarSub = window.__taSubList || [];
+  if (!daftarSub.length) return showToast('info', 'Belum ada Sub-Ekstrakurikuler pada ekskul ini.');
   window.__taSub = window.__taSub || {};
-  window.__taSub[nis] = sub;
+  const subSaya = new Set(window.__taSub[nis] || []);
+  const { value: hasil } = await Swal.fire({
+    title: `Sub-Ekstrakurikuler — ${escapeHtml(namaLengkap || '')}`,
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-1.5 max-h-64 overflow-y-auto">
+      ${daftarSub.map(n => `<label class="flex items-center gap-2 bg-slate-800/60 border border-white/10 rounded px-2 py-1.5 cursor-pointer hover:bg-slate-700/60">
+        <input type="checkbox" class="chk-sub-ta" value="${escJs(n)}" ${subSaya.has(n) ? 'checked' : ''}>
+        <span>${escapeHtml(n)}</span>
+      </label>`).join('')}
+    </div>`,
+    background: '#1e293b', color: '#fff',
+    showCancelButton: true,
+    confirmButtonText: 'Simpan',
+    cancelButtonText: 'Batal',
+    preConfirm: () => Array.from(document.querySelectorAll('.chk-sub-ta:checked')).map(el => el.value)
+  });
+  if (hasil === undefined) return; // dibatalkan
+  window.__taSub[nis] = hasil;
+  renderDaftarTambahAnggota();
 }
 
 /** Pilih / kosongkan semua siswa pada hasil filter Tambah Anggota. */
@@ -13864,9 +13906,9 @@ function getExportHTMLAnggotaEkskul(anggota, subMap = {}, daftarSub = []) {
   const alamat = idn["Alamat Sekolah"] || '';
   const th = document.getElementById('header-tahun')?.value || '';
   const indeksSub = new Map(daftarSub.map((n, i) => [String(n), i]));
+  const idxAnggota = (nis) => { const arr = subMap[String(nis)] || []; if (!arr.length) return 100; const idxs = arr.map(s => indeksSub.has(s) ? indeksSub.get(s) : 99); return Math.min(...idxs); };
   const urut = (anggota || []).slice().sort((a, b) => {
-    const ia = subMap[String(a.nis_nip)] !== undefined ? (indeksSub.has(subMap[String(a.nis_nip)]) ? indeksSub.get(subMap[String(a.nis_nip)]) : 99) : 100;
-    const ib = subMap[String(b.nis_nip)] !== undefined ? (indeksSub.has(subMap[String(b.nis_nip)]) ? indeksSub.get(subMap[String(b.nis_nip)]) : 99) : 100;
+    const ia = idxAnggota(a.nis_nip), ib = idxAnggota(b.nis_nip);
     return ia !== ib ? ia - ib : String(a.nama_lengkap || '').localeCompare(String(b.nama_lengkap || ''), 'id');
   });
   // Kop TTD: daftar pembina ekskul (multi); fallback guru yang sedang login
@@ -13898,7 +13940,7 @@ function getExportHTMLAnggotaEkskul(anggota, subMap = {}, daftarSub = []) {
         <td style="border:1px solid #333;padding:4px;">${escapeHtml(a.nama_lengkap || '-')}</td>
         <td style="border:1px solid #333;padding:4px;">${escapeHtml(a.tingkat_kelas || '-')}</td>
         <td style="border:1px solid #333;padding:4px;">${escapeHtml(a.jabatan || '-')}</td>
-        <td style="border:1px solid #333;padding:4px;">${escapeHtml(subMap[String(a.nis_nip)] || '-')}</td>
+        <td style="border:1px solid #333;padding:4px;">${escapeHtml((subMap[String(a.nis_nip)] || []).join(', ') || '-')}</td>
         <td style="border:1px solid #333;padding:4px;">${escapeHtml(a.no_telepon || '-')}</td>
       </tr>`).join('')}</tbody>
     </table>
@@ -14050,28 +14092,34 @@ async function simpanSubEkskul(ekskul, barisSub) {
   return final.map(f => f.baru);
 }
 
-/** Penandaan sub anggota: map nis → sub (dibaca dari array anggota tiap baris sub). */
+/** Penandaan sub anggota: map nis → ARRAY nama_sub (satu anggota kini bisa punya >1 sub sekaligus). */
 async function ambilSubAnggota(ekskul) {
   const subs = await ambilSubEkskul(ekskul);
   const map = {};
-  subs.forEach(s => (s.anggota || []).forEach(nis => { map[String(nis)] = s.nama_sub; }));
+  subs.forEach(s => (s.anggota || []).forEach(nis => {
+    const key = String(nis);
+    if (!map[key]) map[key] = [];
+    if (!map[key].includes(s.nama_sub)) map[key].push(s.nama_sub);
+  }));
   return map;
 }
 
-/** Simpan sub satu anggota: keluarkan dari sub lain, masukkan ke sub tujuan (update per baris). */
-async function setSubAnggota(nis, ekskul, sub) {
+/** [MULTI-SUB] Simpan sub satu anggota: subArray = daftar nama_sub tujuan (boleh lebih dari satu).
+ *  Anggota dikeluarkan dari sub yang tidak lagi dipilih, dan dimasukkan ke sub yang dipilih. */
+async function setSubAnggota(nis, ekskul, subArray) {
   const subs = await ambilSubEkskul(ekskul);
   const key = String(nis);
+  const target = new Set((Array.isArray(subArray) ? subArray : [subArray]).filter(Boolean));
   try {
     for (const row of subs) {
       const arr = (row.anggota || []).map(String);
       const ada = arr.includes(key);
-      const target = row.nama_sub === sub;
-      if (ada && !target) {
+      const mestiAda = target.has(row.nama_sub);
+      if (ada && !mestiAda) {
         const sisa = arr.filter(n => n !== key);
         const { error } = await supaClient.from('sub_ekstrakurikuler').update({ anggota: sisa }).eq('id', row.id);
         if (error) throw error;
-      } else if (!ada && target) {
+      } else if (!ada && mestiAda) {
         const { error } = await supaClient.from('sub_ekstrakurikuler').update({ anggota: [...arr, key] }).eq('id', row.id);
         if (error) throw error;
       }
@@ -14081,18 +14129,23 @@ async function setSubAnggota(nis, ekskul, sub) {
   } catch (e) { showToast('error', 'Gagal menyimpan sub: ' + (e.message || '')); return false; }
 }
 
-/** Simpan seluruh peta sub anggota sekaligus (dipakai Tambah Anggota massal).
- *  petaSub = { nis: subTujuan } — nis tanpa entri dibiarkan di sub asalnya. */
+/** [MULTI-SUB] Simpan seluruh peta sub anggota sekaligus (dipakai Tambah Anggota massal).
+ *  petaSub = { nis: [subTujuan, ...] } — nis tanpa entri dibiarkan di sub asalnya. */
 async function setSubAnggotaMassal(ekskul, petaSub) {
   const subs = await ambilSubEkskul(ekskul);
   const peta = petaSub || {};
+  const daftarSub = (nis) => {
+    const v = peta[nis];
+    if (v === undefined) return undefined;
+    return Array.isArray(v) ? v.filter(Boolean) : (v ? [v] : []);
+  };
   try {
     for (const row of subs) {
       const arrLama = (row.anggota || []).map(String);
       // Pertahankan anggota yang tidak disebut dalam peta, atau yang memang menuju sub ini
-      let arrBaru = arrLama.filter(n => peta[n] === undefined || peta[n] === row.nama_sub);
+      let arrBaru = arrLama.filter(n => { const d = daftarSub(n); return d === undefined || d.includes(row.nama_sub); });
       // Tambahkan siswa yang dipetakan ke sub ini
-      Object.entries(peta).forEach(([nis, sub]) => { if (sub && sub === row.nama_sub && !arrBaru.includes(String(nis))) arrBaru.push(String(nis)); });
+      Object.keys(peta).forEach(nis => { const d = daftarSub(nis) || []; if (d.includes(row.nama_sub) && !arrBaru.includes(String(nis))) arrBaru.push(String(nis)); });
       arrBaru = [...new Set(arrBaru)];
       if (JSON.stringify(arrLama) !== JSON.stringify(arrBaru)) {
         const { error } = await supaClient.from('sub_ekstrakurikuler').update({ anggota: arrBaru }).eq('id', row.id);
@@ -14131,8 +14184,8 @@ async function cetakAnggotaPerSub() {
       </table>`}
     </div>`;
   let html = kop;
-  subs.forEach(s => { html += tabel(s.nama_sub, anggota.filter(a => subMap[String(a.nis_nip)] === s.nama_sub)); });
-  html += tabel('Tanpa Sub', anggota.filter(a => !subMap[String(a.nis_nip)]));
+  subs.forEach(s => { html += tabel(s.nama_sub, anggota.filter(a => (subMap[String(a.nis_nip)] || []).includes(s.nama_sub))); });
+  html += tabel('Tanpa Sub', anggota.filter(a => !(subMap[String(a.nis_nip)] || []).length));
   win.document.write(`<html><head><title>Anggota ${escapeHtml(aktif)} per Sub</title><style>@page{size:A4;margin:15mm;}body{font-family:'Times New Roman',serif;color:#000;background:#fff;padding:20px;font-size:12px;}table{border-collapse:collapse;}</style></head><body>${html}</body></html>`);
   win.document.close();
   win.focus();
