@@ -1639,6 +1639,39 @@ async function renderAkunSayaMurid(container) {
         class="w-full mt-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white">
     </div>`;
 
+  // [SUB-EKSKUL] Blok checklist sub-ekstrakurikuler per ekskul yang diikuti murid (self-service)
+  const daftarEkskulMurid = String(prof.ekstrakurikuler || '').split(',').map(e => e.trim()).filter(Boolean);
+  let subEkskulHTML = '';
+  if (daftarEkskulMurid.length > 0) {
+    const nisProf = String(prof.nis_nip);
+    const blokPerEkskul = [];
+    for (const ekskul of daftarEkskulMurid) {
+      const subs = await ambilSubEkskul(ekskul);
+      if (!subs || subs.length === 0) continue;
+      const petaAnggota = await ambilSubAnggota(ekskul);
+      const subSaya = petaAnggota[nisProf] || [];
+      const checkboxes = subs.map(s => `
+        <label class="flex items-center gap-2 bg-slate-800/60 border border-white/10 rounded-lg px-3 py-2 cursor-pointer hover:bg-slate-800">
+          <input type="checkbox" class="chk-sub-ekskul-saya w-4 h-4" data-ekskul="${escJs(ekskul)}" value="${escapeHtml(s.nama_sub)}" ${subSaya.includes(s.nama_sub) ? 'checked' : ''}>
+          <span class="text-xs text-white">${escapeHtml(s.nama_sub)}</span>
+        </label>`).join('');
+      blokPerEkskul.push(`
+        <div class="space-y-1.5">
+          <div class="text-[10px] font-bold text-yellow-300 uppercase tracking-wider"><i class="fa-solid fa-people-group mr-1"></i>${escapeHtml(ekskul)}</div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">${checkboxes}</div>
+        </div>`);
+    }
+    if (blokPerEkskul.length > 0) {
+      subEkskulHTML = `
+      <div class="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
+        <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-list-check text-yellow-400 mr-1"></i> Sub-Ekstrakurikuler</h3>
+        <p class="text-[9px] text-slate-500">Pilih sub/kelompok ekstrakurikuler yang Anda ikuti (bila tersedia).</p>
+        ${blokPerEkskul.join('<hr class="border-white/10">')}
+        <button onclick="simpanSubEkskulSaya()" class="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2.5 rounded-lg transition text-sm"><i class="fa-solid fa-floppy-disk"></i> Simpan Sub-Ekstrakurikuler</button>
+      </div>`;
+    }
+  }
+
   container.innerHTML = `
     <div class="p-4 space-y-4 max-w-2xl mx-auto">
       <div class="text-center mt-2">
@@ -1686,7 +1719,31 @@ async function renderAkunSayaMurid(container) {
         </div>
         <button onclick="gantiPasswordSendiri()" class="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5 rounded-lg transition text-sm"><i class="fa-solid fa-key"></i> Ganti Password</button>
       </div>
+      ${subEkskulHTML}
     </div>`;
+}
+
+/** Simpan pilihan sub-ekstrakurikuler murid (self-service) dari checklist "Edit Data Diri". */
+async function simpanSubEkskulSaya() {
+  const user = (currentUser || {}).user || {};
+  const nis = user["NIS"] || '';
+  const checks = [...document.querySelectorAll('.chk-sub-ekskul-saya')];
+  if (checks.length === 0) return;
+  const petaPerEkskul = {};
+  checks.forEach(c => {
+    const ekskul = c.dataset.ekskul;
+    if (!petaPerEkskul[ekskul]) petaPerEkskul[ekskul] = [];
+    if (c.checked) petaPerEkskul[ekskul].push(c.value);
+  });
+  try {
+    for (const ekskul of Object.keys(petaPerEkskul)) {
+      const ok = await setSubAnggota(nis, ekskul, petaPerEkskul[ekskul]);
+      if (!ok) throw new Error('Gagal menyimpan sub ' + ekskul);
+    }
+    showToast('success', 'Sub-Ekstrakurikuler berhasil disimpan.');
+  } catch (e) {
+    Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || 'Terjadi kesalahan', background: '#1e293b', color: '#fff' });
+  }
 }
 
 async function simpanProfilMurid() {
@@ -4404,7 +4461,14 @@ function opsiMapelNilaiHTML(listActive, role, user) {
 function opsiKelasNilaiHTML(listKelas, role, user) {
   const diampuSet = cacheKelasDiampuGuru instanceof Set ? cacheKelasDiampuGuru : new Set();
   const opt = (arr) => arr.map(k => `<option value="${escJs(k)}" class="bg-slate-800 text-white">${diampuSet.has(k) ? '★ ' : ''}${escapeHtml(k)}</option>`).join('');
-  const optSemua = currentKategoriNilai === "Data Nilai Eskul" ? `<option value="Semua Kelas" class="bg-slate-800 text-white">Semua Kelas</option>` : '';
+  const isEskul = currentKategoriNilai === "Data Nilai Eskul";
+  const optSemua = isEskul ? `<option value="Semua Kelas" class="bg-slate-800 text-white">Semua Kelas</option>` : '';
+  if (isEskul) {
+    // Kategori Ekskul: anggota lintas kelas — tampilkan semua kelas yang tersedia, bukan hanya kelas
+    // diampu berdasar jadwal mapel biasa (tidak relevan untuk ekskul). Guru pembina bisa memilih kelas
+    // manapun yang muridnya ikut ekskul tsb, atau "Semua Kelas" untuk gabungan semua anggota.
+    return optSemua + opt(listKelas || []);
+  }
   if (role === 'guru') {
     const diampu = urutAz([...diampuSet].filter(k => (listKelas || []).includes(k)));
     if (diampu.length > 0) {
@@ -4416,6 +4480,7 @@ function opsiKelasNilaiHTML(listKelas, role, user) {
   }
   return optSemua + opt(listKelas || []);
 }
+
 
 /** Hitung set kelas yang diampu guru (wali kelas + jadwal_pelajaran guru tsb untuk mapel terpilih). */
 function hitungKelasDiampuGuru(mapel) {
@@ -12674,18 +12739,16 @@ async function renderDashboardUtama(container) {
     const jadwalHariIni = liburHariIni ? [] : jadwalSumber
         .filter(j => String(j.Waktu || '').toLowerCase().startsWith(hariIni.toLowerCase()))
         .sort((a, b) => jamDariWaktu(a.Waktu).localeCompare(jamDariWaktu(b.Waktu), 'id', { numeric: true }));
-    const jadwalTampil = jadwalHariIni.slice(0, 8);
-    const jadwalSisa = jadwalHariIni.length - jadwalTampil.length;
     const jadwalHTML = liburHariIni
         ? `<p class="text-[11px] text-slate-500 italic">${evHariIni ? `Hari libur — ${escapeHtml(evHariIni.nama)}.` : 'Hari libur (Sabtu/Minggu) — tidak ada KBM.'}</p>`
-        : (jadwalTampil.length === 0
+        : (jadwalHariIni.length === 0
             ? `<p class="text-[11px] text-slate-500 italic">Tidak ada jadwal ${escapeHtml(hariIni)}${role === 'guru' ? ' untuk mapel yang Anda ampu' : ''}.</p>`
-            : jadwalTampil.map(j => `
-                <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5">
-                    <span class="text-[9px] font-bold text-yellow-300 w-24 shrink-0">${escapeHtml(jamDariWaktu(j.Waktu) || '-')}</span>
-                    <span class="text-[10px] text-white font-bold truncate">${escapeHtml(j.Mapel || '-')}</span>
-                    <span class="text-[8px] text-indigo-300 truncate">${escapeHtml(j["Tingkat/Kelas"] || '-')}</span>
-                </div>`).join('') + (jadwalSisa > 0 ? `<div class="text-[9px] text-slate-500 italic mt-1">+ ${jadwalSisa} jadwal lainnya...</div>` : ''));
+            : jadwalHariIni.map(j => `
+                <div class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 overflow-x-auto whitespace-nowrap custom-scrollbar">
+                    <span class="text-[9px] font-bold text-yellow-300 shrink-0">${escapeHtml(jamDariWaktu(j.Waktu) || '-')}</span>
+                    <span class="text-[10px] text-white font-bold">${escapeHtml(j.Mapel || '-')}</span>
+                    <span class="text-[8px] text-indigo-300">${escapeHtml(j["Tingkat/Kelas"] || '-')}</span>
+                </div>`).join(''));
 
     // --- Statistik kehadiran (semester aktif; guru: kelas & mapel yang diampu pada TA aktif) ---
     const kelasDiampu = [...new Set((cacheJadwal || []).filter(j => String(j["ID Akun Guru"] || '') === String(idGuru) && String(j["Tahun"] || '') === String(tahun)).map(j => j["Tingkat/Kelas"]).filter(Boolean))];
@@ -12839,7 +12902,7 @@ async function renderDashboardUtama(container) {
                 </div>
                 <div class="bg-white/5 border border-white/10 rounded-xl p-3">
                     <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider mb-2"><i class="fa-solid fa-book-open text-yellow-400 mr-1"></i> Jadwal Hari Ini ${role === 'guru' ? '(Mapel yang Diampu)' : '(Seluruh Sekolah)'}</h3>
-                    <div class="space-y-1.5">${jadwalHTML}</div>
+                    <div class="space-y-1.5 max-h-64 overflow-y-auto custom-scrollbar pr-1">${jadwalHTML}</div>
                 </div>
             </div>
             <div class="bg-white/5 border border-white/10 rounded-xl p-3">
