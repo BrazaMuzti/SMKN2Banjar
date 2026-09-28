@@ -73,14 +73,22 @@ function initSupaClient(url, key) {
     }
   }
 
-  // Tangkap AuthApiError "Invalid Refresh Token" global yang muncul dari auto-refresh
-  // background (bukan dari pemanggilan API Anda sendiri) dan bersihkan token basi.
+  // Tangkap error non-fatal global dari GoTrue (Supabase Auth) yang berjalan di
+  // background dan TIDAK melalui alur await kode kita sendiri:
+  //   - "Invalid Refresh Token" / "refresh token" → sesi Auth Supabase basi (kedaluwarsa/dicabut).
+  //   - "Navigator LockManager lock ... immediately failed" → kontensi Web Locks API
+  //     antar-tab/instance GoTrue (mis. tab lain masih terbuka, atau lock nyangkut dari
+  //     reload sebelumnya). Ini tidak berbahaya untuk aplikasi ini karena sesi login
+  //     SISIP sendiri (sisip_token/sisip_user) tidak memakai Supabase Auth session sama sekali.
   window.addEventListener('unhandledrejection', (ev) => {
     const msg = (ev && ev.reason && ev.reason.message) || '';
     if (/refresh token/i.test(msg) && supaClient) {
       ev.preventDefault();
       console.warn('Sesi Supabase Auth basi terdeteksi, membersihkan token lokal:', msg);
       try { localStorage.removeItem('sisip-supabase-auth-token'); } catch (e) { /* abaikan */ }
+    } else if (/navigator lockmanager|acquiring an exclusive/i.test(msg)) {
+      ev.preventDefault();
+      console.warn('Kontensi lock Supabase Auth (biasanya karena tab lain terbuka), diabaikan:', msg);
     }
   });
 })();
