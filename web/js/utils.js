@@ -46,7 +46,18 @@ function initSupaClient(url, key) {
       storageKey: 'sisip-supabase-auth-token',
       persistSession: true,
       autoRefreshToken: true,
-      detectSessionInUrl: true
+      detectSessionInUrl: true,
+      // PERBAIKAN: GoTrue secara default memakai Navigator Web Locks API
+      // (navigator.locks) untuk mengunci storageKey di atas antar-tab/instance.
+      // Bila beberapa tab aplikasi ini terbuka bersamaan, lock itu sering GAGAL
+      // seketika (NavigatorLockAcquireTimeoutError / "Acquiring an exclusive
+      // Navigator LockManager lock ... immediately failed") sebagai unhandled
+      // rejection yang tidak selalu bisa ditangkap andal lewat listener global.
+      // Aplikasi ini TIDAK bergantung pada sesi Auth Supabase (dipakai hanya utk
+      // akses anon/OAuth ringan) — login SISIP sendiri pakai sisip_token/sisip_user
+      // di localStorage. Jadi aman melewati Web Locks API sepenuhnya dengan
+      // lock kustom no-op agar error ini tidak pernah terjadi.
+      lock: async (name, acquireTimeout, fn) => await fn()
     }
   });
 
