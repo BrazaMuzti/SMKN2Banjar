@@ -10326,6 +10326,9 @@ async function hapusJamMaster(hari, rowId, idx) {
 
 function refreshMasterUI() {
     if (masterSectionContext === 'jadwal') renderTabMasterJadwal(); else renderTabDaftar();
+    // Sinkronkan ulang dropdown Tahun/Semester di header agar Tahun Pelajaran
+    // yang baru ditambah/dihapus di Master Data langsung muncul tanpa reload.
+    if (typeof isiHeaderSesi === 'function') isiHeaderSesi();
 }
 
 // helper id aman utk atribut onclick
