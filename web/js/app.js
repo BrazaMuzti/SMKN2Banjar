@@ -8273,6 +8273,7 @@ async function renderManajemenMurid(container, paksa = false) {
                                 <th class="px-4 py-3 border-b border-white/10">Nama Lengkap</th>
                                 <th class="px-4 py-3 border-b border-white/10 text-center">Kelas</th>
                                 <th class="px-4 py-3 border-b border-white/10">Tahun Pelajaran</th>
+                                <th class="px-4 py-3 border-b border-white/10">Sub Ekskul</th>
                                 <th class="px-4 py-3 border-b border-white/10">Email Login</th>
                                 <th class="px-4 py-3 border-b border-white/10 text-center">Aksi</th>
                             </tr>
@@ -8311,7 +8312,9 @@ async function exportExcelMurid() {
   }
   Swal.close();
   const petaWali = await petaWaliKelas();
-  const rows = muridTersaring(sumber).map((d, i) => ({
+  const rowsTersaring = muridTersaring(sumber);
+  const subLookup = await muridSubEkskulLookup(rowsTersaring);
+  const rows = rowsTersaring.map((d, i) => ({
     "No": i + 1,
     "ID Tahun Pelajaran": d.tahun_pelajaran || "",
     "Semester": d.semester || "",
@@ -8326,7 +8329,9 @@ async function exportExcelMurid() {
     "Agama": d.agama || "",
     "Golongan Darah": d.golongan_darah || "",
     "Ekstrakurikuler": d.ekstrakurikuler || "",
+    "Sub Ekstrakurikuler": subLookup[String(d.nis_nip || "")] || "",
     "Jabatan Kelas": d.jabatan || "",
+
     "Jabatan Ekstrakurikuler": d.jabatan_ekskul || "",
     "Nama Orang tua Ayah": d.nama_ayah || "",
     "Pekerjaan Ayah": d.pekerjaan_ayah || "",
@@ -8361,17 +8366,18 @@ async function exportPdfMurid() {
   const rows = muridTersaring(sumber);
   if (rows.length === 0) return showToast('error', 'Tidak ada data murid untuk diexport.');
   const petaWali = await petaWaliKelas();
+  const subLookup = await muridSubEkskulLookup(rows);
   const printWindow = window.open('', '_blank');
   if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak PDF.', background: '#1e293b', color: '#fff' });
 
-  const th = ["No","NIS","NISN","Nama Lengkap","Kelas","Wali Kelas","JK","Tgl Lahir","Agama","Goldar","Ekskul","Jabatan","Jab. Ekskul","Ayah","Pk. Ayah","Ibu","Pk. Ibu","Wali Murid","Alamat","No HP/WA","Email","Catatan"];
+  const th = ["No","NIS","NISN","Nama Lengkap","Kelas","Wali Kelas","JK","Tgl Lahir","Agama","Goldar","Ekskul","Sub Ekskul","Jabatan","Jab. Ekskul","Ayah","Pk. Ayah","Ibu","Pk. Ibu","Wali Murid","Alamat","No HP/WA","Email","Catatan"];
   const esc = (v) => escapeHtml(v ?? '');
   const bodyRows = rows.map((d, i) => `<tr>
     <td>${i+1}</td>
     <td>${esc(d.nis_nip)}</td><td>${esc(d.nisn)}</td><td>${esc(d.nama_lengkap)}</td><td>${esc(d.tingkat_kelas)}</td>
     <td>${esc(petaWali[d.tingkat_kelas] || '')}</td>
     <td>${esc((d.jenis_kelamin || '').charAt(0).toUpperCase())}</td><td>${esc(d.tgl_lahir ? String(d.tgl_lahir).split('T')[0] : '')}</td>
-    <td>${esc(d.agama)}</td><td>${esc(d.golongan_darah)}</td><td>${esc(d.ekstrakurikuler)}</td><td>${esc(d.jabatan)}</td><td>${esc(d.jabatan_ekskul)}</td>
+    <td>${esc(d.agama)}</td><td>${esc(d.golongan_darah)}</td><td>${esc(d.ekstrakurikuler)}</td><td>${esc(subLookup[String(d.nis_nip || '')] || '')}</td><td>${esc(d.jabatan)}</td><td>${esc(d.jabatan_ekskul)}</td>
     <td>${esc(d.nama_ayah)}</td><td>${esc(d.pekerjaan_ayah)}</td><td>${esc(d.nama_ibu)}</td><td>${esc(d.pekerjaan_ibu)}</td>
     <td>${esc(d.nama_wali)}</td><td>${esc(d.alamat)}</td><td>${esc(d.no_telepon)}</td><td>${esc(d.email)}</td><td>${esc(d.catatan_khusus)}</td>
   </tr>`).join('');
@@ -8390,14 +8396,23 @@ async function exportPdfMurid() {
     <h3>DATA AKUN MURID</h3>
     <p class="sub">Dicetak: ${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })} &mdash; Total: ${rows.length} murid</p>
     <table><thead><tr>${th.map(h => `<th>${h}</th>`).join('')}</tr></thead><tbody>${bodyRows}</tbody></table>
-    <script>setTimeout(() => { window.print(); }, 400);<\/script>
     </body></html>
   `);
   printWindow.document.close();
+  // onload lebih andal daripada setTimeout tetap: menunggu DOM/gambar benar-benar siap sebelum print,
+  // dengan guard agar tidak print dobel bila onload & fallback timeout sama-sama terpicu.
+  let sudahPrint = false;
+  const cetakSekali = () => { if (sudahPrint) return; sudahPrint = true; printWindow.focus(); printWindow.print(); };
+  printWindow.onload = cetakSekali;
+  setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 800);
 }
 
-function generateTbodyMurid(data, mulaiNo = 0) {
-    if (!data || data.length === 0) return `<tr><td colspan="8" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
+  printWindow.document.close();
+}
+
+function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}) {
+    if (!data || data.length === 0) return `<tr><td colspan="9" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
+
 
     return data.map((d, i) => {
         let nis = d.nis_nip || d.NIS || d.nis || "-";
@@ -8409,6 +8424,7 @@ function generateTbodyMurid(data, mulaiNo = 0) {
         let email = d.email || d.Email || "-";
         let ekskulData = (d.ekstrakurikuler || d.Ekstrakurikuler || d.ekskul || "").replace(/"/g, '&quot;');
         let tahunData = d.tahun_pelajaran || d["ID Tahun Pelajaran"] || "";
+        let subEkskulData = subLookup[String(nis)] || '';
 
         return `
             <tr class="hover:bg-white/5 border-b border-white/5 transition row-murid" data-ekskul="${ekskulData}" data-tahun="${escapeHtml(tahunData)}">
@@ -8421,7 +8437,9 @@ function generateTbodyMurid(data, mulaiNo = 0) {
                     <div class="mt-1"><span class="text-[8px] px-1.5 py-0.5 rounded font-bold ${badgeStatusSiswa(statusSiswa)}">${escapeHtml(statusSiswa)}</span></div>
                 </td>
                 <td class="px-4 py-3 text-[10px] text-slate-400 search-target">${escapeHtml(tahunData || '-')}</td>
+                <td class="px-4 py-3 text-[10px] text-slate-400">${subEkskulData ? escapeHtml(subEkskulData) : '<span class="italic text-slate-600">-</span>'}</td>
                 <td class="px-4 py-3"><div class="text-[10px] text-slate-400"><i class="fa-solid fa-envelope"></i> ${email}</div></td>
+
                 <td class="px-4 py-3 text-center whitespace-nowrap">
                     <button onclick="editAkunMurid('${escJs(d.id || '')}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>
                     <button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>
@@ -8455,8 +8473,33 @@ function muridTersaring(rows) {
     });
 }
 
+/** Bangun lookup "Ekskul:Sub1|Sub2; Ekskul2:Sub3" per NIS untuk sekumpulan baris murid.
+ *  Hanya melakukan fetch untuk ekskul yang benar-benar muncul di baris (di-cache oleh ambilSubEkskul/ambilSubAnggota). */
+async function muridSubEkskulLookup(rows) {
+    const daftarEkskul = new Set();
+    (rows || []).forEach(d => {
+        String(d.ekstrakurikuler || d.Ekstrakurikuler || '').split(',').map(e => e.trim()).filter(Boolean).forEach(e => daftarEkskul.add(e));
+    });
+    const peta = {}; // nis -> [ "Ekskul:Sub1|Sub2", ... ]
+    await Promise.all([...daftarEkskul].map(async (ekskul) => {
+        if (ekskul === 'STO-Siswa Tanpa Organisasi') return;
+        const subs = await ambilSubEkskul(ekskul);
+        if (!subs.length) return;
+        const anggotaMap = await ambilSubAnggota(ekskul);
+        Object.keys(anggotaMap).forEach(nis => {
+            const daftarSub = anggotaMap[nis];
+            if (!daftarSub || !daftarSub.length) return;
+            if (!peta[nis]) peta[nis] = [];
+            peta[nis].push(`${ekskul}:${daftarSub.join('|')}`);
+        });
+    }));
+    const hasil = {};
+    Object.keys(peta).forEach(nis => { hasil[nis] = peta[nis].join('; '); });
+    return hasil;
+}
+
 /** Render ulang tabel murid sesuai filter aktif (cari/tahun/kelas/ekskul/status) + pagination. */
-function renderTabelMuridTerfilter() {
+async function renderTabelMuridTerfilter() {
     const tbody = document.getElementById('tbody-murid');
     if (!tbody) return;
     const cocok = muridTersaring(cacheAkunMurid);
@@ -8466,7 +8509,9 @@ function renderTabelMuridTerfilter() {
     const mulai = (halamanAktifMurid - 1) * ukuranHalamanMurid;
     const halaman = cocok.slice(mulai, mulai + ukuranHalamanMurid);
 
-    tbody.innerHTML = generateTbodyMurid(halaman, mulai);
+    const subLookup = await muridSubEkskulLookup(halaman);
+    tbody.innerHTML = generateTbodyMurid(halaman, mulai, subLookup);
+
 
     const pag = document.getElementById('pag-murid');
     if (pag) {
@@ -8521,6 +8566,7 @@ async function editAkunMurid(id) {
 // ---- Working copy pilihan jabatan di form akun murid (dikelola lewat popup) ----
 let formJabatanKelasSel = [];   // pilihan "Jabatan Kelas"
 let formJabatanEkskulSel = [];  // pilihan "Jabatan Ekstrakurikuler"
+let formSubEkskulSel = {};      // pilihan sub-ekstrakurikuler per ekskul: { ekskul: [namaSub, ...] }
 
 /** Render chip/badge jabatan terpilih pada field form akun murid. */
 function renderChipsJabatan(containerId, arr) {
@@ -8550,6 +8596,11 @@ function onToggleEkskulForm(el) {
         const adaLain = Array.from(semua).some(c => c !== stoEl && c.checked);
         if (!adaLain) stoEl.checked = true;
     }
+    // Tampilkan/sembunyikan blok sub-ekstrakurikuler mengikuti status centang tiap ekskul
+    semua.forEach(c => {
+        const wrap = document.querySelector(`.sub-ekskul-form-wrap[data-ekskul-sub="${CSS.escape(c.value)}"]`);
+        if (wrap) wrap.style.display = c.checked ? '' : 'none';
+    });
 }
 
 /** Popup pilih jabatan: checklist dari Master Data + teks isian custom (pisahkan koma).
@@ -8626,7 +8677,7 @@ function terapkanPopupPilihJabatan(jenis) {
     tutupPopupPilihJabatan();
 }
 
-function openFormAkunMurid(isNew, data = {}) {
+async function openFormAkunMurid(isNew, data = {}) {
     // Ambil pilihan dari Master Data (nama kolom = nama persis gaya Sheets)
     const listKelas = urutAz([...new Set(masterDataCache.map(m => m["Tingkat/Kelas"]).filter(Boolean))]);
     const listEkskul = urutAz(denganSto([...new Set(masterDataCache.map(m => m["Ekstrakurikuler"]).filter(Boolean))]));
@@ -8678,12 +8729,37 @@ function openFormAkunMurid(isNew, data = {}) {
     const ekskulArr = ekskulV.split(',').map(e => e.trim()).filter(Boolean);
     if (!ekskulArr.length) ekskulArr.push('STO-Siswa Tanpa Organisasi');
 
-    const chkEkskulHTML = listEkskul.map(e => `
+    // Sub-ekstrakurikuler: prefetch daftar sub + keanggotaan murid ybs untuk tiap ekskul terpilih
+    // (STO tidak punya sub). Working copy dikelola per-ekskul di formSubEkskulSel.
+    const nisAtual = String(nisV || '');
+    formSubEkskulSel = {};
+    const ekskulPunyaSub = {};
+    await Promise.all(listEkskul.filter(e => e !== 'STO-Siswa Tanpa Organisasi').map(async (e) => {
+        const subs = await ambilSubEkskul(e);
+        if (!subs.length) return;
+        ekskulPunyaSub[e] = subs;
+        const anggotaMap = await ambilSubAnggota(e);
+        formSubEkskulSel[e] = anggotaMap[nisAtual] || [];
+    }));
+
+    const chkEkskulHTML = listEkskul.map(e => {
+        const subs = ekskulPunyaSub[e];
+        return `
         <label class="flex items-center gap-1.5 cursor-pointer hover:text-white bg-slate-800 p-1.5 rounded border border-white/10">
             <input type="checkbox" class="chk-ekskul-form" value="${escJs(e)}" onchange="onToggleEkskulForm(this)" ${ekskulArr.includes(e) ? 'checked' : ''}>
             <span class="break-words">${e}</span>
         </label>
-    `).join('');
+        ${subs ? `<div class="sub-ekskul-form-wrap ml-5 mt-1 grid grid-cols-2 gap-1" data-ekskul-sub="${escJs(e)}" style="${ekskulArr.includes(e) ? '' : 'display:none;'}">
+                ${subs.map(s => `
+                    <label class="flex items-center gap-1.5 cursor-pointer hover:text-white bg-slate-900/60 p-1 rounded border border-white/10 text-[10px]">
+                        <input type="checkbox" class="chk-subekskul-form" data-ekskul="${escJs(e)}" value="${escJs(s.nama_sub)}" ${(formSubEkskulSel[e] || []).includes(s.nama_sub) ? 'checked' : ''}>
+                        <span class="break-words">${escapeHtml(s.nama_sub)}</span>
+                    </label>
+                `).join('')}
+            </div>` : ''}
+    `;
+    }).join('');
+
 
     // Section header tipis untuk pengelompokan form (padat & rapi)
     const sec = (label) => `<div class="sm:col-span-2 flex items-center gap-2 mt-1 first:mt-0"><span class="text-[9px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">${label}</span><span class="flex-1 h-px bg-white/10"></span></div>`;
@@ -8801,6 +8877,17 @@ function openFormAkunMurid(isNew, data = {}) {
             if (!ekskulChecked.length) ekskulChecked.push('STO-Siswa Tanpa Organisasi');
             kumpulkanFormRiwayatSiswa();
 
+            // Kumpulkan pilihan sub-ekstrakurikuler per ekskul yang memiliki data sub (baik dicentang atau tidak),
+            // supaya ekskul yang di-uncheck ikut mengosongkan keanggotaan sub-nya saat disimpan.
+            const subEkskulTerpilih = {};
+            document.querySelectorAll('.sub-ekskul-form-wrap').forEach(wrap => {
+                const ek = wrap.getAttribute('data-ekskul-sub');
+                if (!ek) return;
+                subEkskulTerpilih[ek] = ekskulChecked.includes(ek)
+                    ? Array.from(wrap.querySelectorAll('.chk-subekskul-form:checked')).map(el => el.value)
+                    : [];
+            });
+
             return {
                 nis: nisVal,
                 nama_lengkap: namaVal,
@@ -8825,8 +8912,10 @@ function openFormAkunMurid(isNew, data = {}) {
                 nama_wali: document.getElementById('f_wali').value.trim(),
                 alamat: document.getElementById('f_alamat').value.trim(),
                 catatan_khusus: document.getElementById('f_catatan').value.trim(),
-                password: passVal
+                password: passVal,
+                _subEkskul: subEkskulTerpilih
             };
+
         }
     }).then(async (res) => {
         if (!res.isConfirmed) return;
@@ -9200,6 +9289,7 @@ async function simpanAkunMurid(formData, isNew) {
   Swal.fire({ title: 'Menyimpan Data...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
 
   const p_data = { ...formData };
+  delete p_data._subEkskul; // metadata sub-ekskul ditangani terpisah, bukan kolom RPC buat_akun_murid
   if (!isNew && !p_data.password) delete p_data.password; // kosong = tidak diubah
 
   const { data, error } = await supaClient.rpc('buat_akun_murid', { p_data });
@@ -9217,6 +9307,13 @@ async function simpanAkunMurid(formData, isNew) {
     if (!rw[currentTahun] && kelasAktif) rw[currentTahun] = { kelas: kelasAktif, status: 'Aktif', ket: '' };
     await supaClient.from('akun').update({ riwayat_kelas: rw, tingkat_kelas: kelasAktif || String(formData.tingkat_kelas || '') }).eq('nis_nip', String(formData.nis || ''));
   } catch (eRw) { console.warn('Riwayat murid (dual-write):', eRw); }
+  // Sinkronkan keanggotaan sub-ekstrakurikuler (tabel sub_ekstrakurikuler.anggota) sesuai pilihan form
+  try {
+    const subEkskul = formData._subEkskul || {};
+    for (const ekskul of Object.keys(subEkskul)) {
+      await setSubAnggota(String(formData.nis || ''), ekskul, subEkskul[ekskul] || []);
+    }
+  } catch (eSub) { console.warn('Sub-ekstrakurikuler murid:', eSub); }
   Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: data.message || 'Data murid tersimpan!', showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
   cacheDashboardKosongkan(); // daftar murid berubah → sesi cache dashboard usang
   invalidasiCacheAkun(); // paksa ambil ulang daftar murid (cache sesi sudah basi)
@@ -9224,6 +9321,7 @@ async function simpanAkunMurid(formData, isNew) {
     renderManajemenMurid(document.getElementById('main-content'));
   }
 }
+
 
 /** Reset password murid (default 123456) via RPC — hash ditangani server. */
 function resetPasswordMurid(nis, nama) {
@@ -9488,18 +9586,32 @@ function downloadTemplateMurid() {
     if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS tidak ditemukan.', 'error');
 
     // Header sesuai kolom tabel akun yang didukung import
-    const headers = ["NIS", "NISN", "Nama Lengkap", "Tahun Pelajaran", "Semester", "Tingkat/Kelas", "Jenis Kelamin", "Tgl Lahir", "Agama", "Golongan Darah", "Ekstrakurikuler", "Jabatan Kelas", "Nama Orang tua Ayah", "Pekerjaan Ayah", "Nama Orang tua Ibu", "Pekerjaan Ibu", "Nama Wali", "Alamat", "No HP/WA", "Email", "Catatan Khusus", "Password"];
+    const headers = ["NIS", "NISN", "Nama Lengkap", "Tahun Pelajaran", "Semester", "Tingkat/Kelas", "Jenis Kelamin", "Tgl Lahir", "Agama", "Golongan Darah", "Ekstrakurikuler", "Sub Ekstrakurikuler", "Jabatan Kelas", "Nama Orang tua Ayah", "Pekerjaan Ayah", "Nama Orang tua Ibu", "Pekerjaan Ibu", "Nama Wali", "Alamat", "No HP/WA", "Email", "Catatan Khusus", "Password"];
 
     const dataRows = [
         ["FORMAT IMPORT DATA MURID"],
-        ["INFO", "Isi baris di bawah header dengan data murid. Kolom NIS dan Nama Lengkap wajib diisi. Tgl Lahir bisa diisi format tanggal Excel (DD-MM-YYYY / cell Date) atau teks YYYY-MM-DD — akan dikonversi otomatis. Ekskul pisah dengan koma. Password kosong = otomatis 123456."],
+        ["INFO", "Isi baris di bawah header dengan data murid. Kolom NIS dan Nama Lengkap wajib diisi. Tgl Lahir bisa diisi format tanggal Excel (DD-MM-YYYY / cell Date) atau teks YYYY-MM-DD — akan dikonversi otomatis. Ekskul pisah dengan koma. Sub Ekstrakurikuler format: 'Ekskul:Sub1|Sub2; Ekskul2:Sub3' (nama ekskul harus sama persis dengan kolom Ekstrakurikuler, sub dipisah | bila lebih dari satu, antar-ekskul dipisah ;). Password kosong = otomatis 123456."],
         headers
     ];
+
 
     const ws = XLSX.utils.aoa_to_sheet(dataRows);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, "Template_Murid");
     XLSX.writeFile(wb, 'Template_Data_Murid.xlsx');
+}
+
+/** Parse string "Ekskul:Sub1|Sub2; Ekskul2:Sub3" → { Ekskul: [Sub1, Sub2], Ekskul2: [Sub3] }. */
+function parseSubEkskulRaw(raw) {
+    const hasil = {};
+    String(raw || '').split(';').map(s => s.trim()).filter(Boolean).forEach(bagian => {
+        const idx = bagian.indexOf(':');
+        if (idx === -1) return;
+        const ekskul = bagian.slice(0, idx).trim();
+        const subs = bagian.slice(idx + 1).split('|').map(s => s.trim()).filter(Boolean);
+        if (ekskul && subs.length) hasil[ekskul] = subs;
+    });
+    return hasil;
 }
 
 async function previewImportMurid(file) {
@@ -9555,6 +9667,7 @@ async function previewImportMurid(file) {
                 golongan_darah: ambil(row, 'Golongan Darah'),
 
                 ekstrakurikuler: ambil(row, 'Ekstrakurikuler'),
+                sub_ekstrakurikuler: parseSubEkskulRaw(ambil(row, 'Sub Ekstrakurikuler')),
                 jabatan: ambil(row, 'Jabatan Kelas'),
                 nama_ayah: ambil(row, 'Nama Orang tua Ayah'),
                 pekerjaan_ayah: ambil(row, 'Pekerjaan Ayah'),
@@ -9585,15 +9698,17 @@ async function previewImportMurid(file) {
         const kolom = [
             { k: 'nis', l: 'NIS' }, { k: 'nama', l: 'Nama Lengkap' }, { k: 'kelas', l: 'Kelas' },
             { k: 'nisn', l: 'NISN' }, { k: 'jk', l: 'JK' }, { k: 'tgl', l: 'Tgl Lahir' },
-            { k: 'ekskul', l: 'Ekstrakurikuler' }, { k: 'jab', l: 'Jabatan' }, { k: 'pass', l: 'Password' }, { k: 'status', l: 'Aksi' }
+            { k: 'ekskul', l: 'Ekstrakurikuler' }, { k: 'subekskul', l: 'Sub Ekskul' }, { k: 'jab', l: 'Jabatan' }, { k: 'pass', l: 'Password' }, { k: 'status', l: 'Aksi' }
         ];
         const baris = rows.map(r => {
             const masalah = [];
+            const subEkskulRingkas = Object.entries(r.sub_ekstrakurikuler || {}).map(([ek, subs]) => `${ek}:${subs.join('|')}`).join('; ');
             const sel = {
                 nis: { v: r.nis }, nama: { v: r.nama_lengkap }, kelas: { v: r.tingkat_kelas },
                 nisn: { v: r.nisn }, jk: { v: r.jenis_kelamin }, tgl: { v: formatTanggalIndo(r.tgl_lahir) },
-                ekskul: { v: r.ekstrakurikuler }, jab: { v: r.jabatan }
+                ekskul: { v: r.ekstrakurikuler }, subekskul: { v: subEkskulRingkas }, jab: { v: r.jabatan }
             };
+
             let status = 'ok', alasan = '';
             if (duplikatFile.has(r.nis)) {
                 status = 'bad'; alasan = `NIS ${r.nis} duplikat di dalam file`;
@@ -9639,7 +9754,8 @@ async function simpanMasalAkunMurid(rows) {
     Swal.fire({ title: 'Menyimpan Data...', html: `Memproses ${rows.length} murid...`, allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
 
     try {
-        const { data, error } = await supaClient.rpc('import_akun_murid', { p_rows: rows, p_default_password: '123456' });
+        const rowsRpc = (rows || []).map(r => { const { sub_ekstrakurikuler, ...rest } = r; return rest; });
+        const { data, error } = await supaClient.rpc('import_akun_murid', { p_rows: rowsRpc, p_default_password: '123456' });
         if (error) throw error;
         if (!data || data.status !== 'success') throw new Error((data && data.message) || 'Import gagal.');
 
@@ -9656,7 +9772,18 @@ async function simpanMasalAkunMurid(rows) {
             }
         } catch (eRw) { console.warn('Riwayat import murid:', eRw); }
 
+        // Sinkronkan keanggotaan sub-ekstrakurikuler (tabel sub_ekstrakurikuler.anggota) hasil parse kolom "Sub Ekstrakurikuler"
+        try {
+            for (const r of (rows || [])) {
+                if (!r.nis || !r.sub_ekstrakurikuler) continue;
+                for (const ekskul of Object.keys(r.sub_ekstrakurikuler)) {
+                    await setSubAnggota(String(r.nis), ekskul, r.sub_ekstrakurikuler[ekskul] || []);
+                }
+            }
+        } catch (eSub) { console.warn('Sub-ekstrakurikuler import murid:', eSub); }
+
         Swal.fire({
+
             icon: 'success',
             title: 'Import Selesai',
             html: `<div class="text-sm text-left">Ditambahkan: <b>${data.ditambahkan}</b><br>Diperbarui: <b>${data.diperbarui}</b><br>Gagal: <b>${data.gagal}</b>${detailGagal ? `<ul class="text-[10px] text-red-300 mt-2 list-disc list-inside">${detailGagal}</ul>` : ''}</div>`,
