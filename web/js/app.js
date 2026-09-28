@@ -8407,9 +8407,6 @@ async function exportPdfMurid() {
   setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 800);
 }
 
-  printWindow.document.close();
-}
-
 function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}) {
     if (!data || data.length === 0) return `<tr><td colspan="9" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
 
