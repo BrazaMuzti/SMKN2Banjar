@@ -1,15 +1,6 @@
 /**
- * utils.example.js — Template Adapter Supabase untuk SISIP
- *
- * Salin file ini menjadi `utils.js` (nama file ini di-.gitignore agar
- * kredensial tidak ikut ter-commit) lalu isi SUPABASE_URL_DEFAULT dan
- * SUPABASE_ANON_KEY_DEFAULT dengan nilai proyek Supabase Anda.
- *
- * Untuk deploy via GitHub Pages, file utils.js yang sesungguhnya dibuat
- * otomatis oleh workflow `.github/workflows/static.yml` menggunakan
- * GitHub Actions secrets SUPABASE_URL & SUPABASE_ANON_KEY.
+ * utils.js — Adapter Supabase untuk SISIP
  */
-
 
 // 1. Inisialisasi Supabase
 const SUPABASE_URL_DEFAULT = 'https://lkhuyoihrrnzvrmhquln.supabase.co';
@@ -48,7 +39,24 @@ function initSupaClient(url, key) {
   }
   SUPABASE_URL = url;
   SUPABASE_ANON_KEY = key;
-  supaClient = window.supabase.createClient(url, key);
+  supaClient = window.supabase.createClient(url, key, {
+    auth: {
+      // Key storage unik per project agar tidak bentrok bila URL server berganti
+      // dan mudah dibedakan dari data localStorage aplikasi sendiri (sisip_*).
+      storageKey: 'sisip-supabase-auth-token',
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true
+    }
+  });
+
+  // Refresh token basi (kedaluwarsa/dicabut server) memicu AuthApiError saat
+  // auto-refresh berjalan di background (mis. saat tab kembali fokus).
+  // Bersihkan sesi Auth Supabase yang rusak itu agar tidak mengulang error terus-menerus.
+  // Sesi login aplikasi sendiri (sisip_token/sisip_user) TIDAK terpengaruh oleh ini.
+  supaClient.auth.onAuthStateChange((event, session) => {
+    if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_OUT') return;
+  });
 }
 (() => {
   const cfg = ambilKonfigurasiServer();
@@ -64,7 +72,19 @@ function initSupaClient(url, key) {
       supaClient = null;
     }
   }
+
+  // Tangkap AuthApiError "Invalid Refresh Token" global yang muncul dari auto-refresh
+  // background (bukan dari pemanggilan API Anda sendiri) dan bersihkan token basi.
+  window.addEventListener('unhandledrejection', (ev) => {
+    const msg = (ev && ev.reason && ev.reason.message) || '';
+    if (/refresh token/i.test(msg) && supaClient) {
+      ev.preventDefault();
+      console.warn('Sesi Supabase Auth basi terdeteksi, membersihkan token lokal:', msg);
+      try { localStorage.removeItem('sisip-supabase-auth-token'); } catch (e) { /* abaikan */ }
+    }
+  });
 })();
+
 
 
 // Manajemen Sesi Lokal (Harus ada di utils.js)
@@ -146,10 +166,10 @@ async function apiCall(action, data = {}) {
         }
         // 2) Fallback: cari email akun terkait NIS/NIP → Supabase Auth (guru/admin/Google)
         const { data: byNis, error: errNis } = await supaClient
-        .from('akun')
-        .select('email')
-        .eq('nis_nip', identifier)
-        .maybeSingle();
+          .from('akun')
+          .select('email')
+          .eq('nis_nip', identifier)
+          .maybeSingle();
         if (errNis) return { status: 'error', message: 'Gagal mencari akun: ' + errNis.message };
         if (!byNis || !byNis.email) {
           const pesanRpc = (!rpcErr && rpcRes && rpcRes.message) ? rpcRes.message : 'NIS/NIP tidak terdaftar.';
@@ -159,10 +179,10 @@ async function apiCall(action, data = {}) {
       } else {
         // Login via email: coba akun murid lokal (lookup NIS dari email) lalu Supabase Auth
         const { data: listByEmail, error: errEmail } = await supaClient
-        .from('akun')
-        .select('nis_nip')
-        .eq('email', identifier)
-        .limit(1);
+          .from('akun')
+          .select('nis_nip')
+          .eq('email', identifier)
+          .limit(1);
         const nisDariEmail = (!errEmail && listByEmail && listByEmail[0]) ? listByEmail[0].nis_nip : null;
         if (nisDariEmail) {
           const { data: rpcRes, error: rpcErr } = await supaClient.rpc('cek_login_murid', {
@@ -181,24 +201,24 @@ async function apiCall(action, data = {}) {
       }
 
       let { data: prof, error: profErr } = await supaClient
-      .from('akun')
-      .select('*')
-      .eq('user_id', authRes.user.id)
-      .maybeSingle();
+        .from('akun')
+        .select('*')
+        .eq('user_id', authRes.user.id)
+        .maybeSingle();
 
       // Profil belum tertaut user_id → cocokkan lewat email lalu tautkan (best-effort).
       // Berguna untuk akun yang dibuat manual lewat Supabase Dashboard (mis. admin).
       if (!profErr && !prof && authRes.user.email) {
         const { data: byEmail } = await supaClient
-        .from('akun')
-        .select('*')
-        .eq('email', authRes.user.email)
-        .maybeSingle();
+          .from('akun')
+          .select('*')
+          .eq('email', authRes.user.email)
+          .maybeSingle();
         if (byEmail) {
           prof = byEmail;
           supaClient.from('akun').update({ user_id: authRes.user.id }).eq('id', byEmail.id)
-          .then(r => { if (r.error) console.warn('Taut user_id gagal:', r.error.message); })
-          .catch(() => {});
+            .then(r => { if (r.error) console.warn('Taut user_id gagal:', r.error.message); })
+            .catch(() => {});
         }
       }
       if (profErr) return { status: 'error', message: 'Gagal memuat profil: ' + profErr.message };
@@ -218,23 +238,23 @@ async function apiCall(action, data = {}) {
       if (!sesi || !sesi.user) return { status: 'no_session' };
 
       let { data: prof } = await supaClient
-      .from('akun')
-      .select('*')
-      .eq('user_id', sesi.user.id)
-      .maybeSingle();
+        .from('akun')
+        .select('*')
+        .eq('user_id', sesi.user.id)
+        .maybeSingle();
 
       if (!prof && sesi.user.email) {
         // Profil belum tertaut user_id → coba cocokkan lewat email, lalu tautkan (best-effort)
         const { data: byEmail } = await supaClient
-        .from('akun')
-        .select('*')
-        .eq('email', sesi.user.email)
-        .maybeSingle();
+          .from('akun')
+          .select('*')
+          .eq('email', sesi.user.email)
+          .maybeSingle();
         if (byEmail) {
           prof = byEmail;
           supaClient.from('akun').update({ user_id: sesi.user.id }).eq('id', byEmail.id)
-          .then(r => { if (r.error) console.warn('Taut user_id gagal:', r.error.message); })
-          .catch(() => {});
+            .then(r => { if (r.error) console.warn('Taut user_id gagal:', r.error.message); })
+            .catch(() => {});
         }
       }
 
@@ -249,18 +269,18 @@ async function apiCall(action, data = {}) {
       // Simpan absensi masal — skema tabel absensi (unique: nis,tanggal,mapel)
       const rows = (data.absenList || []).map(absen => ({
         nis: String(absen.nis || ''),
-                                                        nama: absen.nama || '',
-                                                        tanggal: data.tanggal,
-                                                        status: absen.status,
-                                                        keterangan: (absen.keterangan || data.keterangan_kehadiran_masal || '').trim(),
-                                                        mapel: data.mapel || '',
-                                                        ekskul: data.ekskul || '',
-                                                        kelas: data.kelas || '',
-                                                        tahun: data.tahun || '',
-                                                        semester: data.semester || '',
-                                                        bulan: data.bulan || '',
-                                                        id_guru: data.id_guru || '',
-                                                        metode: data.metode || 'Manual / QR'
+        nama: absen.nama || '',
+        tanggal: data.tanggal,
+        status: absen.status,
+        keterangan: (absen.keterangan || data.keterangan_kehadiran_masal || '').trim(),
+        mapel: data.mapel || '',
+        ekskul: data.ekskul || '',
+        kelas: data.kelas || '',
+        tahun: data.tahun || '',
+        semester: data.semester || '',
+        bulan: data.bulan || '',
+        id_guru: data.id_guru || '',
+        metode: data.metode || 'Manual / QR'
       }));
       if (rows.length === 0) return { status: 'success', message: 'Tidak ada data absensi.' };
 
@@ -274,11 +294,11 @@ async function apiCall(action, data = {}) {
       const nisList = (data.nisList || []).map(n => String(n));
       if (nisList.length === 0) return { status: 'success', terhapus: 0 };
       const { count, error } = await supaClient
-      .from('absensi')
-      .delete({ count: 'exact' })
-      .eq('tanggal', data.tanggal)
-      .eq('mapel', data.mapel || '')
-      .in('nis', nisList);
+        .from('absensi')
+        .delete({ count: 'exact' })
+        .eq('tanggal', data.tanggal)
+        .eq('mapel', data.mapel || '')
+        .in('nis', nisList);
       if (error) throw error;
       return { status: 'success', terhapus: count || 0 };
     }
@@ -287,11 +307,11 @@ async function apiCall(action, data = {}) {
       // Perbarui keterangan per nis + tanggal + mapel
       for (const u of (data.updates || [])) {
         const { error } = await supaClient
-        .from('absensi')
-        .update({ keterangan: u.keterangan || '' })
-        .eq('nis', String(data.nis))
-        .eq('tanggal', u.tanggal)
-        .eq('mapel', data.mapel || '');
+          .from('absensi')
+          .update({ keterangan: u.keterangan || '' })
+          .eq('nis', String(data.nis))
+          .eq('tanggal', u.tanggal)
+          .eq('mapel', data.mapel || '');
         if (error) throw error;
       }
       return { status: 'success' };
@@ -306,28 +326,28 @@ async function apiCall(action, data = {}) {
       const tglAm = `${tahunAm}-${String(idxAm + 1).padStart(2, '0')}-${String(data.tanggal).padStart(2, '0')}`;
 
       const { data: guruRows, error: gErr } = await supaClient
-      .from('akun')
-      .select('captcha, kunci_absen')
-      .in('tipe', ['guru', 'admin'])
-      .or(`mapel.ilike.%${data.mapel}%,ekstrakurikuler.ilike.%${data.mapel}%`);
+        .from('akun')
+        .select('captcha, kunci_absen')
+        .in('tipe', ['guru', 'admin'])
+        .or(`mapel.ilike.%${data.mapel}%,ekstrakurikuler.ilike.%${data.mapel}%`);
       if (gErr) throw gErr;
       const sesiOk = (guruRows || []).some(g => g.kunci_absen === 'BUKA' && String(g.captcha || '').toUpperCase() === String(data.captcha || '').toUpperCase());
       if (!sesiOk) return { status: 'error', message: 'Captcha salah atau sesi absen belum dibuka guru.' };
 
       const { error } = await supaClient.from('absensi').upsert({
         nis: String(data.nis || ''),
-                                                                nama: data.nama || '',
-                                                                tanggal: tglAm,
-                                                                status: 'H',
-                                                                keterangan: '',
-                                                                mapel: data.mapel || '',
-                                                                ekskul: data.mapel || '',
-                                                                kelas: data.kelas || '',
-                                                                tahun: data.tahun || '',
-                                                                semester: data.semester || '',
-                                                                bulan: data.bulan || '',
-                                                                metode: 'Absen Mandiri (GPS)',
-                                                                gps: data.gps || ''
+        nama: data.nama || '',
+        tanggal: tglAm,
+        status: 'H',
+        keterangan: '',
+        mapel: data.mapel || '',
+        ekskul: data.mapel || '',
+        kelas: data.kelas || '',
+        tahun: data.tahun || '',
+        semester: data.semester || '',
+        bulan: data.bulan || '',
+        metode: 'Absen Mandiri (GPS)',
+        gps: data.gps || ''
       }, { onConflict: 'nis,tanggal,mapel' });
       if (error) throw error;
       return { status: 'success' };
@@ -386,130 +406,130 @@ async function supaAmbilSemua(builder, ukuran = 1000) {
 // 4. Pengganti fetch global khusus untuk mengambil data (GET)
 // Karena di app.js Anda banyak menggunakan `fetch(API_URL + '?action=get_master_data')`
 async function supabaseFetch(action, payload = {}) {
-  try {
+    try {
     if (action === 'get_master_data') {
-      // Kolom tabel memakai nama persis gaya Sheets ("Tahun Pelajaran", "Tingkat/Kelas", dst.)
-      const { data, error } = await supaClient.from('master_data').select('*');
-      if (error) throw error;
-      return { status: 'success', data: data || [] };
+        // Kolom tabel memakai nama persis gaya Sheets ("Tahun Pelajaran", "Tingkat/Kelas", dst.)
+        const { data, error } = await supaClient.from('master_data').select('*');
+        if (error) throw error;
+        return { status: 'success', data: data || [] };
     }
 
     if (action === 'get_dashboard_data') {
-      const arrBulanDb = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-      const idxBulanDb = arrBulanDb.indexOf(payload.bulan);
-      const partsTahunDb = String(payload.tahun || '').split('/');
-      const tahunAktualDb = (idxBulanDb >= 6) ? partsTahunDb[0] : (partsTahunDb[1] || partsTahunDb[0]);
-      const lastDayDb = (idxBulanDb >= 0) ? new Date(parseInt(tahunAktualDb, 10) || 2000, idxBulanDb + 1, 0).getDate() : 31;
-      const mmDb = String(idxBulanDb + 1).padStart(2, '0');
-      const tglAwalDb = `${tahunAktualDb}-${mmDb}-01`;
-      const tglAkhirDb = `${tahunAktualDb}-${mmDb}-${String(lastDayDb).padStart(2, '0')}`;
-      const isEkskulDb = payload.kelas === 'Semua Kelas';
+         const arrBulanDb = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
+         const idxBulanDb = arrBulanDb.indexOf(payload.bulan);
+         const partsTahunDb = String(payload.tahun || '').split('/');
+         const tahunAktualDb = (idxBulanDb >= 6) ? partsTahunDb[0] : (partsTahunDb[1] || partsTahunDb[0]);
+         const lastDayDb = (idxBulanDb >= 0) ? new Date(parseInt(tahunAktualDb, 10) || 2000, idxBulanDb + 1, 0).getDate() : 31;
+         const mmDb = String(idxBulanDb + 1).padStart(2, '0');
+         const tglAwalDb = `${tahunAktualDb}-${mmDb}-01`;
+         const tglAkhirDb = `${tahunAktualDb}-${mmDb}-${String(lastDayDb).padStart(2, '0')}`;
+         const isEkskulDb = payload.kelas === 'Semua Kelas';
 
-      // 1) Murid: ambil SEMUA murid (kolom ringkas + riwayat_kelas) → filter kelas efektif & status per TA payload di bawah.
-      //    Kelas efektif TA = riwayat_kelas[tahun].kelas (fallback tingkat_kelas statis); siswa non-Aktif disembunyikan.
-      //    Paginasi: PostgREST maks 1000 baris/request — supaAmbilSemua menggabungkan semua halaman.
-      let muridSemua;
-      try {
-        muridSemua = await supaAmbilSemua(
-          supaClient
-          .from('akun')
-          .select('nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, agama, catatan_khusus, ekstrakurikuler, jabatan, jabatan_ekskul_map, tahun_pelajaran, semester, no_telepon')
-          .eq('tipe', 'murid')
-        );
-      } catch (eKolom) {
-        // Kolom jabatan_ekskul_map belum ada (migrasi 20260926 belum dijalankan) → ulangi tanpa kolom itu
-        muridSemua = await supaAmbilSemua(
-          supaClient
-          .from('akun')
-          .select('nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, agama, catatan_khusus, ekstrakurikuler, jabatan, tahun_pelajaran, semester, no_telepon')
-          .eq('tipe', 'murid')
-        );
-      }
-      const tahunDbRw = String(payload.tahun || '');
-      const murid = muridSemua.filter(m => {
-        const rw = (m.riwayat_kelas || {})[tahunDbRw] || null;
-        const kelasEfektif = rw ? String(rw.kelas || '') : String(m.tingkat_kelas || '');
-        const statusSiswa = rw ? String(rw.status || 'Aktif') : 'Aktif';
-        if (statusSiswa !== 'Aktif' || !kelasEfektif) return false;
-        if (isEkskulDb) return String(m.ekstrakurikuler || '').split(',').map(e => e.trim()).includes(payload.mapel);
-        return kelasEfektif === payload.kelas;
-      });
+         // 1) Murid: ambil SEMUA murid (kolom ringkas + riwayat_kelas) → filter kelas efektif & status per TA payload di bawah.
+         //    Kelas efektif TA = riwayat_kelas[tahun].kelas (fallback tingkat_kelas statis); siswa non-Aktif disembunyikan.
+         //    Paginasi: PostgREST maks 1000 baris/request — supaAmbilSemua menggabungkan semua halaman.
+         let muridSemua;
+         try {
+           muridSemua = await supaAmbilSemua(
+             supaClient
+              .from('akun')
+              .select('nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, agama, catatan_khusus, ekstrakurikuler, jabatan, jabatan_ekskul_map, tahun_pelajaran, semester, no_telepon')
+              .eq('tipe', 'murid')
+           );
+         } catch (eKolom) {
+           // Kolom jabatan_ekskul_map belum ada (migrasi 20260926 belum dijalankan) → ulangi tanpa kolom itu
+           muridSemua = await supaAmbilSemua(
+             supaClient
+              .from('akun')
+              .select('nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, agama, catatan_khusus, ekstrakurikuler, jabatan, tahun_pelajaran, semester, no_telepon')
+              .eq('tipe', 'murid')
+           );
+         }
+         const tahunDbRw = String(payload.tahun || '');
+         const murid = muridSemua.filter(m => {
+            const rw = (m.riwayat_kelas || {})[tahunDbRw] || null;
+            const kelasEfektif = rw ? String(rw.kelas || '') : String(m.tingkat_kelas || '');
+            const statusSiswa = rw ? String(rw.status || 'Aktif') : 'Aktif';
+            if (statusSiswa !== 'Aktif' || !kelasEfektif) return false;
+            if (isEkskulDb) return String(m.ekstrakurikuler || '').split(',').map(e => e.trim()).includes(payload.mapel);
+            return kelasEfektif === payload.kelas;
+         });
 
-      // 2) Absensi dalam rentang tanggal bulan+tahun terpilih (kelas = kelas; ekskul = "Semua Kelas")
-      // Trim kolom: mapping hanya memakai nis/tanggal/status/keterangan (hemat ±70% payload)
-      let qAbsen = supaClient
-      .from('absensi')
-      .select('nis, tanggal, status, keterangan')
-      .eq('mapel', payload.mapel)
-      .gte('tanggal', tglAwalDb)
-      .lte('tanggal', tglAkhirDb);
-      qAbsen = isEkskulDb ? qAbsen.eq('kelas', 'Semua Kelas') : qAbsen.eq('kelas', payload.kelas);
-      const { data: absen, error: errAbsen } = await qAbsen;
+         // 2) Absensi dalam rentang tanggal bulan+tahun terpilih (kelas = kelas; ekskul = "Semua Kelas")
+         // Trim kolom: mapping hanya memakai nis/tanggal/status/keterangan (hemat ±70% payload)
+         let qAbsen = supaClient
+            .from('absensi')
+            .select('nis, tanggal, status, keterangan')
+            .eq('mapel', payload.mapel)
+            .gte('tanggal', tglAwalDb)
+            .lte('tanggal', tglAkhirDb);
+         qAbsen = isEkskulDb ? qAbsen.eq('kelas', 'Semua Kelas') : qAbsen.eq('kelas', payload.kelas);
+         const { data: absen, error: errAbsen } = await qAbsen;
 
-      // 3) Daftar guru (status kunci, wali kelas, pilihan guru penguji)
-      const { data: guru, error: errGuru } = await supaClient
-      .from('akun')
-      .select('nis_nip, nama_lengkap, mapel, ekstrakurikuler, wali_kelas, penugasan, tingkat_kelas, captcha, kunci_absen, no_telepon, gelar_depan, gelar_belakang')
-      .in('tipe', ['guru', 'admin']);
+          // 3) Daftar guru (status kunci, wali kelas, pilihan guru penguji)
+          const { data: guru, error: errGuru } = await supaClient
+             .from('akun')
+             .select('nis_nip, nama_lengkap, mapel, ekstrakurikuler, wali_kelas, penugasan, tingkat_kelas, captcha, kunci_absen, no_telepon, gelar_depan, gelar_belakang')
+             .in('tipe', ['guru', 'admin']);
 
-      if (errAbsen || errGuru) throw new Error("Gagal mengambil data dashboard");
+         if (errAbsen || errGuru) throw new Error("Gagal mengambil data dashboard");
 
-      return {
-        status: 'success',
-        murid: murid.map(m => {
-          const rw = (m.riwayat_kelas || {})[tahunDbRw] || null;
-          const kelasEfektif = rw ? String(rw.kelas || '') : String(m.tingkat_kelas || '');
-          const statusSiswa = rw ? String(rw.status || 'Aktif') : 'Aktif';
           return {
-            "NIS": m.nis_nip,
-            "NISN": m.nisn || "",
-            "Nama Lengkap": m.nama_lengkap,
-            "Tingkat/Kelas": kelasEfektif,
-            "StatusSiswa": statusSiswa,
-            "Jenis Kelamin": m.jenis_kelamin || "",
-            "Agama": m.agama || "",
-            "Catatan Khusus": m.catatan_khusus || "",
-            "Ekstrakurikuler": m.ekstrakurikuler || "",
-            "Jabatan Kelas": m.jabatan || "",
-            "Jabatan Ekstrakurikuler Map": (m.jabatan_ekskul_map && typeof m.jabatan_ekskul_map === 'object') ? m.jabatan_ekskul_map : {},
-                         "No HP/WA": m.no_telepon || "",
-                         "ID Tahun Pelajaran": m.tahun_pelajaran || "",
-                         "Semester": m.semester || ""
-          };
-        }),
-        absen: absen.map(a => ({ "NIS": a.nis, "Tanggal": a.tanggal, "Status": a.status, "Keterangan": a.keterangan })),
-        status_guru: (guru || []).map(g => ({
-          "ID Akun Guru": g.nis_nip,
-          "Nama Guru": g.nama_lengkap,
-          "Nama Guru Bergelar": [g.gelar_depan, g.nama_lengkap, g.gelar_belakang].filter(Boolean).join(' ').replace(' ,', ', '),
-                                            "Mapel": g.mapel || "",
-                                            "Custom Teks Mata Pelajaran": g.mapel || "",
-                                            "Ekskul": g.ekstrakurikuler || "",
-                                            "Ekstrakurikuler": g.ekstrakurikuler || "",
-                                            "Wali Kelas": g.wali_kelas || "",
-                                            "Penugasan": g.penugasan || {},
-                                            "Tingkat/Kelas": g.tingkat_kelas || "",
-                                            "No HP": g.no_telepon || "",
-                                            "Captcha": g.captcha || "1234",
-                                            "Kunci Absen": g.kunci_absen || "TUTUP"
-        }))
-      };
+              status: 'success',
+              murid: murid.map(m => {
+                  const rw = (m.riwayat_kelas || {})[tahunDbRw] || null;
+                  const kelasEfektif = rw ? String(rw.kelas || '') : String(m.tingkat_kelas || '');
+                  const statusSiswa = rw ? String(rw.status || 'Aktif') : 'Aktif';
+                  return {
+                    "NIS": m.nis_nip,
+                    "NISN": m.nisn || "",
+                    "Nama Lengkap": m.nama_lengkap,
+                    "Tingkat/Kelas": kelasEfektif,
+                    "StatusSiswa": statusSiswa,
+                    "Jenis Kelamin": m.jenis_kelamin || "",
+                    "Agama": m.agama || "",
+                    "Catatan Khusus": m.catatan_khusus || "",
+                    "Ekstrakurikuler": m.ekstrakurikuler || "",
+                    "Jabatan Kelas": m.jabatan || "",
+                    "Jabatan Ekstrakurikuler Map": (m.jabatan_ekskul_map && typeof m.jabatan_ekskul_map === 'object') ? m.jabatan_ekskul_map : {},
+                    "No HP/WA": m.no_telepon || "",
+                    "ID Tahun Pelajaran": m.tahun_pelajaran || "",
+                    "Semester": m.semester || ""
+                  };
+              }),
+             absen: absen.map(a => ({ "NIS": a.nis, "Tanggal": a.tanggal, "Status": a.status, "Keterangan": a.keterangan })),
+              status_guru: (guru || []).map(g => ({
+                  "ID Akun Guru": g.nis_nip,
+                  "Nama Guru": g.nama_lengkap,
+                  "Nama Guru Bergelar": [g.gelar_depan, g.nama_lengkap, g.gelar_belakang].filter(Boolean).join(' ').replace(' ,', ', '),
+                  "Mapel": g.mapel || "",
+                  "Custom Teks Mata Pelajaran": g.mapel || "",
+                  "Ekskul": g.ekstrakurikuler || "",
+                  "Ekstrakurikuler": g.ekstrakurikuler || "",
+                  "Wali Kelas": g.wali_kelas || "",
+                  "Penugasan": g.penugasan || {},
+                  "Tingkat/Kelas": g.tingkat_kelas || "",
+                  "No HP": g.no_telepon || "",
+                  "Captcha": g.captcha || "1234",
+                  "Kunci Absen": g.kunci_absen || "TUTUP"
+              }))
+         };
     }
 
-  } catch (error) {
-    console.error("Supabase Fetch Error:", error);
-    return { status: 'error', data: [] };
-  }
+    } catch (error) {
+        console.error("Supabase Fetch Error:", error);
+        return { status: 'error', data: [] };
+    }
 }
 
 // Utilities pendukung bawaan Anda
 function escapeHtml(str) {
   return String(str ?? '')
-  .replace(/&/g, '&amp;')
-  .replace(/</g, '&lt;')
-  .replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;')
-  .replace(/'/g, '&#39;');
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 function showToast(icon = 'success', title = '') {
   if (typeof Swal === 'undefined') { console.log(`[${icon}] ${title}`); return; }
