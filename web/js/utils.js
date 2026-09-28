@@ -38,6 +38,7 @@ function hapusKonfigurasiServer() {
   localStorage.removeItem(SERVER_CONFIG_KEY);
 }
 
+// PERBAIKAN: Gunakan nama 'supaClient' agar tidak bentrok dengan library bawaan CDN
 let SUPABASE_URL = SUPABASE_URL_DEFAULT;
 let SUPABASE_ANON_KEY = SUPABASE_ANON_KEY_DEFAULT;
 let supaClient = null;
@@ -47,24 +48,7 @@ function initSupaClient(url, key) {
   }
   SUPABASE_URL = url;
   SUPABASE_ANON_KEY = key;
-  supaClient = window.supabase.createClient(url, key, {
-    auth: {
-      // Key storage unik per project agar tidak bentrok bila URL server berganti
-      // dan mudah dibedakan dari data localStorage aplikasi sendiri (sisip_*).
-      storageKey: 'sisip-supabase-auth-token',
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true
-    }
-  });
-
-  // Refresh token basi (kedaluwarsa/dicabut server) memicu AuthApiError saat
-  // auto-refresh berjalan di background (mis. saat tab kembali fokus).
-  // Bersihkan sesi Auth Supabase yang rusak itu agar tidak mengulang error terus-menerus.
-  // Sesi login aplikasi sendiri (sisip_token/sisip_user) TIDAK terpengaruh oleh ini.
-  supaClient.auth.onAuthStateChange((event, session) => {
-    if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_OUT') return;
-  });
+  supaClient = window.supabase.createClient(url, key);
 }
 (() => {
   const cfg = ambilKonfigurasiServer();
@@ -80,17 +64,6 @@ function initSupaClient(url, key) {
       supaClient = null;
     }
   }
-
-  // Tangkap AuthApiError "Invalid Refresh Token" global yang muncul dari auto-refresh
-  // background (bukan dari pemanggilan API Anda sendiri) dan bersihkan token basi.
-  window.addEventListener('unhandledrejection', (ev) => {
-    const msg = (ev && ev.reason && ev.reason.message) || '';
-    if (/refresh token/i.test(msg) && supaClient) {
-      ev.preventDefault();
-      console.warn('Sesi Supabase Auth basi terdeteksi, membersihkan token lokal:', msg);
-      try { localStorage.removeItem('sisip-supabase-auth-token'); } catch (e) { /* abaikan */ }
-    }
-  });
 })();
 
 
