@@ -1966,7 +1966,7 @@ async function renderAbsensiModule(container) {
                ${opsiKelasAbsenHTML(listKelas, 'Mapel', listMapelDiampu[0] || '')}
              </select>
              <button type="button" id="btn-dropdown-kelas" onclick="toggleDropdownKelasAbsen(event)" class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-pink-400 hover:bg-pink-500 hover:text-white transition shadow-sm"><i class="fa-solid fa-users text-[10px] sm:text-xs"></i></button>
-             <div id="panel-kelas-absen" class="hidden absolute left-0 top-full mt-1 z-50 w-56 overflow-y-auto bg-slate-800 border border-white/20 rounded-lg shadow-xl text-[11px] text-white p-1.5" style="z-index:9999; max-height: 20rem; width:100px;"></div>
+             <div id="panel-kelas-absen" class="hidden absolute left-0 top-full mt-1 z-50 w-56 overflow-y-auto bg-slate-800 border border-white/20 rounded-lg shadow-xl text-[11px] text-white p-1.5" style="z-index:9999; max-height: 20rem;"></div>
           </div>
         </div>
         
@@ -2646,6 +2646,9 @@ async function loadDataMuridDanAbsen(paksa = false) {
         && (currentUser.user["Jabatan Kelas"]?.match(/Ketua|Sekretaris/i)
             || (isEkskul && hakAksesEkskulUntuk(namaMapel) === 'pengurus'));
       if (currentUser.role === 'murid' && !isPengurus) filteredMurid = filteredMurid.filter(m => m.NIS == currentUser.user["NIS"]);
+
+      // [F.E] Urutkan selalu A-Z berdasarkan Nama Lengkap (rekap Hadir Tatap Muka).
+      filteredMurid = [...filteredMurid].sort((a, b) => String(a["Nama Lengkap"] || '').localeCompare(String(b["Nama Lengkap"] || ''), 'id'));
 
       listMuridKelas = filteredMurid.map((m, idx) => {
         const absenSiswa = rawAbsenData.filter(a => a.NIS == m.NIS);
@@ -8231,6 +8234,9 @@ async function renderManajemenMurid(container, paksa = false) {
 
                             <select id="filter-kelas-murid" class="h-8 w-full sm:w-28 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()">
                                 <option value="ALL">Semua Kelas</option>
+                                <option value="GRP:X">Semua Kelas X</option>
+                                <option value="GRP:XI">Semua Kelas XI</option>
+                                <option value="GRP:XII">Semua Kelas XII</option>
                                 ${kelasOptions}
                             </select>
 
@@ -8465,9 +8471,17 @@ function muridTersaring(rows) {
         return text.includes(query)
             && (filterEks === 'all' || ekskulRow.includes(filterEks))
             && (filterTahun === 'ALL' || tahunRow === filterTahun)
-            && (filterKelas === 'ALL' || kelasRow === filterKelas)
+            && (filterKelas === 'ALL' || cocokKelasFilterMurid(filterKelas, kelasRow))
             && (filterStatus === 'ALL' || statusRow === filterStatus);
     });
+}
+
+/** Cocokkan baris kelas terhadap filter "filter-kelas-murid": ALL, "GRP:X/XI/XII", atau nama kelas persis. */
+function cocokKelasFilterMurid(filterKelas, kelasRow) {
+    if (filterKelas === 'GRP:X') return /^X(\s|$)/i.test(kelasRow) && !/^XI/i.test(kelasRow);
+    if (filterKelas === 'GRP:XI') return /^XI(\s|$)/i.test(kelasRow) && !/^XII/i.test(kelasRow);
+    if (filterKelas === 'GRP:XII') return /^XII(\s|$)/i.test(kelasRow);
+    return kelasRow === filterKelas;
 }
 
 /** Bangun lookup "Ekskul:Sub1|Sub2; Ekskul2:Sub3" per NIS untuk sekumpulan baris murid.
@@ -8703,6 +8717,7 @@ async function openFormAkunMurid(isNew, data = {}) {
     const jabatanEkskulV = data.jabatan_ekskul || data["Jabatan Ekstrakurikuler"] || "";
     const emailV = data.email || data.Email || "";
     const waV = data.no_telepon || data["No HP/WA"] || "";
+    const waOrtuV = data.no_telepon_ortu || data["No HP Orang Tua"] || "";
     const ekskulV = data.ekstrakurikuler || data.Ekstrakurikuler || "";
     const ayahV = data.nama_ayah || data["Nama Orang tua Ayah"] || "";
     const pkAyahV = data.pekerjaan_ayah || data["Pekerjaan Ayah"] || "";
@@ -8769,6 +8784,7 @@ async function openFormAkunMurid(isNew, data = {}) {
             <div><label class="${lbl}">NIS *</label><input id="f_nis" value="${escJs(nisV)}" ${!isNew?'readonly':''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500 disabled:opacity-50"></div>
             <div><label class="${lbl}">NISN</label><input id="f_nisn" value="${escJs(nisnV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             <div><label class="${lbl}">No HP/WA</label><input id="f_wa" value="${escJs(waV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            <div><label class="${lbl}">No HP Orang Tua</label><input id="f_wa_ortu" value="${escJs(waOrtuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             <div class="sm:col-span-2"><label class="${lbl}">Nama Lengkap *</label><input id="f_nama" value="${escJs(namaV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
 
             ${sec('Tahun & Kelas')}
@@ -8901,6 +8917,7 @@ async function openFormAkunMurid(isNew, data = {}) {
                 jabatan_ekskul: formJabatanEkskulSel.join(', '),
                 email: document.getElementById('f_email').value.trim(),
                 no_telepon: document.getElementById('f_wa').value.trim(),
+                no_telepon_ortu: document.getElementById('f_wa_ortu').value.trim(),
                 ekstrakurikuler: ekskulChecked.join(', '),
                 nama_ayah: document.getElementById('f_ayah').value.trim(),
                 pekerjaan_ayah: document.getElementById('f_pk_ayah').value.trim(),
@@ -11615,26 +11632,84 @@ function guruNamaJadwal(idGuru) {
   return g ? namaDenganGelar(g.nama_lengkap, g.gelar_depan, g.gelar_belakang) : (idGuru || '-');
 }
 
+/** Nama guru dari 1 baris jadwal — pakai "Guru Custom" bila guru belum punya akun (ID Akun Guru kosong). */
+function namaGuruBarisJadwal(j) {
+  const idGuru = j && j["ID Akun Guru"];
+  if (idGuru) return guruNamaJadwal(idGuru);
+  const custom = (j && j["Guru Custom"] || '').trim();
+  return custom || '(Guru belum diisi)';
+}
+
+/** Kunci unik guru per baris jadwal, dipakai utk grouping (akun asli atau custom). */
+function kunciGuruBarisJadwal(j) {
+  const idGuru = (j && j["ID Akun Guru"] || '').trim();
+  if (idGuru) return 'akun:' + idGuru;
+  const custom = (j && j["Guru Custom"] || '').trim();
+  return custom ? 'custom:' + custom.toLowerCase() : 'kosong';
+}
+
+/** Singkatan otomatis nama mata pelajaran (utk sel grid ringkas): kata pertama tiap suku kata, maks 4 huruf. */
+function singkatMapel(nama) {
+  const s = String(nama || '').trim();
+  if (!s) return '-';
+  const kata = s.split(/\s+/).filter(Boolean);
+  if (kata.length === 1) return kata[0].slice(0, 4);
+  return kata.map(w => w[0].toUpperCase()).join('').slice(0, 4);
+}
+
 function getHTMLJadwalPelajaran() {
     const listTahunJadwal = [...new Set((cacheJadwal || []).map(d => d.Tahun).filter(Boolean))].sort();
     if (!filterTahunJadwal && listTahunJadwal.length) filterTahunJadwal = getPreferensiSesi().tahun || currentTahun;
     if (filterTahunJadwal && listTahunJadwal.length && !listTahunJadwal.includes(filterTahunJadwal)) filterTahunJadwal = listTahunJadwal[0];
     const jadwalTampil = (filterTahunJadwal && listTahunJadwal.length) ? cacheJadwal.filter(d => String(d.Tahun) === String(filterTahunJadwal)) : cacheJadwal;
 
-    let rows = jadwalTampil.length === 0 ? `<tr><td colspan="6" class="p-4 text-center text-slate-500">Belum ada jadwal yang diatur.</td></tr>`
-    : jadwalTampil.map((d, i) => `
-        <tr class="hover:bg-white/5 border-b border-white/5 transition">
-            <td class="px-4 py-3 text-center">${i+1}</td>
-            <td class="px-4 py-3 font-bold text-yellow-300">${d.Waktu}</td>
-            <td class="px-4 py-3 text-white">${escapeHtml(guruNamaJadwal(d["ID Akun Guru"]))} <span class="text-[10px] text-slate-400">(${escapeHtml(d["ID Akun Guru"] || '-')})</span></td>
-            <td class="px-4 py-3"><span class="bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded text-[10px]">${d["Tingkat/Kelas"]}</span> | ${d.Mapel}</td>
-            <td class="px-4 py-3 text-[10px] text-slate-400">${d.Tahun || '-'} ${d.Semester ? '· ' + d.Semester : ''}</td>
-            <td class="px-4 py-3 text-center">
-                <button onclick='openFormJadwal(false, ${JSON.stringify(d).replace(/'/g, "&#39;")})' class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit Jadwal"><i class="fa-solid fa-pen"></i></button>
-                <button onclick="deleteJadwal('${r_id(d.id)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus Jadwal"><i class="fa-solid fa-trash"></i></button>
-            </td>
-        </tr>
-    `).join('');
+    const hariUrutJP = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    const parseWaktuJP = (w) => {
+        const s = String(w || '');
+        const i = s.indexOf(',');
+        return i < 0 ? { hari: '', jam: s.trim() } : { hari: s.slice(0, i).trim(), jam: s.slice(i + 1).trim() };
+    };
+
+    // Kelompokkan per Guru (akun asli atau custom), lalu per Hari di dalamnya.
+    const grupGuru = {};
+    jadwalTampil.forEach(d => {
+        const kunci = kunciGuruBarisJadwal(d);
+        (grupGuru[kunci] = grupGuru[kunci] || { nama: namaGuruBarisJadwal(d), idGuru: d["ID Akun Guru"] || '', baris: [] }).baris.push(d);
+    });
+    const daftarGuru = Object.values(grupGuru).sort((a, b) => a.nama.localeCompare(b.nama, 'id'));
+
+    const kartuGuruHTML = daftarGuru.length === 0
+        ? `<p class="text-center text-slate-500 p-6">Belum ada jadwal yang diatur.</p>`
+        : daftarGuru.map(g => {
+            const subTabelHTML = hariUrutJP.map(h => {
+                const barisHari = g.baris.filter(d => parseWaktuJP(d.Waktu).hari.toLowerCase() === h.toLowerCase())
+                    .sort((a, b) => parseWaktuJP(a.Waktu).jam.localeCompare(parseWaktuJP(b.Waktu).jam, 'id', { numeric: true }));
+                if (!barisHari.length) return '';
+                const barisRowsHTML = barisHari.map(d => `
+                    <tr class="hover:bg-white/5 border-b border-white/5 transition">
+                        <td class="px-3 py-2 font-bold text-yellow-300 whitespace-nowrap">${escapeHtml(parseWaktuJP(d.Waktu).jam || '-')}</td>
+                        <td class="px-3 py-2"><span class="bg-indigo-900/50 text-indigo-300 px-2 py-0.5 rounded text-[10px]">${escapeHtml(d["Tingkat/Kelas"] || '-')}</span></td>
+                        <td class="px-3 py-2 text-white">${escapeHtml(d.Mapel || '-')}</td>
+                        <td class="px-3 py-2 text-center whitespace-nowrap">
+                            <button onclick='openFormJadwal(false, ${JSON.stringify(d).replace(/'/g, "&#39;")})' class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit Jadwal"><i class="fa-solid fa-pen"></i></button>
+                            <button onclick="deleteJadwal('${r_id(d.id)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus Jadwal"><i class="fa-solid fa-trash"></i></button>
+                        </td>
+                    </tr>`).join('');
+                return `
+                    <div class="mb-3">
+                        <div class="text-[11px] font-bold text-pink-300 uppercase tracking-wide mb-1">${escapeHtml(h)}</div>
+                        <table class="w-full text-left whitespace-nowrap"><thead class="bg-slate-900 text-[9px] uppercase text-slate-400"><tr><th class="px-3 py-2 w-24">Jam</th><th class="px-3 py-2">Kelas</th><th class="px-3 py-2">Mapel</th><th class="px-3 py-2 text-center w-24">Aksi</th></tr></thead><tbody class="text-xs text-slate-200">${barisRowsHTML}</tbody></table>
+                    </div>`;
+            }).join('');
+            return `
+                <div class="glass-card rounded-xl border border-white/10 overflow-hidden mb-4">
+                    <div class="bg-slate-800/80 px-4 py-2.5 flex justify-between items-center flex-wrap gap-2">
+                        <h3 class="text-xs font-bold text-white"><i class="fa-solid fa-chalkboard-user text-pink-400 mr-1.5"></i>${escapeHtml(g.nama)}${g.idGuru ? ` <span class="text-[10px] text-slate-400 font-normal">(${escapeHtml(g.idGuru)})</span>` : ' <span class="text-[9px] px-1.5 py-0.5 rounded bg-amber-600/40 text-amber-200 font-bold">Guru Custom</span>'}</h3>
+                        <span class="text-[10px] text-slate-400">${g.baris.length} jam/minggu</span>
+                    </div>
+                    <div class="p-3 bg-[#0f172a]">${subTabelHTML || '<p class="text-[11px] text-slate-500 italic">Belum ada jadwal hari aktif untuk guru ini.</p>'}</div>
+                </div>`;
+        }).join('');
 
     return `
         <div class="p-4 flex justify-between items-center gap-2 bg-blue-900/10 border-b border-blue-500/20 flex-wrap">
@@ -11643,7 +11718,7 @@ function getHTMLJadwalPelajaran() {
             </select>
             <button onclick="openFormJadwal(true)" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition shadow"><i class="fa-solid fa-plus"></i> Tambah Jadwal</button>
         </div>
-        <table class="w-full text-left whitespace-nowrap"><thead class="bg-slate-900 text-[10px] uppercase text-slate-400"><tr><th class="px-4 py-3 text-center w-12">No</th><th class="px-4 py-3">Hari & Jam</th><th class="px-4 py-3">Guru</th><th class="px-4 py-3">Kelas & Mapel</th><th class="px-4 py-3">Tahun</th><th class="px-4 py-3 text-center w-24">Aksi (Edit/Hapus)</th></tr></thead><tbody class="text-xs text-slate-200">${rows}</tbody></table>
+        <div class="p-4">${kartuGuruHTML}</div>
     `;
 }
 
@@ -11690,7 +11765,11 @@ function openFormJadwal(isNew, data = {}) {
         }).join('');
     const fieldGuru = isGuru
       ? `<input type="text" id="j_guru" value="${escapeHtml(guruNamaJadwal(idGuruTerkunci))} (${escapeHtml(idGuruTerkunci)})" readonly class="w-full bg-slate-800 border border-white/10 rounded px-2 py-1.5 mt-1 outline-none text-slate-400 cursor-not-allowed">`
-      : `<select id="j_guru" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none"><option value="">-- Pilih Guru --</option>${opsiGuru}</select>`;
+      : `<select id="j_guru" onchange="document.getElementById('j_guru_wrap_custom').style.display = this.value ? 'none' : '';" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none"><option value="">-- Pilih Guru --</option>${opsiGuru}</select>
+        <div id="j_guru_wrap_custom" style="display:${data["ID Akun Guru"] ? 'none' : ''}">
+          <label class="font-bold text-amber-300 block mt-2 text-[10px]"><i class="fa-solid fa-user-pen"></i> Guru belum punya akun? Ketik nama manual:</label>
+          <input type="text" id="j_guru_custom" placeholder="Nama guru (tanpa akun)" value="${escapeHtml(data["Guru Custom"] || '')}" class="w-full bg-black/40 border border-amber-500/30 rounded px-2 py-1.5 mt-1 outline-none text-white">
+        </div>`;
 
     Swal.fire({
         title: `<div class="text-lg font-bold">${isNew ? 'Tambah' : 'Edit'} Jadwal</div>`,
@@ -11713,19 +11792,21 @@ function openFormJadwal(isNew, data = {}) {
         background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: 'Simpan',
         preConfirm: () => {
             let guru = isGuru ? idGuruTerkunci : document.getElementById('j_guru').value.trim();
+            let guruCustom = isGuru ? '' : (document.getElementById('j_guru_custom')?.value.trim() || '');
+            if (guru) guruCustom = ''; // akun terpilih menang atas isian custom
             const tahun = document.getElementById('j_tahun').value;
             const mapel = document.getElementById('j_mapel').value;
             const kelas = document.getElementById('j_kelas').value;
-            const base = { "ID Akun Guru": guru, "ID Jadwal Murid": data["ID Jadwal Murid"] || "", "Tahun": tahun, "Semester": (prefJadwal.semester || "Ganjil"), "Mapel": mapel, "Tingkat/Kelas": kelas };
+            const base = { "ID Akun Guru": guru, "Guru Custom": guruCustom, "ID Jadwal Murid": data["ID Jadwal Murid"] || "", "Tahun": tahun, "Semester": (prefJadwal.semester || "Ganjil"), "Mapel": mapel, "Tingkat/Kelas": kelas };
 
             const checklistTerpilih = isNew ? [...document.querySelectorAll('.j-sumber-chk:checked')].map(c => c.value) : [];
             if (checklistTerpilih.length) {
-                if (!guru) { Swal.showValidationMessage('Guru wajib diisi!'); return false; }
+                if (!guru && !guruCustom) { Swal.showValidationMessage('Guru wajib diisi (pilih akun atau ketik nama manual)!'); return false; }
                 return checklistTerpilih.map(w => ({ ...base, "Waktu": w }));
             }
 
             let waktu = document.getElementById('j_waktu').value.trim();
-            if(!guru || !waktu) { Swal.showValidationMessage('Guru & Waktu wajib diisi!'); return false; }
+            if((!guru && !guruCustom) || !waktu) { Swal.showValidationMessage('Guru & Waktu wajib diisi!'); return false; }
             return [{ ...base, "Waktu": waktu }];
         }
     }).then(async (res) => {
@@ -11736,7 +11817,8 @@ function openFormJadwal(isNew, data = {}) {
                 const bentrok = cariBentrokJadwal(payload, isNew ? null : data.id);
                 const lanjutSimpan = () => simpanJadwalDb(payload, isNew, isNew ? null : data.id);
                 if (bentrok.length) {
-                    const detail = bentrok.map(j => `• ${escapeHtml(guruNamaJadwal(j["ID Akun Guru"]))} — ${escapeHtml(j["Tingkat/Kelas"] || '-')} ${escapeHtml(j.Mapel || '')} (${escapeHtml(j.Waktu)})`).join('<br>');
+                    const detail = bentrok.map(j => `• ${escapeHtml(namaGuruBarisJadwal(j))} — ${escapeHtml(j["Tingkat/Kelas"] || '-')} ${escapeHtml(j.Mapel || '')} (${escapeHtml(j.Waktu)})`).join('<br>');
+
                     const konf = await Swal.fire({
                         title: `Jadwal Berpotensi Bentrok! (${escapeHtml(payload.Waktu)})`,
                         html: `<div class="text-left text-[11px]">${detail}</div>`,
@@ -11756,12 +11838,14 @@ function openFormJadwal(isNew, data = {}) {
 function cariBentrokJadwal(payload, idAbai = null) {
     const w = (payload.Waktu || '').trim().toLowerCase();
     if (!w) return [];
+    const kunciGuruPayload = kunciGuruBarisJadwal(payload);
     return (cacheJadwal || []).filter(j =>
         String(j.id || '') !== String(idAbai || '') &&
         String(j.Waktu || '').trim().toLowerCase() === w &&
-        (String(j["ID Akun Guru"] || '') === String(payload["ID Akun Guru"] || '') ||
+        (kunciGuruBarisJadwal(j) === kunciGuruPayload ||
          String(j["Tingkat/Kelas"] || '') === String(payload["Tingkat/Kelas"] || '')));
 }
+
 
 /** Simpan jadwal langsung ke Supabase (insert baru / update by id). */
 async function simpanJadwalDb(payload, isNew, idLama) {
@@ -11992,10 +12076,11 @@ function renderDataKalender() {
         ? `<tr><td colspan="5" class="p-4 text-center text-slate-500">Belum ada data kegiatan semester ini.</td></tr>`
         : rows.map((k, i) => {
             const meta = KALENDER_TIPE[k.tipe] || KALENDER_TIPE.custom;
+            const labelTipe = (k.tipe === 'custom' && k.tipe_custom) ? escapeHtml(k.tipe_custom) : meta.label;
             return `<tr class="hover:bg-white/5 border-b border-white/5 transition">
                 <td class="px-4 py-2.5 text-center">${i + 1}</td>
                 <td class="px-4 py-2.5 font-bold text-sky-300">${escapeHtml(tglRentangKalender(k))}</td>
-                <td class="px-4 py-2.5"><span class="text-[9px] px-2 py-0.5 rounded font-bold" style="background:${meta.hex}33;color:${meta.hex}">${meta.label}</span></td>
+                <td class="px-4 py-2.5"><span class="text-[9px] px-2 py-0.5 rounded font-bold" style="background:${meta.hex}33;color:${meta.hex}">${labelTipe}</span></td>
                 <td class="px-4 py-2.5 text-white">${escapeHtml(k.nama || '-')} ${k.keterangan ? `<span class="text-[10px] text-slate-400">— ${escapeHtml(k.keterangan)}</span>` : ''}</td>
                 <td class="px-4 py-2.5 text-center">
                     <button onclick="gcalKirimSatu('${r_id(k.id)}')" class="w-7 h-7 bg-emerald-600/20 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded transition mr-1" title="Kirim ke Google Calendar"><i class="fa-brands fa-google"></i></button>
@@ -12025,7 +12110,8 @@ function openFormKalender(isNew, data = {}) {
         title: `<div class="text-lg font-bold">${isNew ? 'Tambah' : 'Edit'} Kegiatan Kalender</div>`,
         html: `
             <div class="text-left text-[11px] text-slate-300 mt-2 grid grid-cols-2 gap-3">
-                <div class="col-span-2"><label class="font-bold text-indigo-300">Tipe / Kategori *</label><select id="k_tipe" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">${tipeOpts}</select></div>
+                <div class="col-span-2"><label class="font-bold text-indigo-300">Tipe / Kategori *</label><select id="k_tipe" onchange="document.getElementById('k_tipe_custom_wrap').classList.toggle('hidden', this.value !== 'custom')" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">${tipeOpts}</select></div>
+                <div id="k_tipe_custom_wrap" class="col-span-2 ${data.tipe === 'custom' ? '' : 'hidden'}"><label class="font-bold text-indigo-300">Nama Kategori Custom <span class="text-slate-500">(khusus tipe Kegiatan Custom)</span></label><input id="k_tipe_custom" value="${escapeHtml(data.tipe_custom || '')}" placeholder="Cth: Kegiatan Ekstra Sekolah" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-indigo-500"></div>
                 <div><label class="font-bold text-indigo-300">Tahun Pelajaran</label><select id="k_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">${listTahun.map(t => `<option value="${escJs(t)}" ${t === (data.tahun || kalenderTahun) ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}</select></div>
                 <div><label class="font-bold text-indigo-300">Semester</label><select id="k_semester" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none"><option value="Ganjil" ${data.semester === 'Genap' ? '' : 'selected'}>Semester 1 (Ganjil)</option><option value="Genap" ${data.semester === 'Genap' ? 'selected' : ''}>Semester 2 (Genap)</option></select></div>
                 <div><label class="font-bold text-indigo-300">Tanggal Mulai *</label><input type="date" id="k_mulai" value="${String(data.tanggal_mulai || '').slice(0, 10)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none" style="color-scheme:dark;"></div>
@@ -12043,9 +12129,11 @@ function openFormKalender(isNew, data = {}) {
                 tanggal_mulai: document.getElementById('k_mulai').value,
                 tanggal_sampai: document.getElementById('k_sampai').value || document.getElementById('k_mulai').value,
                 nama: document.getElementById('k_nama').value.trim(),
-                keterangan: document.getElementById('k_ket').value.trim()
+                keterangan: document.getElementById('k_ket').value.trim(),
+                tipe_custom: document.getElementById('k_tipe').value === 'custom' ? document.getElementById('k_tipe_custom').value.trim() : ''
             };
             if (!payload.tanggal_mulai || !payload.nama) { Swal.showValidationMessage('Tanggal Mulai & Nama Kegiatan wajib diisi!'); return false; }
+            if (payload.tipe === 'custom' && !payload.tipe_custom) { Swal.showValidationMessage('Nama Kategori Custom wajib diisi untuk tipe Kegiatan Custom!'); return false; }
             if (payload.tanggal_sampai < payload.tanggal_mulai) { Swal.showValidationMessage('Tanggal Selesai tidak boleh sebelum Tanggal Mulai!'); return false; }
             return payload;
         }
@@ -12686,6 +12774,7 @@ function getHTMLLihatJadwal() {
             <select id="lj-mode" onchange="renderLihatJadwal(true)" class="bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white outline-none">
                 <option value="kelas">Per Kelas</option>
                 <option value="guru">Per Guru</option>
+                <option value="master">Master (Semua Kelas per Jurusan)</option>
             </select>
             <select id="lj-target" onchange="renderLihatJadwal()" class="bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white outline-none"></select>
             <select id="lj-tahun" onchange="renderLihatJadwal()" class="bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white outline-none"></select>
@@ -12706,8 +12795,15 @@ function renderLihatJadwal(gantiMode = false) {
         const defaultTahun = listTahun.includes(filterTahunJadwal || currentTahun) ? (filterTahunJadwal || currentTahun) : (listTahun[0] || '');
         tahunEl.innerHTML = listTahun.map(t => `<option value="${escJs(t)}" ${t === defaultTahun ? 'selected' : ''}>Tahun ${escapeHtml(t)}</option>`).join('');
     }
-    const jadwalTampil = (cacheJadwal || []).filter(j => !tahunEl.value || String(j.Tahun) === String(tahunEl.value));
     const mode = modeEl.value;
+
+    if (mode === 'master') {
+        targetEl.style.display = 'none';
+        targetEl.innerHTML = '';
+        return renderLihatJadwalMaster(tahunEl.value);
+    }
+    targetEl.style.display = '';
+    const jadwalTampil = (cacheJadwal || []).filter(j => !tahunEl.value || String(j.Tahun) === String(tahunEl.value));
     const targets = [...new Set(jadwalTampil.map(j => (mode === 'kelas' ? j["Tingkat/Kelas"] : j["ID Akun Guru"])).filter(Boolean))].sort();
     if (gantiMode || !targets.includes(targetEl.value)) {
         targetEl.innerHTML = targets.map(t => `<option value="${escJs(t)}">${escapeHtml(mode === 'kelas' ? t : guruNamaJadwal(t))}</option>`).join('');
@@ -12741,7 +12837,7 @@ function renderLihatJadwal(gantiMode = false) {
                 return `<td class="px-2 py-2 border-r border-white/5 align-top">${list.map(j => `
                     <div class="bg-white/5 border border-white/10 rounded px-2 py-1 mb-1">
                         <div class="text-[11px] font-bold text-white">${escapeHtml(j.Mapel || '-')}</div>
-                        <div class="text-[8px] ${mode === 'kelas' ? 'text-slate-400' : 'text-yellow-300'}">${escapeHtml(mode === 'kelas' ? guruNamaJadwal(j["ID Akun Guru"]) : (j["Tingkat/Kelas"] || '-'))}</div>
+                        <div class="text-[8px] ${mode === 'kelas' ? 'text-slate-400' : 'text-yellow-300'}">${escapeHtml(mode === 'kelas' ? namaGuruBarisJadwal(j) : (j["Tingkat/Kelas"] || '-'))}</div>
                     </div>`).join('')}</td>`;
             }).join('')}</tr>`).join('');
 
@@ -12754,9 +12850,106 @@ function renderLihatJadwal(gantiMode = false) {
     `;
 }
 
-// ==========================================
-// DASHBOARD UTAMA (F5 + F6): HARI EFEKTIF & AGENDA KALENDER
-// ==========================================
+/** Tampilan Master: semua kelas dikelompokkan per Jurusan, disusun per Hari & Jam,
+ *  tiap sel berisi Mapel (singkatan) + guru (kode ringkas), dengan legenda per Jurusan. */
+function renderLihatJadwalMaster(tahun) {
+    const box = document.getElementById('lj-grid');
+    if (!box) return;
+
+    const jadwalTampil = (cacheJadwal || []).filter(j => !tahun || String(j.Tahun) === String(tahun));
+    const hariUrut = ["Senin", "Selasa", "Rabu", "Kamis", "Jumat", "Sabtu"];
+    const parseWaktu = (w) => {
+        const s = String(w || '');
+        const i = s.indexOf(',');
+        return i < 0 ? { hari: '', jam: s.trim() } : { hari: s.slice(0, i).trim(), jam: s.slice(i + 1).trim() };
+    };
+
+    // Kelompokkan kelas per Jurusan.
+    const semuaKelas = [...new Set(jadwalTampil.map(j => j["Tingkat/Kelas"]).filter(Boolean))].sort();
+    const kelasPerJurusan = {};
+    semuaKelas.forEach(k => {
+        const j = jurusanDariKelas(k) || 'Lainnya';
+        (kelasPerJurusan[j] = kelasPerJurusan[j] || []).push(k);
+    });
+    const daftarJurusan = Object.keys(kelasPerJurusan).sort();
+
+    if (!semuaKelas.length) {
+        box.innerHTML = `<p class="text-center text-slate-500 p-6">Belum ada jadwal untuk tahun ini.</p>`;
+        return;
+    }
+
+    // Sel: kunci hari|jam|kelas -> baris jadwal.
+    const cell = {};
+    jadwalTampil.forEach(j => {
+        const p = parseWaktu(j.Waktu);
+        if (!p.hari || !p.jam || !j["Tingkat/Kelas"]) return;
+        cell[`${p.hari}|${p.jam}|${j["Tingkat/Kelas"]}`] = j;
+    });
+
+    const bagianPerHari = hariUrut.map(h => {
+        const jamSet = new Set();
+        jadwalTampil.forEach(j => { const p = parseWaktu(j.Waktu); if (p.hari === h && p.jam) jamSet.add(p.jam); });
+        const daftarJam = [...jamSet].sort((a, b) => a.localeCompare(b, 'id', { numeric: true }));
+        if (!daftarJam.length) return '';
+
+        const headerJurusan = daftarJurusan.map(j => `<th class="px-2 py-2 border-b border-white/10 text-center" colspan="${kelasPerJurusan[j].length}">${escapeHtml(j)}</th>`).join('');
+        const headerKelas = daftarJurusan.map(j => kelasPerJurusan[j].map(k => `<th class="px-2 py-1.5 border-b border-white/10 text-center whitespace-nowrap">${escapeHtml(k)}</th>`).join('')).join('');
+        const rowsHTML = daftarJam.map(jam => `
+            <tr class="border-b border-white/5">
+                <td class="px-3 py-2 font-bold text-yellow-300 whitespace-nowrap">${escapeHtml(jam)}</td>
+                ${daftarJurusan.map(j => kelasPerJurusan[j].map(k => {
+                    const d = cell[`${h}|${jam}|${k}`];
+                    if (!d) return `<td class="px-1.5 py-2 border-r border-white/5 text-center text-slate-700">·</td>`;
+                    const kodeGuru = (d["ID Akun Guru"] || d["Guru Custom"] || '').toString().slice(0, 8);
+                    return `<td class="px-1.5 py-2 border-r border-white/5 text-center" title="${escapeHtml(namaGuruBarisJadwal(d))} — ${escapeHtml(d.Mapel || '')}">
+                        <div class="text-[10px] font-bold text-white">${escapeHtml(singkatMapel(d.Mapel))}</div>
+                        <div class="text-[8px] text-slate-400">${escapeHtml(kodeGuru || '-')}</div>
+                    </td>`;
+                }).join('')).join('')}
+            </tr>`).join('');
+
+        return `
+            <div class="mb-4">
+                <div class="text-[11px] font-bold text-pink-300 uppercase tracking-wide mb-1">${escapeHtml(h)}</div>
+                <div class="overflow-x-auto">
+                <table class="w-full" style="min-width:640px;"><thead class="bg-slate-900 text-[9px] uppercase text-slate-400">
+                    <tr><th class="px-3 py-2 border-b border-white/10" rowspan="2">Jam</th>${headerJurusan}</tr>
+                    <tr>${headerKelas}</tr>
+                </thead><tbody class="text-slate-200">${rowsHTML}</tbody></table>
+                </div>
+            </div>`;
+    }).join('');
+
+    // Legenda: kode guru -> nama guru per Jurusan (guru yang mengajar minimal 1 kelas di jurusan tsb).
+    const legendaJurusan = daftarJurusan.map(j => {
+        const kunciSet = new Set();
+        const guruList = [];
+        jadwalTampil.forEach(d => {
+            if (jurusanDariKelas(d["Tingkat/Kelas"]) !== j && !(j === 'Lainnya' && !jurusanDariKelas(d["Tingkat/Kelas"]))) return;
+            const kode = (d["ID Akun Guru"] || d["Guru Custom"] || '').toString().slice(0, 8);
+            const kunci = kunciGuruBarisJadwal(d);
+            if (!kode || kunciSet.has(kunci)) return;
+            kunciSet.add(kunci);
+            guruList.push({ kode, nama: namaGuruBarisJadwal(d) });
+        });
+        guruList.sort((a, b) => a.nama.localeCompare(b.nama, 'id'));
+        return `
+            <div class="bg-white/5 border border-white/10 rounded-lg p-2.5">
+                <div class="text-[10px] font-bold text-pink-300 mb-1">${escapeHtml(j)}</div>
+                <div class="space-y-0.5">${guruList.map(g => `<div class="text-[9px] text-slate-300"><span class="text-white font-bold">${escapeHtml(g.kode)}</span> — ${escapeHtml(g.nama)}</div>`).join('') || '<div class="text-[9px] text-slate-500 italic">-</div>'}</div>
+            </div>`;
+    }).join('');
+
+    box.innerHTML = `
+        <div class="text-[10px] text-slate-400 mb-2">Jadwal Master · Tahun ${escapeHtml(tahun || '-')} · ${semuaKelas.length} kelas, ${daftarJurusan.length} jurusan</div>
+        ${bagianPerHari}
+        <div class="mt-4">
+            <div class="text-[11px] font-bold text-white uppercase tracking-wide mb-2"><i class="fa-solid fa-tags mr-1"></i>Legenda Guru per Jurusan</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">${legendaJurusan}</div>
+        </div>
+    `;
+}
+
 
 async function renderDashboardUtama(container) {
     container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat Dashboard...</div>`;
@@ -13177,8 +13370,8 @@ async function renderEkstrakurikulerModule(container) {
     if (!window.__ekskulAktif || !daftar.includes(window.__ekskulAktif)) window.__ekskulAktif = daftar[0] || '';
     // [REQ 1c] Akses per ekskul: pengurus (menjabat) = semua isian; anggota = read-only
     const aksesAktif = hakAksesEkskulUntuk(window.__ekskulAktif);
-    if (!window.__tabEkskulInit) { currentTabEkskul = (aksesAktif === 'admin' || aksesAktif === 'guru' || aksesAktif === 'pengurus') ? 'profil' : 'info'; window.__tabEkskulInit = true; }
-    if (currentTabEkskul === 'dispensasi' && aksesAktif === 'anggota') currentTabEkskul = 'info';
+    if (!window.__tabEkskulInit) { currentTabEkskul = 'info'; window.__tabEkskulInit = true; }
+    if ((currentTabEkskul === 'persuratan') && aksesAktif === 'anggota') currentTabEkskul = 'info';
     try {
       const { data } = await supaClient.from('akun').select('nis_nip, nama_lengkap, gelar_depan, gelar_belakang, no_telepon, ekstrakurikuler').in('tipe', ['guru', 'admin']);
       window.__cacheGuruEkskul = data || [];
@@ -13194,11 +13387,11 @@ async function renderEkstrakurikulerModule(container) {
           <h2 class="text-sm sm:text-base font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-medal text-yellow-400 mr-2"></i> Ekstrakurikuler <span id="ekskul-header-nama" class="text-yellow-300">${window.__ekskulAktif ? '- ' + escapeHtml(window.__ekskulAktif) : ''}</span></h2>
           <div class="flex gap-2 w-full sm:w-auto p-1 bg-black/40 rounded-lg flex-wrap justify-center">
             ${tabBtn('info', 'Info Ekskul', 'fa-circle-info', true)}
+            ${tabBtn('persuratan', 'Persuratan & Proposal', 'fa-file-signature', bolehKelolaPenuh)}
             ${tabBtn('profil', 'Profil & Anggota', 'fa-users', true)}
-            ${tabBtn('agenda', 'Agenda Kegiatan', 'fa-calendar-check', true)}
-            ${tabBtn('dispensasi', 'Surat Dispensasi', 'fa-file-signature', bolehKelolaPenuh)}
-            ${tabBtn('kasumum', 'Kas Umum', 'fa-wallet', true)}
-            ${tabBtn('kasanggota', 'Kas Anggota', 'fa-hand-holding-dollar', true)}
+            ${tabBtn('keuangan', 'Keuangan & Kas', 'fa-wallet', true)}
+            ${tabBtn('jurnal', 'Jurnal & Program Kerja', 'fa-calendar-check', true)}
+            ${tabBtn('arsip', 'Arsip & Penilaian', 'fa-award', true)}
             ${bolehKelolaPenuh ? `<button onclick="bukaAbsensiEkskul()" class="px-3 sm:px-4 py-1.5 rounded text-xs font-bold bg-blue-600 hover:bg-blue-700 text-white transition" title="Absensi Ekskul terpilih"><i class="fa-solid fa-clipboard-user mr-1"></i> Hadir Tatap Muka</button>` : ''}
             ${bolehKelolaPenuh ? `<button onclick="bukaNilaiEkskul()" class="px-3 sm:px-4 py-1.5 rounded text-xs font-bold bg-indigo-600 hover:bg-indigo-700 text-white transition"><i class="fa-solid fa-star mr-1"></i> Nilai</button>` : ''}
           </div>
@@ -13214,8 +13407,8 @@ async function renderEkstrakurikulerModule(container) {
 }
 
 function switchTabEkskul(tab) {
-  // Anggota murid (read-only, req 1c) tidak boleh masuk tab Dispensasi
-  if (tab === 'dispensasi' && hakAksesEkskulUntuk(window.__ekskulAktif) === 'anggota') tab = 'info';
+  // Anggota murid (read-only) tidak boleh masuk tab Persuratan & Proposal
+  if (tab === 'persuratan' && hakAksesEkskulUntuk(window.__ekskulAktif) === 'anggota') tab = 'info';
   currentTabEkskul = tab;
   renderEkstrakurikulerModule(document.getElementById('main-content'));
 }
@@ -13229,11 +13422,8 @@ function pilihEkskulModul(ekskul) {
 }
 async function renderTabEkskul() {
   if (currentTabEkskul === 'info') return renderTabInfoEkskul();
-  if (currentTabEkskul === 'agenda') return renderTabAgendaEkskul();
-  if (currentTabEkskul === 'dispensasi') return renderTabDispensasiEkskul();
-  if (currentTabEkskul === 'kasumum') return renderTabKasUmumEkskul();
-  if (currentTabEkskul === 'kasanggota') return renderTabKasAnggotaEkskul();
-  return renderTabProfilEkskul();
+  if (['persuratan', 'profil', 'keuangan', 'jurnal', 'arsip'].includes(currentTabEkskul)) return renderGrupEkskul(currentTabEkskul);
+  return renderTabInfoEkskul();
 }
 
 /** Buka Input Nilai langsung pada kategori Ekstrakurikuler + ekskul terpilih. [REQ 1c] pengurus boleh. */
@@ -13367,9 +13557,10 @@ async function renderTabInfoEkskul() {
       <div class="bg-white/5 border border-white/10 rounded-xl p-4 text-sm">
         <div class="flex items-start justify-between gap-3 flex-wrap">
           <div class="min-w-0 flex-1">
-            <div class="font-bold text-white text-base mb-1"><i class="fa-solid fa-medal text-yellow-400"></i> ${escapeHtml(aktif || 'Belum ada ekskul')}</div>
+            <div class="font-bold text-white text-base mb-1"><i class="fa-solid fa-medal text-yellow-400"></i> ${escapeHtml(aktif || 'Belum ada ekskul')} ${row.drive_url ? `<a href="${escJs(row.drive_url)}" target="_blank" class="text-emerald-400 hover:text-emerald-300 ml-1" title="Buka Folder Google Drive"><i class="fa-brands fa-google-drive"></i></a>` : ''}</div>
             <p class="text-xs text-slate-300 mb-2">${escapeHtml(row.deskripsi || 'Belum ada deskripsi.')}</p>
             <p class="text-xs"><span class="text-slate-400 font-bold">Pembina:</span><span class="align-middle"> ${htmlPembinaEkskul(row, guruRows, aktif)}</span></p>
+            ${(Array.isArray(row.pelatih) && row.pelatih.length) ? `<p class="text-xs mt-1"><span class="text-slate-400 font-bold">Pelatih:</span> ${row.pelatih.map(p => `${escapeHtml(p.nama || '-')}${p.spesialisasi ? ` (${escapeHtml(p.spesialisasi)})` : ''}${p.no_telepon ? ` — ${linkWA(p.no_telepon, 'Assalamualaikum, terkait ekstrakurikuler ' + aktif + '.')}` : ''}`).join('<br>')}</p>` : ''}
           </div>
           <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none shrink-0">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
         </div>
@@ -13379,6 +13570,7 @@ async function renderTabInfoEkskul() {
         <button onclick="exportInfoEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
         <button onclick="exportInfoEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
       </div>
+      <div id="info-pengumuman-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengumuman...</div>
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
         <div id="info-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
         <div id="info-pengurus-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengurus...</div>
@@ -13386,8 +13578,30 @@ async function renderTabInfoEkskul() {
       </div>
     </div>`;
 
+  // Widget Pengumuman & Berita terbaru (bolehKelola: bisa kelola cepat dari sini juga)
+  (async () => {
+    const boxP = document.getElementById('info-pengumuman-ekskul');
+    if (!boxP) return;
+    const akses = hakAksesEkskulUntuk(aktif);
+    const bolehKelola = akses === 'admin' || akses === 'guru' || akses === 'pengurus';
+    const { data: peng, error: errP } = await supaClient.from('pengumuman_ekskul').select('*').eq('ekskul', aktif).order('created_at', { ascending: false }).limit(5);
+    if (!document.getElementById('info-pengumuman-ekskul')) return;
+    document.getElementById('info-pengumuman-ekskul').outerHTML = `<div id="info-pengumuman-ekskul" class="bg-white/5 border border-white/10 rounded-xl p-3">
+      <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+        <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-bullhorn"></i> Pengumuman & Berita</h3>
+        ${bolehKelola ? `<button onclick="formSubEkskulCrud('pengumuman', true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 rounded text-[10px] font-bold transition"><i class="fa-solid fa-plus"></i> Tambah</button>` : ''}
+      </div>
+      ${errP || !(peng || []).length ? `<p class="italic text-slate-400 text-[11px]">${errP ? 'Gagal memuat.' : 'Belum ada pengumuman.'}</p>`
+        : (peng || []).map(p => `<div class="bg-black/20 border border-white/10 rounded px-2 py-1.5 mb-1.5">
+            <div class="flex items-center justify-between"><span class="text-[10px] font-bold text-yellow-200">${escapeHtml(p.judul)}</span><span class="text-[8px] text-slate-500">${escapeHtml(String(p.created_at || '').split('T')[0])}</span></div>
+            <div class="text-[10px] text-slate-300">${escapeHtml(p.isi || '')}</div>
+          </div>`).join('')}
+    </div>`;
+  })();
+
   const anggota = await ambilAnggotaEkskul(aktif);
   const petaJab = petaJabatanAnggota(aktif, anggota);
+
   const subs = await ambilSubEkskul(aktif);
   const subMap = await ambilSubAnggota(aktif);
   const pengurus = urutkanPengurusBakuEkskul(anggota.filter(a => (petaJab[String(a.nis_nip)] || '') || /Ekstra/i.test(a.jabatan || '')), petaJab);
@@ -13513,11 +13727,259 @@ function exportInfoEkskulWA() {
   });
 }
 
-// ---------- TAB 1: PROFIL & ANGGOTA ----------
-let filterSubAnggotaProfil = ''; // Filter Sub-Ekskul aktif pada tab Profil & Anggota
+// ==================== [UPGRADE 2026-10-08] MENU EKSKUL LENGKAP: ENGINE CRUD GENERIK ====================
+/** Catat notifikasi in-app ekskul (Pengumuman/Agenda/Materi/Sertifikat, dsb) via RPC catat_notifikasi_ekskul. */
+async function catatNotifikasiEkskul(ekskul, judul, pesan, untukPeran = ['murid']) {
+  try { await supaClient.rpc('catat_notifikasi_ekskul', { p_ekskul: ekskul, p_judul: judul, p_pesan: pesan, p_untuk_peran: untukPeran }); }
+  catch (e) { console.warn('catatNotifikasiEkskul:', e); }
+}
+
+/** Konfigurasi tabel-tabel sederhana baru menu Ekskul (dipakai renderSubEkskulCrud/formSubEkskulCrud). */
+const KONFIG_SUBEKSKUL = {
+  pengumuman: { tabel: 'pengumuman_ekskul', judul: 'Pengumuman & Berita', icon: 'fa-bullhorn', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'judul', l: 'Judul', req: true },
+      { k: 'isi', l: 'Isi', type: 'textarea' },
+      { k: 'lampiran_url', l: 'Link Lampiran' }
+    ],
+    notif: (d) => ({ judul: 'Pengumuman Baru: ' + d.judul, pesan: d.isi || d.judul }) },
+  materi: { tabel: 'materi_tugas_ekskul', judul: 'Materi & Tugas', icon: 'fa-book-open', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'jenis', l: 'Jenis', type: 'select', opsi: [['materi', 'Materi'], ['tugas', 'Tugas']], def: 'materi' },
+      { k: 'judul', l: 'Judul', req: true },
+      { k: 'deskripsi', l: 'Deskripsi', type: 'textarea' },
+      { k: 'file_url', l: 'Link File' },
+      { k: 'tenggat', l: 'Tenggat', type: 'date' }
+    ],
+    notif: (d) => ({ judul: (d.jenis === 'tugas' ? 'Tugas Baru: ' : 'Materi Baru: ') + d.judul, pesan: d.deskripsi || d.judul }) },
+  sertifikat: { tabel: 'sertifikat_prestasi_ekskul', judul: 'Sertifikat & Prestasi', icon: 'fa-award', urut: 'tanggal', asc: false,
+    kolom: [
+      { k: 'jenis', l: 'Jenis', type: 'select', opsi: [['prestasi', 'Prestasi'], ['sertifikat', 'Sertifikat']], def: 'prestasi' },
+      { k: 'nama', l: 'Nama', req: true },
+      { k: 'judul', l: 'Judul/Kejuaraan', req: true },
+      { k: 'tingkat', l: 'Tingkat' },
+      { k: 'peringkat', l: 'Peringkat' },
+      { k: 'tanggal', l: 'Tanggal', type: 'date' },
+      { k: 'file_url', l: 'Link File' },
+      { k: 'keterangan', l: 'Keterangan', type: 'textarea' }
+    ],
+    notif: (d) => ({ judul: 'Sertifikat/Prestasi Baru: ' + d.judul, pesan: `${d.nama} — ${d.judul}` }) },
+  arsipsurat: { tabel: 'arsip_surat_ekskul', judul: 'Arsip Surat Masuk & Keluar', icon: 'fa-inbox', urut: 'tanggal', asc: false,
+    kolom: [
+      { k: 'arah', l: 'Arah', type: 'select', opsi: [['masuk', 'Surat Masuk'], ['keluar', 'Surat Keluar']], def: 'keluar' },
+      { k: 'nomor_surat', l: 'Nomor Surat' },
+      { k: 'perihal', l: 'Perihal', req: true },
+      { k: 'tanggal', l: 'Tanggal', type: 'date' },
+      { k: 'asal_tujuan', l: 'Asal/Tujuan' },
+      { k: 'isi_ringkas', l: 'Isi Ringkas', type: 'textarea' },
+      { k: 'file_url', l: 'Link File' }
+    ] },
+  proposal: { tabel: 'proposal_kegiatan_ekskul', judul: 'Proposal Kegiatan', icon: 'fa-file-lines', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'judul_kegiatan', l: 'Judul Kegiatan', req: true },
+      { k: 'latar_belakang', l: 'Latar Belakang', type: 'textarea' },
+      { k: 'tujuan', l: 'Tujuan', type: 'textarea' },
+      { k: 'waktu_tempat', l: 'Waktu & Tempat' },
+      { k: 'anggaran', l: 'Anggaran (Rp)', type: 'number' },
+      { k: 'status', l: 'Status', type: 'select', opsi: [['diajukan', 'Diajukan'], ['disetujui', 'Disetujui'], ['ditolak', 'Ditolak'], ['selesai', 'Selesai']], def: 'diajukan' },
+      { k: 'file_url', l: 'Link File' }
+    ] },
+  lpj: { tabel: 'lpj_ekskul', judul: 'Laporan Pertanggungjawaban (LPJ)', icon: 'fa-file-invoice-dollar', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'judul_kegiatan', l: 'Judul Kegiatan', req: true },
+      { k: 'ringkasan_pelaksanaan', l: 'Ringkasan Pelaksanaan', type: 'textarea' },
+      { k: 'realisasi_anggaran', l: 'Realisasi Anggaran (Rp)', type: 'number' },
+      { k: 'file_url', l: 'Link File' }
+    ] },
+  pendaftaran: { tabel: 'pendaftaran_ekskul', judul: 'Formulir & Berkas Pendaftaran', icon: 'fa-user-plus', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'nama', l: 'Nama', req: true },
+      { k: 'nis_nip', l: 'NIS' },
+      { k: 'kelas', l: 'Kelas' },
+      { k: 'no_telepon', l: 'No. Telepon' },
+      { k: 'alasan', l: 'Alasan Bergabung', type: 'textarea' },
+      { k: 'berkas_url', l: 'Link Berkas' },
+      { k: 'status', l: 'Status', type: 'select', opsi: [['menunggu', 'Menunggu'], ['diterima', 'Diterima'], ['ditolak', 'Ditolak']], def: 'menunggu' },
+      { k: 'catatan', l: 'Catatan' }
+    ] },
+  proker: { tabel: 'proker_ekskul', judul: 'Program Kerja', icon: 'fa-list-check', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'ta', l: 'Tahun Ajaran' },
+      { k: 'semester', l: 'Semester' },
+      { k: 'program', l: 'Program', req: true },
+      { k: 'tujuan', l: 'Tujuan', type: 'textarea' },
+      { k: 'sasaran', l: 'Sasaran' },
+      { k: 'jadwal_rencana', l: 'Jadwal Rencana' },
+      { k: 'penanggung_jawab', l: 'Penanggung Jawab' },
+      { k: 'status', l: 'Status', type: 'select', opsi: [['rencana', 'Rencana'], ['berjalan', 'Berjalan'], ['selesai', 'Selesai'], ['batal', 'Batal']], def: 'rencana' }
+    ] },
+  jurnal: { tabel: 'jurnal_ekskul', judul: 'Jurnal Kegiatan (Logbook)', icon: 'fa-book', urut: 'tanggal', asc: false,
+    kolom: [
+      { k: 'tanggal', l: 'Tanggal', type: 'date' },
+      { k: 'kegiatan', l: 'Kegiatan', req: true },
+      { k: 'catatan', l: 'Catatan', type: 'textarea' },
+      { k: 'jumlah_hadir', l: 'Jumlah Hadir', type: 'number' }
+    ] },
+  inventaris: { tabel: 'inventaris_ekskul', judul: 'Inventaris Barang', icon: 'fa-boxes-stacked', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'nama_barang', l: 'Nama Barang', req: true },
+      { k: 'kode', l: 'Kode' },
+      { k: 'jumlah', l: 'Jumlah', type: 'number', def: 1 },
+      { k: 'kondisi', l: 'Kondisi', type: 'select', opsi: [['Baik', 'Baik'], ['Rusak Ringan', 'Rusak Ringan'], ['Rusak Berat', 'Rusak Berat'], ['Hilang', 'Hilang']], def: 'Baik' },
+      { k: 'lokasi', l: 'Lokasi' },
+      { k: 'tahun_perolehan', l: 'Tahun Perolehan', type: 'number' },
+      { k: 'keterangan', l: 'Keterangan' }
+    ] },
+  peminjaman: { tabel: 'peminjaman_alat_ekskul', judul: 'Buku Peminjaman Alat', icon: 'fa-right-left', urut: 'created_at', asc: false,
+    kolom: [
+      { k: 'nama_barang_snapshot', l: 'Nama Barang', req: true },
+      { k: 'peminjam', l: 'Peminjam', req: true },
+      { k: 'jumlah', l: 'Jumlah', type: 'number', def: 1 },
+      { k: 'tanggal_pinjam', l: 'Tgl Pinjam', type: 'date' },
+      { k: 'tanggal_kembali', l: 'Tgl Kembali', type: 'date' },
+      { k: 'kondisi_kembali', l: 'Kondisi Kembali' },
+      { k: 'status', l: 'Status', type: 'select', opsi: [['dipinjam', 'Dipinjam'], ['kembali', 'Kembali']], def: 'dipinjam' },
+      { k: 'catatan', l: 'Catatan' }
+    ] }
+};
+
+/** Render tab (grup baru) berupa daftar sub-fitur CRUD generik untuk satu key di KONFIG_SUBEKSKUL. */
+async function renderSubEkskulCrud(key) {
+  const cfg = KONFIG_SUBEKSKUL[key];
+  const box = document.getElementById('content-ekskul-sub');
+  if (!box || !cfg) return;
+  const aktif = window.__ekskulAktif;
+  const akses = hakAksesEkskulUntuk(aktif);
+  const bolehKelola = akses === 'admin' || akses === 'guru' || akses === 'pengurus';
+  box.innerHTML = `<div class="p-3 text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat ${escapeHtml(cfg.judul)}...</div>`;
+  const { data: rows, error } = await supaClient.from(cfg.tabel).select('*').eq('ekskul', aktif).order(cfg.urut, { ascending: cfg.asc, nullsFirst: false });
+  if (!document.getElementById('content-ekskul-sub')) return;
+  const list = rows || [];
+  const fmtVal = (r, kol) => {
+    let v = r[kol.k];
+    if (kol.type === 'select' && kol.opsi) { const o = kol.opsi.find(x => x[0] === v); return o ? o[1] : (v || '-'); }
+    if (kol.k === 'anggaran' || kol.k === 'realisasi_anggaran') return formatRupiah(v || 0);
+    return (v === null || v === undefined || v === '') ? '-' : String(v);
+  };
+  const kolTampil = cfg.kolom.filter(k => k.type !== 'textarea').slice(0, 5);
+  document.getElementById('content-ekskul-sub').innerHTML = `
+    <div class="p-3 space-y-2">
+      <div class="flex items-center justify-between gap-2 flex-wrap">
+        <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid ${cfg.icon}"></i> ${escapeHtml(cfg.judul)} (${list.length})</h3>
+        ${bolehKelola ? `<button onclick="formSubEkskulCrud('${key}', true)" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition"><i class="fa-solid fa-plus"></i> Tambah</button>` : ''}
+      </div>
+      ${error ? `<p class="text-[11px] text-red-400 italic">Gagal memuat: ${escapeHtml(error.message)}</p>`
+        : (!list.length ? `<p class="text-[11px] text-slate-400 italic p-2">Belum ada data.</p>`
+        : `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
+          <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${kolTampil.map(k => `<th class="p-2">${escapeHtml(k.l)}</th>`).join('')}<th class="p-2">Aksi</th></tr></thead>
+          <tbody>${list.map(r => `<tr class="border-b border-white/5 hover:bg-white/5">
+            ${kolTampil.map(k => `<td class="p-2 border-l border-white/10">${escapeHtml(fmtVal(r, k))}</td>`).join('')}
+            <td class="p-2 border-l border-white/10"><div class="flex gap-1">
+              ${bolehKelola ? `<button onclick='formSubEkskulCrud("${key}", false, ${JSON.stringify(r).replace(/'/g, "&#39;")})' class="w-6 h-6 bg-blue-600/20 hover:bg-blue-600 text-blue-400 rounded transition" title="Edit"><i class="fa-solid fa-pen text-[9px]"></i></button>` : ''}
+              ${bolehKelola ? `<button onclick="hapusSubEkskulCrud('${key}', '${escJs(r.id)}')" class="w-6 h-6 bg-red-600/20 hover:bg-red-600 text-red-400 rounded transition" title="Hapus"><i class="fa-solid fa-trash text-[9px]"></i></button>` : ''}
+            </div></td>
+          </tr>`).join('')}</tbody></table></div>`)}
+    </div>`;
+}
+
+/** Form tambah/edit untuk satu entri KONFIG_SUBEKSKUL (Swal). */
+async function formSubEkskulCrud(key, isNew, data = {}) {
+  const cfg = KONFIG_SUBEKSKUL[key];
+  const aktif = window.__ekskulAktif;
+  if (!ekskulAksesTermasukUntuk(aktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  const inputHtml = cfg.kolom.map(k => {
+    const val = data[k.k] !== undefined && data[k.k] !== null ? data[k.k] : (k.def !== undefined ? k.def : '');
+    const id = `sfc_${k.k}`;
+    let field = '';
+    if (k.type === 'textarea') field = `<textarea id="${id}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none" rows="2">${escapeHtml(String(val))}</textarea>`;
+    else if (k.type === 'select') field = `<select id="${id}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">${k.opsi.map(o => `<option value="${escJs(o[0])}" ${String(val) === o[0] ? 'selected' : ''}>${escapeHtml(o[1])}</option>`).join('')}</select>`;
+    else field = `<input type="${k.type || 'text'}" id="${id}" value="${escJs(String(val ?? ''))}" style="${k.type === 'date' ? 'color-scheme: dark;' : ''}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">`;
+    return `<label class="font-bold text-yellow-300 block mt-2 text-[11px]">${escapeHtml(k.l)}${k.req ? ' *' : ''}</label>${field}`;
+  }).join('');
+  const res = await Swal.fire({
+    title: `${isNew ? 'Tambah' : 'Edit'} ${cfg.judul}`,
+    html: `<div class="text-left text-[11px] text-slate-300 mt-2">${inputHtml}</div>`,
+    background: '#1e293b', color: '#fff', showCancelButton: true, cancelButtonText: 'Batal', confirmButtonText: 'Simpan',
+    preConfirm: () => {
+      const out = {};
+      for (const k of cfg.kolom) {
+        const el = document.getElementById(`sfc_${k.k}`);
+        let v = el ? el.value : '';
+        if (k.type === 'number') v = v === '' ? null : Number(v);
+        if (k.type === 'date' && !v) v = null;
+        out[k.k] = v;
+      }
+      return out;
+    }
+  });
+  if (!res.isConfirmed) return;
+  const payload = { ...res.value, ekskul: aktif };
+  for (const k of cfg.kolom) { if (k.req && !String(payload[k.k] || '').trim()) return showToast('error', `${k.l} wajib diisi.`); }
+  try {
+    const user = (currentUser || {}).user || {};
+    const namaPengguna = user["Nama Lengkap"] || user["nama_lengkap"] || '';
+    if (cfg.tabel === 'pengumuman_ekskul' || cfg.tabel === 'materi_tugas_ekskul' || cfg.tabel === 'sertifikat_prestasi_ekskul') payload.penulis = namaPengguna;
+    if (cfg.tabel === 'arsip_surat_ekskul' || cfg.tabel === 'proposal_kegiatan_ekskul' || cfg.tabel === 'lpj_ekskul') payload.dibuat_oleh = namaPengguna;
+    const { error } = isNew ? await supaClient.from(cfg.tabel).insert(payload) : await supaClient.from(cfg.tabel).update(payload).eq('id', data.id);
+    if (error) throw error;
+    showToast('success', 'Data tersimpan.');
+    if (isNew && cfg.notif) { const n = cfg.notif(payload); await catatNotifikasiEkskul(aktif, n.judul, n.pesan); }
+    renderTabEkskul();
+  } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
+}
+
+/** Hapus satu entri KONFIG_SUBEKSKUL. */
+async function hapusSubEkskulCrud(key, id) {
+  const cfg = KONFIG_SUBEKSKUL[key];
+  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  const konf = await Swal.fire({ title: 'Hapus data ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
+  if (!konf.isConfirmed) return;
+  const { error } = await supaClient.from(cfg.tabel).delete().eq('id', id);
+  if (error) return Swal.fire({ icon: 'error', title: 'Gagal', text: error.message, background: '#1e293b', color: '#fff' });
+  showToast('success', 'Data terhapus.');
+  renderTabEkskul();
+}
+
+/** Ambil elemen kontainer aktif untuk konten tab Ekskul: 'content-ekskul-sub' bila ada (dalam grup baru
+ *  dengan sub-tab bar), fallback ke 'content-ekskul' (tab lama tanpa sub-tab, mis. Info Ekskul). */
+function boxEkskul() { return document.getElementById('content-ekskul-sub') || document.getElementById('content-ekskul'); }
+
+// ---------- SUB-TAB NAVIGASI GRUP BARU (Persuratan, Profil, Keuangan, Jurnal, Arsip) ----------
+let subTabEkskul = { persuratan: 'dispensasi', profil: 'profil', keuangan: 'kasumum', jurnal: 'agenda', arsip: 'sertifikat' };
+const GRUP_SUBTAB_EKSKUL = {
+  persuratan: [['dispensasi', 'Surat Dispensasi', 'fa-file-signature'], ['arsipsurat', 'Arsip Surat', 'fa-inbox'], ['proposal', 'Proposal Kegiatan', 'fa-file-lines'], ['lpj', 'LPJ', 'fa-file-invoice-dollar']],
+  profil: [['profil', 'Anggota', 'fa-users'], ['pendaftaran', 'Pendaftaran Baru', 'fa-user-plus']],
+  keuangan: [['kasumum', 'Kas Umum', 'fa-wallet'], ['kasanggota', 'Kas Anggota', 'fa-hand-holding-dollar'], ['inventaris', 'Inventaris', 'fa-boxes-stacked'], ['peminjaman', 'Peminjaman Alat', 'fa-right-left']],
+  jurnal: [['agenda', 'Agenda Kegiatan', 'fa-calendar-check'], ['proker', 'Program Kerja', 'fa-list-check'], ['jurnalharian', 'Jurnal/Logbook', 'fa-book'], ['materi', 'Materi & Tugas', 'fa-book-open']],
+  arsip: [['sertifikat', 'Sertifikat & Prestasi', 'fa-award']]
+};
+function switchSubTabEkskul(grup, sub) {
+  subTabEkskul[grup] = sub;
+  renderTabEkskul();
+}
+function htmlSubTabBarEkskul(grup) {
+  const opsi = GRUP_SUBTAB_EKSKUL[grup] || [];
+  if (opsi.length <= 1) return '';
+  const aktifSub = subTabEkskul[grup];
+  return `<div class="flex gap-1.5 flex-wrap px-3 pt-3">${opsi.map(([id, label, icon]) => `<button onclick="switchSubTabEkskul('${grup}','${id}')" class="px-2.5 py-1 rounded text-[10px] font-bold transition ${aktifSub === id ? 'bg-yellow-600 text-white' : 'bg-white/5 text-slate-400 hover:text-white'}"><i class="fa-solid ${icon} mr-1"></i>${label}</button>`).join('')}</div>`;
+}
+
+/** Render satu grup tab baru: sub-tab bar + konten (delegasi ke render lama atau engine generik). */
+async function renderGrupEkskul(grup) {
+  const box = document.getElementById('content-ekskul');
+  box.innerHTML = `${htmlSubTabBarEkskul(grup)}<div id="content-ekskul-sub"></div>`;
+  const sub = subTabEkskul[grup];
+  if (sub === 'dispensasi') return renderTabDispensasiEkskul();
+  if (sub === 'profil') return renderTabProfilEkskul();
+  if (sub === 'kasumum') return renderTabKasUmumEkskul();
+  if (sub === 'kasanggota') return renderTabKasAnggotaEkskul();
+  if (sub === 'agenda') return renderTabAgendaEkskul();
+  if (sub === 'jurnalharian') return renderSubEkskulCrud('jurnal');
+  return renderSubEkskulCrud(sub);
+}
 
 async function renderTabProfilEkskul() {
-  const box = document.getElementById('content-ekskul');
+  const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
   const aktif = window.__ekskulAktif;
   const akses = hakAksesEkskulUntuk(aktif);
@@ -14542,7 +15004,7 @@ function tandaiDuplikatSub() {
 
 // ---------- TAB 2: AGENDA KEGIATAN ----------
 async function renderTabAgendaEkskul() {
-  const box = document.getElementById('content-ekskul');
+  const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
   const aktif = window.__ekskulAktif;
   const akses = hakAksesEkskulUntuk(aktif);
@@ -14786,7 +15248,7 @@ async function shareAgendaEkskulWA() {
 // ==================== [REQ 1-13] SURAT DISPENSASI EKSTRAKURIKULER ====================
 async function renderTabDispensasiEkskul() {
   if (hakAksesEkskulUntuk(window.__ekskulAktif) === 'anggota') return renderTabInfoEkskul();
-  const box = document.getElementById('content-ekskul');
+  const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
   const aktif = window.__ekskulAktif;
   const akses = hakAksesEkskulUntuk(aktif);
@@ -14970,7 +15432,7 @@ async function ambilKategoriKas() {
 }
 
 async function renderTabKasUmumEkskul() {
-  const box = document.getElementById('content-ekskul');
+  const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
   const aktif = window.__ekskulAktif;
   const aksesKas = hakAksesKasUntuk(aktif);
@@ -15104,10 +15566,13 @@ async function formKasUmum(isNew, data = {}) {
       <label class="font-bold text-yellow-300 block mt-2">Keterangan</label>
       <input id="kum_ket" value="${escJs(data.keterangan || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">Nama Siswa</label>
-      <select id="kum_siswa_pilih" onchange="document.getElementById('kum_siswa').value = this.value ? this.options[this.selectedIndex].text : document.getElementById('kum_siswa').value;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
-        <option value="">-- Pilih anggota (opsional) --</option>
-        ${anggota.map(a => `<option value="${escJs(a.nis_nip)}" ${data.nama_siswa === a.nama_lengkap ? 'selected' : ''}>${escapeHtml(a.nama_lengkap)}</option>`).join('')}
-      </select>
+      <div class="flex gap-1 items-center">
+        <select id="kum_siswa_pilih" onchange="document.getElementById('kum_siswa').value = this.value ? this.options[this.selectedIndex].text : document.getElementById('kum_siswa').value;" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
+          <option value="">-- Pilih anggota (opsional) --</option>
+          ${anggota.map(a => `<option value="${escJs(a.nis_nip)}" ${data.nama_siswa === a.nama_lengkap ? 'selected' : ''}>${escapeHtml(a.nama_lengkap)}</option>`).join('')}
+        </select>
+        <button type="button" onclick="scanQRSiswaKasUmum()" class="text-[9px] px-2 py-1.5 rounded bg-sky-600/40 hover:bg-sky-600 text-sky-200 hover:text-white transition" title="Scan QR kartu anggota"><i class="fa-solid fa-qrcode"></i></button>
+      </div>
       <input id="kum_siswa" value="${escJs(data.nama_siswa || '')}" placeholder="atau ketik nama siswa manual" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none">
       <label class="font-bold text-yellow-300 block mt-2">No. Bukti</label>
       <input id="kum_nobukti" value="${escJs(data.no_bukti || '')}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none">
@@ -15168,6 +15633,40 @@ async function formKasUmum(isNew, data = {}) {
     } catch (e) { Swal.fire({ icon: 'error', title: 'Gagal', text: e.message || '', background: '#1e293b', color: '#fff' }); }
   });
 }
+/** Scan QR kartu anggota untuk mengisi otomatis field "Nama Siswa" pada form Kas Umum. */
+function scanQRSiswaKasUmum() {
+  if (typeof Html5Qrcode === 'undefined') return showToast('error', 'Library pemindai QR tidak tersedia.');
+  Swal.fire({
+    title: '<i class="fa-solid fa-qrcode"></i> Scan QR Kartu Anggota',
+    html: `<div id="kum_qr_reader" style="width:100%"></div><p class="text-[10px] text-slate-400 mt-2">Arahkan kamera ke QR pada kartu anggota.</p>`,
+    background: '#1e293b', color: '#fff', showConfirmButton: false, showCancelButton: true, cancelButtonText: 'Tutup',
+    didOpen: () => {
+      const qr = new Html5Qrcode('kum_qr_reader');
+      window.__kumQrInstance = qr;
+      qr.start(
+        { facingMode: 'environment' }, { fps: 10, qrbox: 220 },
+        (decodedText) => {
+          const kode = String(decodedText || '').trim();
+          const sel = document.getElementById('kum_siswa_pilih');
+          const opt = sel ? [...sel.options].find(o => o.value === kode) : null;
+          if (opt) {
+            sel.value = kode;
+            document.getElementById('kum_siswa').value = opt.text;
+            showToast('success', `Siswa ditemukan: ${opt.text}`);
+          } else {
+            showToast('error', `NIS "${kode}" tidak ditemukan di daftar anggota ekskul ini.`);
+          }
+        },
+        () => {}
+      ).catch(() => showToast('error', 'Gagal mengakses kamera.'));
+    },
+    willClose: () => {
+      const qr = window.__kumQrInstance;
+      if (qr) { qr.stop().catch(() => {}).finally(() => qr.clear && qr.clear()); window.__kumQrInstance = null; }
+    }
+  });
+}
+
 async function hapusKasUmum(id) {
   if (hakAksesKasUntuk(window.__ekskulAktif) !== 'kelola') return showToast('error', 'Akses khusus pembina/bendahara.');
   const konf = await Swal.fire({ title: 'Hapus transaksi ini?', icon: 'warning', showCancelButton: true, confirmButtonColor: '#ef4444', confirmButtonText: 'Ya, Hapus', cancelButtonText: 'Batal', background: '#1e293b', color: '#fff' });
@@ -15470,7 +15969,7 @@ let filterTunggakan = { mode: 'semua', bulan: new Date().getMonth() + 1, tahun: 
 const LABEL_MINGGU = ['M1', 'M2', 'M3', 'M4'];
 
 async function renderTabKasAnggotaEkskul() {
-  const box = document.getElementById('content-ekskul');
+  const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
   const aktif = window.__ekskulAktif;
   const aksesKas = hakAksesKasUntuk(aktif);
@@ -15585,7 +16084,7 @@ async function muatKasAnggota() {
   // [REQ 2] Filter Sub-Ekstrakurikuler
   const subMap = await ambilSubAnggota(aktif);
   if (filterKasAnggota.sub) {
-    rows = rows.filter(r => (subMap[String(r.nis_nip)] || '') === filterKasAnggota.sub);
+    rows = rows.filter(r => (subMap[String(r.nis_nip)] || []).includes(filterKasAnggota.sub));
   }
 
   const byNis = {};
@@ -15924,6 +16423,8 @@ async function formKasAnggota() {
     html: `<div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
       <label class="font-bold text-yellow-300">Anggota * <span class="text-slate-500 font-normal">(centang satu atau lebih)</span></label>
       <div class="flex gap-1 mb-1 flex-wrap items-center">
+        <input type="text" id="kia_cari" placeholder="Cari nama/NIS..." oninput="cariAnggotaIuranForm(this.value)" class="text-[10px] bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none flex-1 min-w-[110px]">
+        <button type="button" onclick="scanQRAnggotaIuranForm()" class="text-[9px] px-2 py-1 rounded bg-sky-600/40 hover:bg-sky-600 text-sky-200 hover:text-white transition" title="Scan QR kartu anggota"><i class="fa-solid fa-qrcode"></i> Scan QR</button>
         <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=true)" class="text-[9px] px-2 py-0.5 rounded bg-emerald-600/30 hover:bg-emerald-600 text-emerald-200 hover:text-white transition">Ceklis Semua</button>
         <button type="button" onclick="document.querySelectorAll('.kia-chk').forEach(c=>c.checked=false)" class="text-[9px] px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600 text-red-200 hover:text-white transition">Hapus Ceklis</button>
         <button type="button" onclick="urutkanAnggotaIuranForm(this)" data-arah="asc" class="text-[9px] px-2 py-0.5 rounded bg-slate-600/40 hover:bg-slate-600 text-slate-200 hover:text-white transition"><i class="fa-solid fa-arrow-down-a-z"></i> A-Z / Z-A</button>
@@ -16026,6 +16527,51 @@ async function formKasAnggota() {
           : (e.message || ''),
         background: '#1e293b', color: '#fff'
       });
+    }
+  });
+}
+
+/** Filter live daftar anggota di form Buat Iuran Anggota berdasarkan nama/NIS. */
+function cariAnggotaIuranForm(kata) {
+  const wrap = document.getElementById('kia_daftar');
+  if (!wrap) return;
+  const k = String(kata || '').trim().toLowerCase();
+  wrap.querySelectorAll('.kia-item').forEach(el => {
+    const nama = String(el.dataset.nama || '').toLowerCase();
+    const nis = String(el.querySelector('.kia-chk')?.value || '').toLowerCase();
+    el.style.display = (!k || nama.includes(k) || nis.includes(k)) ? '' : 'none';
+  });
+}
+
+/** Scan QR kartu anggota (berisi NIS/NISN) via kamera, lalu otomatis ceklis anggota tsb di form iuran. */
+function scanQRAnggotaIuranForm() {
+  if (typeof Html5Qrcode === 'undefined') return showToast('error', 'Library pemindai QR tidak tersedia.');
+  Swal.fire({
+    title: '<i class="fa-solid fa-qrcode"></i> Scan QR Kartu Anggota',
+    html: `<div id="kia_qr_reader" style="width:100%"></div><p class="text-[10px] text-slate-400 mt-2">Arahkan kamera ke QR pada kartu anggota.</p>`,
+    background: '#1e293b', color: '#fff', showConfirmButton: false, showCancelButton: true, cancelButtonText: 'Tutup',
+    didOpen: () => {
+      const el = document.getElementById('kia_qr_reader');
+      const qr = new Html5Qrcode('kia_qr_reader');
+      window.__kiaQrInstance = qr;
+      qr.start(
+        { facingMode: 'environment' }, { fps: 10, qrbox: 220 },
+        (decodedText) => {
+          const kode = String(decodedText || '').trim();
+          const chk = [...document.querySelectorAll('.kia-chk')].find(c => c.value === kode);
+          if (chk) {
+            chk.checked = true;
+            showToast('success', `Anggota ditemukan & dicentang: ${kode}`);
+          } else {
+            showToast('error', `NIS "${kode}" tidak ditemukan di daftar anggota ekskul ini.`);
+          }
+        },
+        () => {}
+      ).catch(() => showToast('error', 'Gagal mengakses kamera.'));
+    },
+    willClose: () => {
+      const qr = window.__kiaQrInstance;
+      if (qr) { qr.stop().catch(() => {}).finally(() => qr.clear && qr.clear()); window.__kiaQrInstance = null; }
     }
   });
 }
