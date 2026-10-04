@@ -1163,9 +1163,23 @@ async function bukaPengaturanServer() {
 }
 window.bukaPengaturanServer = bukaPengaturanServer;
 
-function logout() {
-  try { supaClient.auth.signOut(); } catch (e) { console.warn('signOut:', e); }
+async function logout() {
+  // 1) Hapus sesi aplikasi SISIP SINKRON — pastikan getCurrentUser() tidak menemukan user saat reload.
   clearSession();
+  try {
+    // 2) Cabut sesi Auth Supabase (revoke token di server) + hapus sesi lokalnya.
+    //    Diberi batas waktu 1,5 detik agar logout tidak menggantung bila jaringan lambat.
+    await Promise.race([
+      supaClient.auth.signOut().catch(e => console.warn('signOut:', e)),
+      new Promise(r => setTimeout(r, 1500))
+    ]);
+  } catch (e) { console.warn('signOut:', e); }
+  try {
+    // 3) Jaminan tambahan: hapus langsung key sesi Auth Supabase dari localStorage
+    //    (key unik proyek, lihat initSupaClient di utils.js) sehingga cekSesiOAuth()
+    //    di menu login TIDAK menemukan sesi OAuth tersisa → tidak auto-login setelah logout.
+    localStorage.removeItem('sisip-supabase-auth-token');
+  } catch (e) { /* abaikan */ }
   location.reload();
 }
 
@@ -2417,11 +2431,11 @@ function pastikanAgendaHariEkskul(ekskul) {
 /** [REQ 1/2] Tanggal (1-31) SELURUH BULAN berjalan yang jatuh pada hari jadwal pelajaran/ekskul
  *  mapel/ekskul terpilih (mis. jadwal Senin → 7,17,21,28). Set kosong (mapel/ekskul belum
  *  terhubung ke jadwal manapun) → kembalikan seluruh tanggal bulan (fallback). */
-function tanggalJadwalBulanIniAbsen() {
-  const idxBulan = arrBulan.indexOf(currentBulan);
+function tanggalJadwalBulanIniAbsen(idxParam = -1, tahunParam = null) {
+  const idxBulan = idxParam >= 0 ? idxParam : arrBulan.indexOf(currentBulan);
   if (idxBulan < 0) return [];
   const partsTahun = String(currentTahun || '').split('/');
-  const tahunAktual = (idxBulan >= 6) ? parseInt(partsTahun[0], 10) : (parseInt(partsTahun[1], 10) || parseInt(partsTahun[0], 10));
+  const tahunAktual = tahunParam != null ? Number(tahunParam) : ((idxBulan >= 6) ? parseInt(partsTahun[0], 10) : (parseInt(partsTahun[1], 10) || parseInt(partsTahun[0], 10)));
   const hariDalamBulan = new Date(tahunAktual, idxBulan + 1, 0).getDate();
   const hariSet = hariJadwalMapelAbsen();
   if (!hariSet || hariSet.size === 0) return Array.from({length: hariDalamBulan}, (_, i) => i + 1);
@@ -3036,19 +3050,24 @@ window.popupEditKeterangan = function(nis, namaSiswa) {
   }
 };
 
-function generateHTMLReport() {
+function generateHTMLReport(filterNis = null) {
   const mapelRaw = document.getElementById('select-mapel').value || "", namaMapel = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : (mapelRaw || "-"), kelas = document.getElementById('select-kelas').value || "Semua Kelas", smt = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
   // FIX HARD-CODED /21: pembagi % laporan cetak kini hari efektif dinamis, disaring
   // hari jadwal KBM aktif mapel/ekskul terpilih (sama dengan tampilan tabel absen).
   const hariEfektifReport = hitungHariEfektifMapel();
   const pembagiPersen = hariEfektifReport > 0 ? hariEfektifReport : 1;
-  let theadStr = `<tr><th rowspan="2" style="border:1px solid #000; padding:4px;">No</th><th rowspan="2" style="border:1px solid #000; padding:4px;">NISN</th><th rowspan="2" style="border:1px solid #000; padding:4px;">Nama Siswa</th><th rowspan="2" style="border:1px solid #000; padding:4px;">L/P</th><th colspan="31" style="border:1px solid #000; padding:4px;">Tanggal</th><th colspan="4" style="border:1px solid #000; padding:4px;">Jumlah</th><th rowspan="2" style="border:1px solid #000; padding:4px;">Total</th><th rowspan="2" style="border:1px solid #000; padding:4px;">%</th></tr><tr>`;
-  for(let i=1; i<=31; i++) { theadStr += `<th style="border:1px solid #000; padding:2px; font-size:9px; width:15px; text-align:center;">${i}</th>`; }
+  if (mapelRaw.startsWith('Ekskul|') && namaMapel && namaMapel !== '-') pastikanAgendaHariEkskul(namaMapel); // hangatkan cache hari agenda ekskul (async; umumnya sudah terisi dari tampilan tabel)
+  // [FIX] kolom tanggal export mengikuti hari jadwal mapel/ekskul terpilih (parity dengan
+  // opsi tampilan "Mata Pelajaran"; mapel tanpa jadwal → seluruh tanggal bulan via fallback).
+  const daftarTanggalLap = tanggalJadwalBulanIniAbsen();
+  let theadStr = `<tr><th rowspan="2" style="border:1px solid #000; padding:4px;">No</th><th rowspan="2" style="border:1px solid #000; padding:4px;">NISN</th><th rowspan="2" style="border:1px solid #000; padding:4px;">Nama Siswa</th><th rowspan="2" style="border:1px solid #000; padding:4px;">L/P</th><th colspan="${daftarTanggalLap.length}" style="border:1px solid #000; padding:4px;">Tanggal</th><th colspan="4" style="border:1px solid #000; padding:4px;">Jumlah</th><th rowspan="2" style="border:1px solid #000; padding:4px;">Total</th><th rowspan="2" style="border:1px solid #000; padding:4px;">%</th></tr><tr>`;
+  for(const i of daftarTanggalLap) { theadStr += `<th style="border:1px solid #000; padding:2px; font-size:9px; width:15px; text-align:center;">${i}</th>`; }
   theadStr += `<th style="border:1px solid #000; padding:3px; font-size:10px; width:20px;">H</th><th style="border:1px solid #000; padding:3px; font-size:10px; width:20px;">S</th><th style="border:1px solid #000; padding:3px; font-size:10px; width:20px;">I</th><th style="border:1px solid #000; padding:3px; font-size:10px; width:20px;">A</th></tr>`;
 
-  let tbodyStr = listMuridKelas.map(s => {
+  const daftarSiswa = filterNis ? listMuridKelas.filter(m => filterNis.has(String(m.NIS || m.nis))) : listMuridKelas;
+  let tbodyStr = daftarSiswa.map(s => {
     let tdTgl = "";
-    for(let i=1; i<=31; i++) { const dataDb = rawAbsenData.find(a => parseInt(a.Tanggal) === i && a.NIS == s.nis); const val = dataDb ? dataDb.Status : ''; tdTgl += `<td style="border:1px solid #000; text-align:center; font-size:10px; font-weight:bold;">${val}</td>`; }
+    for(const i of daftarTanggalLap) { const dataDb = rawAbsenData.find(a => parseInt(a.Tanggal) === i && a.NIS == s.nis); const val = dataDb ? dataDb.Status : ''; tdTgl += `<td style="border:1px solid #000; text-align:center; font-size:10px; font-weight:bold;">${val}</td>`; }
     const persen = ((s.totalH / pembagiPersen) * 100).toFixed(1), totalSemua = s.totalH + s.totalS + s.totalI + s.totalA;
     return `<tr><td style="border:1px solid #000; text-align:center; padding:3px;">${s.no}</td><td style="border:1px solid #000; text-align:center; padding:3px;">${s.nisn}</td><td style="border:1px solid #000; padding:3px 6px; white-space:nowrap;">${s.nama}</td><td style="border:1px solid #000; text-align:center; padding:3px;">${s.jk}</td>${tdTgl}<td style="border:1px solid #000; text-align:center; padding:3px; font-weight:bold;">${s.totalH}</td><td style="border:1px solid #000; text-align:center; padding:3px; font-weight:bold;">${s.totalS}</td><td style="border:1px solid #000; text-align:center; padding:3px; font-weight:bold;">${s.totalI}</td><td style="border:1px solid #000; text-align:center; padding:3px; font-weight:bold;">${s.totalA}</td><td style="border:1px solid #000; text-align:center; padding:3px; font-weight:bold; background-color:#f0f0f0;">${totalSemua}</td><td style="border:1px solid #000; text-align:center; padding:3px;">${persen}%</td></tr>`;
   }).join('');
@@ -3134,12 +3153,17 @@ async function forceSyncSemuaAbsensi() {
 }
 
 // FUNGSI HELPER HTML REPORT
-function getAbsensiHTMLReport() {
+function getAbsensiHTMLReport(filterNis = null) {
     const mapelRaw = document.getElementById('select-mapel').value || "";
     const isEkskul = mapelRaw.startsWith("Ekskul|");
     const mapelName = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : mapelRaw;
     const className = document.getElementById('select-kelas').value || "Semua Kelas";
     const semester = typeof currentSemesterNilai !== 'undefined' ? currentSemesterNilai : "Ganjil";
+
+    // [FIX] kolom tanggal export mengikuti hari jadwal mapel/ekskul terpilih (parity dengan
+    // opsi tampilan "Mata Pelajaran"; mapel tanpa jadwal → seluruh tanggal bulan via fallback).
+    if (isEkskul && mapelName) pastikanAgendaHariEkskul(mapelName); // hangatkan cache hari agenda ekskul (async; sudah terisi saat user melihat tabel)
+    const daftarTanggalLap = tanggalJadwalBulanIniAbsen();
     
     // Informasi Tanda Tangan
     const namaGuru = currentUser && currentUser.user ? (currentUser.user["Nama Guru"] || "_____________________") : "_____________________";
@@ -3147,16 +3171,18 @@ function getAbsensiHTMLReport() {
     const labelGuru = isEkskul ? "Pembina Ekstrakurikuler" : "Guru Mata Pelajaran";
     
     let thDates = "";
-    for(let i=1; i<=31; i++) thDates += `<th style="border: 1px solid black; padding: 2px; width: 20px;">${i}</th>`;
+    for(const i of daftarTanggalLap) thDates += `<th style="border: 1px solid black; padding: 2px; width: 20px;">${i}</th>`;
     
-    let trBody = listMuridKelas.map((m, idx) => {
+    const daftarSiswa = filterNis ? listMuridKelas.filter(m => filterNis.has(String(m.NIS || m.nis))) : listMuridKelas;
+    let trBody = daftarSiswa.map((m) => {
         let nis = m.NIS || m.nis || "-";
         let nama = m["Nama Lengkap"] || m.nama || m.Nama || "-";
+        const noUrut = listMuridKelas.indexOf(m) + 1;
         
         let tdDates = "";
         let tH = 0, tS = 0, tI = 0, tA = 0, tD = 0;
         
-        for(let i=1; i<=31; i++) {
+        for(const i of daftarTanggalLap) {
             let dt = rawAbsenData.find(a => hariDariTanggal(a.Tanggal) === i && String(a.NIS) === String(nis));
             let sts = dt ? dt.Status : "";
             if(sts==='H') tH++; if(sts==='S') tS++; if(sts==='I') tI++; if(sts==='A') tA++; if(sts==='D') tD++;
@@ -3164,7 +3190,7 @@ function getAbsensiHTMLReport() {
         }
         
         return `<tr>
-            <td style="border: 1px solid black; padding: 4px; text-align: center;">${idx+1}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${noUrut}</td>
             <td style="border: 1px solid black; padding: 4px; text-align: center;">${nis}</td>
             <td style="border: 1px solid black; padding: 4px; text-align: left; white-space: nowrap;">${nama}</td>
             ${tdDates}
@@ -3218,31 +3244,423 @@ function getAbsensiHTMLReport() {
     `;
 }
 
-window.exportAbsensiExcel = function() {
-  const htmlTable = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"></head><body>${getAbsensiHTMLReport()}</body></html>`;
-  const blob = new Blob([htmlTable], { type: 'application/vnd.ms-excel' });
-  const url = URL.createObjectURL(blob), a = document.createElement('a');
-  a.href = url;
-  a.download = `Kehadiran_${currentBulan}.xls`;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500); // FIX LOW-BUG: revoke blob URL
+/* ================== EXPORT ABSENSI + OPSI (CAKUPAN / SISWA / KERTAS) ================== */
+const ARR_SHORT_BLN = ['Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'];
+function pad2Angka(n) { return String(n).padStart(2, '0'); }
+function hashSIADA() { return { H: 0, S: 0, I: 0, A: 0, D: 0 }; }
+function jumlahHariDalamBulan(th, idx) { return new Date(parseInt(th, 10), idx + 1, 0).getDate(); }
+function slugExport(s) { return String(s || '').replace(/[\/\s]+/g, '_'); }
+function labelPeriodeExport(scope) {
+  const smt = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
+  return scope === 'SEMESTER' ? `Semester_${smt}` : 'Tahun';
+}
+/** Daftar {i (idx bulan 0-11), tahun} utk cakupan SEMESTER/TAHUN, urut kronologis. */
+function blnTahunCakupan(scope) {
+  const parts = String(currentTahun || '').split('/');
+  const ganjil = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan);
+  const thAwal = parts[0], thAkhir = parts[1] || parts[0];
+  if (scope === 'SEMESTER') {
+    const bln = ganjil ? [6, 7, 8, 9, 10, 11] : [0, 1, 2, 3, 4, 5];
+    return bln.map(i => ({ i, tahun: ganjil ? thAwal : thAkhir }));
+  }
+  return [[6, 7, 8, 9, 10, 11], [0, 1, 2, 3, 4, 5]].flatMap((arr, k) => arr.map(i => ({ i, tahun: k === 0 ? thAwal : thAkhir })));
+}
+/** Ambil baris absensi utk export (kelas + mapel + rentang tanggal) dari tabel absensi. */
+async function ambilAbsenRentangExport(tglAwal, tglAkhir) {
+  const elMapel = document.getElementById('select-mapel'), elKelas = document.getElementById('select-kelas');
+  const mapelRaw = elMapel ? elMapel.value : '', mapel = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : mapelRaw;
+  const kelas = elKelas ? elKelas.value : '';
+  let q = supaClient.from('absensi').select('nis, tanggal, status').eq('mapel', mapel).gte('tanggal', tglAwal).lte('tanggal', tglAkhir);
+  if (kelas && kelas !== 'Semua Kelas') q = q.eq('kelas', kelas);
+  const { data, error } = await q;
+  if (error) throw error;
+  return (data || []).map(a => ({ NIS: a.nis, Tanggal: a.tanggal, Status: a.status }));
+}
+/** Bangun laporan REKAP (SEMESTER/TAHUN): H/S/I/A/D per bulan + total periode + % (dipakai PDF & Excel). */
+async function generateRekapReportHTML(scope, filterNis) {
+  const elMapel = document.getElementById('select-mapel'), elKelas = document.getElementById('select-kelas');
+  const mapelRaw = elMapel ? elMapel.value : '', namaMapel = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : (mapelRaw || '-');
+  const kelas = elKelas ? elKelas.value : 'Semua Kelas';
+  const smt = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
+  const blnTahun = blnTahunCakupan(scope);
+  const tglAwal = `${blnTahun[0].tahun}-${pad2Angka(blnTahun[0].i + 1)}-01`;
+  const bAkhir = blnTahun[blnTahun.length - 1];
+  const tglAkhir = `${bAkhir.tahun}-${pad2Angka(bAkhir.i + 1)}-${pad2Angka(jumlahHariDalamBulan(bAkhir.tahun, bAkhir.i))}`;
+  const rows = await ambilAbsenRentangExport(tglAwal, tglAkhir);
+  const daftar = filterNis ? listMuridKelas.filter(m => filterNis.has(String(m.NIS || m.nis))) : listMuridKelas.slice();
+  const peta = new Map();
+  daftar.forEach(m => peta.set(String(m.NIS || m.nis), { bln: blnTahun.map(() => hashSIADA()), tot: hashSIADA() }));
+  const totKelas = { bln: blnTahun.map(() => hashSIADA()), tot: hashSIADA() };
+  rows.forEach(r => {
+    const key = String(r.NIS), ent = peta.get(key); if (!ent) return;
+    const st = String(r.Status || ''); if (!'HSAID'.includes(st)) return;
+    const mt = String(r.Tanggal).match(/^(\d{4})-(\d{2})-(\d{2})/); if (!mt) return;
+    const slot = blnTahun.findIndex(b => b.i === parseInt(mt[2], 10) - 1 && Number(b.tahun) === parseInt(mt[1], 10));
+    if (slot < 0) return;
+    ent.bln[slot][st]++; ent.tot[st]++; totKelas.bln[slot][st]++; totKelas.tot[st]++;
+  });
+  const thCell = "border:1px solid #000;background:#e2e8f0;text-align:center;padding:2px;font-size:9px;";
+  let head1 = `<tr><th rowspan="2" style="${thCell};width:3%;">No</th><th rowspan="2" style="${thCell};width:8%;">NISN</th><th rowspan="2" style="${thCell};width:18%;">Nama Siswa</th><th rowspan="2" style="${thCell};width:4%;">L/P</th>`;
+  blnTahun.forEach(b => { head1 += `<th colspan="5" style="${thCell};white-space:nowrap;">${ARR_SHORT_BLN[b.i]} ${b.tahun}</th>`; });
+  head1 += `<th colspan="5" style="${thCell};white-space:nowrap;">TOTAL PERIODE</th><th rowspan="2" style="${thCell};width:6%;">%<br>Hadir</th></tr><tr>`;
+  for (let k = 0; k < blnTahun.length + 1; k++) { head1 += `<th style="${thCell};width:3%;">H</th><th style="${thCell};width:3%;">S</th><th style="${thCell};width:3%;">I</th><th style="${thCell};width:3%;">A</th><th style="${thCell};width:3%;">D</th>`; }
+  head1 += '</tr>';
+  const tdC = "border:1px solid #000;text-align:center;font-size:9px;padding:2px;";
+  let tbody = '';
+  daftar.forEach(m => {
+    const ent = peta.get(String(m.NIS || m.nis));
+    const tot = hashSIADA(); let tds = '';
+    for (let k = 0; k < blnTahun.length; k++) {
+      const b = ent ? ent.bln[k] : null;
+      for (const st of ['H', 'S', 'I', 'A', 'D']) { tds += `<td style="${tdC}">${b ? b[st] : ''}</td>`; if (b) tot[st] += b[st]; }
+    }
+    for (const st of ['H', 'S', 'I', 'A', 'D']) tds += `<td style="${tdC};font-weight:bold;">${tot[st]}</td>`;
+    const jml = tot.H + tot.S + tot.I + tot.A + tot.D;
+    const pct = jml ? ((tot.H / jml) * 100).toFixed(1) + '%' : '';
+    tbody += `<tr><td style="${tdC}">${listMuridKelas.indexOf(m) + 1}</td><td style="${tdC}">${escapeHtml(m.NISN || m.nis || '')}</td><td style="${tdC};text-align:left;white-space:nowrap;">${escapeHtml(m['Nama Lengkap'] || m.nama || m.Nama || '-')}</td><td style="${tdC}">${escapeHtml(m['L/P'] || '')}</td>${tds}<td style="${tdC};font-weight:bold;">${pct}</td></tr>`;
+  });
+  let tdsK = '';
+  for (let k = 0; k < blnTahun.length; k++) {
+    const b = totKelas.bln[k];
+    for (const st of ['H', 'S', 'I', 'A', 'D']) tdsK += `<td style="${tdC};font-weight:bold;">${b[st]}</td>`;
+  }
+  for (const st of ['H', 'S', 'I', 'A', 'D']) tdsK += `<td style="${tdC};font-weight:bold;">${totKelas.tot[st]}</td>`;
+  const jmlK = totKelas.tot.H + totKelas.tot.S + totKelas.tot.I + totKelas.tot.A + totKelas.tot.D;
+  const pctK = jmlK ? ((totKelas.tot.H / jmlK) * 100).toFixed(1) + '%' : '';
+  const rowKelas = `<tr><td colspan="4" style="${tdC};background:#eef2ff;font-weight:bold;">JUMLAH KELAS</td>${tdsK}<td style="${tdC};background:#eef2ff;font-weight:bold;">${pctK}</td></tr>`;
+  const namaGuru = currentUser && currentUser.user ? ((currentUser.user['Nama Lengkap'] || currentUser.user['Nama Guru']) || '_____________________') : '_____________________';
+  const labelScope = scope === 'SEMESTER'
+    ? `Semester ${smt} — ${ARR_SHORT_BLN[blnTahun[0].i]} ${blnTahun[0].tahun} s.d. ${ARR_SHORT_BLN[blnTahun[blnTahun.length - 1].i]} ${blnTahun[blnTahun.length - 1].tahun}`
+    : `Tahun Pelajaran ${currentTahun}`;
+  return `<div style="font-family:'Times New Roman',Times,serif;font-size:11px;color:#000;background:#fff;padding:20px;">
+    <h3 style="text-align:center;margin:0 0 4px;font-size:15px;font-weight:bold;">REKAPITULASI KEHADIRAN SISWA</h3>
+    <h4 style="text-align:center;margin:0 0 14px;font-size:12px;">${labelScope}</h4>
+    <table style="width:100%;border:none;font-size:11px;margin-bottom:8px;"><tr>
+      <td style="width:50%;">Kelas : <b>${escapeHtml(kelas)}</b></td>
+      <td style="width:50%;">Mata Pelajaran : <b>${escapeHtml(namaMapel)}</b></td>
+    </tr></table>
+    <table style="width:100%;border-collapse:collapse;font-size:10px;" border="1"><thead>${head1}</thead><tbody>${tbody}${rowKelas}</tbody></table>
+    <div style="font-size:9px;margin-top:6px;">Ket: H=Hadir, S=Sakit, I=Izin, A=Alpa, D=Dispen. % Hadir = H ÷ (H+S+I+A+D).</div>
+    <table style="width:100%;margin-top:30px;border:none;text-align:center;font-size:11px;"><tr>
+      <td style="width:50%;">Mengetahui,<br>Kepala Sekolah<br><br><br><br><br><b><u>${escapeHtml(namaKepsekGlobal || '_____________________')}</u></b></td>
+      <td style="width:50%;"><br>Guru Mata Pelajaran<br><br><br><br><br><b><u>${escapeHtml(namaGuru)}</u></b></td>
+    </tr></table>
+  </div>`;
+}
+/** Tabel harian SATU bulan — format identik dengan export bulanan (getAbsensiHTMLReport).
+ *  rows = [{NIS, Tanggal, Status}] khusus bulan tsb; idxBulan 0-11; tahun = tahun kalender. */
+function tabelHarianSatuBulan(tahun, idxBulan, rows, filterNis, mapelName, className, semester) {
+    const daftarTanggalLap = tanggalJadwalBulanIniAbsen(idxBulan, tahun);
+    let thDates = "";
+    for (const i of daftarTanggalLap) thDates += `<th style="border: 1px solid black; padding: 2px; width: 20px;">${i}</th>`;
+    const daftarSiswa = filterNis ? listMuridKelas.filter(m => filterNis.has(String(m.NIS || m.nis))) : listMuridKelas;
+    let trBody = daftarSiswa.map((m) => {
+        let nis = m.NIS || m.nis || "-";
+        let nama = m["Nama Lengkap"] || m.nama || m.Nama || "-";
+        const noUrut = listMuridKelas.indexOf(m) + 1;
+        let tdDates = "";
+        let tH = 0, tS = 0, tI = 0, tA = 0, tD = 0;
+        for (const i of daftarTanggalLap) {
+            let dt = rows.find(a => hariDariTanggal(a.Tanggal) === i && String(a.NIS) === String(nis));
+            let sts = dt ? dt.Status : "";
+            if (sts === 'H') tH++; if (sts === 'S') tS++; if (sts === 'I') tI++; if (sts === 'A') tA++; if (sts === 'D') tD++;
+            tdDates += `<td style="border: 1px solid black; padding: 2px;">${sts}</td>`;
+        }
+        return `<tr>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${noUrut}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${nis}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: left; white-space: nowrap;">${nama}</td>
+            ${tdDates}
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #e0ffe0;">${tH}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #ffffe0;">${tS}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #e0e0ff;">${tI}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #ffe0e0;">${tA}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #f0e0ff;">${tD}</td>
+        </tr>`;
+    }).join('');
+    const bulanNama = arrBulan[idxBulan] || ARR_SHORT_BLN[idxBulan] || String(idxBulan + 1);
+    return `
+            <h3 style="text-align: center; margin-bottom: 5px; font-size: 14px; text-transform: uppercase;">REKAP KEHADIRAN TATAP MUKA SISWA</h3>
+            <p style="text-align: center; margin: 0.5px 0 15px 0; font-size: 11px;">
+                Mapel/Ekskul: <b>${mapelName}</b> &nbsp;|&nbsp; Kelas: <b>${className}</b><br>
+                Bulan: <b>${bulanNama} ${tahun}</b> &nbsp;|&nbsp; Semester: <b>${semester}</b>
+            </p>
+            <table style="width: 100%; border-collapse: collapse; text-align: center;">
+                <thead style="background: #f0f0f0;">
+                    <tr>
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">No</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 10%;">NIS</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 20%;">Nama Siswa</th>
+                        ${thDates}
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">H</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">S</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">I</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">A</th>
+                        <th style="border: 1px solid black; padding: 4px; width: 3%;">D</th>
+                    </tr>
+                </thead>
+                <tbody>${trBody}</tbody>
+            </table>`;
+}
+/** Tabel gabungan LEBAR utk cakupan SEMESTER (6 bln) / TAHUN (12 bln): satu tabel utuh dengan
+ *  kolom No | NIS | NISN | Nama Siswa, lalu grup kolom per bulan (nama bulan, berisi tanggal
+ *  jadwal), dan di ujung kolom H, S, I, A, D = jumlah seluruh periode per siswa. */
+function tabelGabunganRentang(blnTahun, rows, filterNis, mapelName, className) {
+    // Peta status per NIS per tanggal (YYYY-MM-DD) — dibangun sekali agar efisien utk periode panjang.
+    const peta = {};
+    for (const r of rows) {
+        const k = `${String(r.NIS)}|${String(r.Tanggal || '').slice(0, 10)}`;
+        if (!(k in peta)) peta[k] = r.Status || '';
+    }
+    // Daftar tanggal jadwal per bulan (nomor hari) + string tanggal lengkap utk lookup.
+    const daftarBulan = blnTahun.map(b => {
+        const tahun = Number(b.tahun), bulan = b.i + 1;
+        const daftarHari = tanggalJadwalBulanIniAbsen(b.i, tahun);
+        const tanggalLengkap = daftarHari.map(d => `${tahun}-${pad2Angka(bulan)}-${pad2Angka(d)}`);
+        return { b, daftarHari, tanggalLengkap };
+    });
+    // Header grup bulan (baris 1) & sub-header tanggal jadwal (baris 2).
+    let thGrup = '', thTanggal = '';
+    daftarBulan.forEach((mb, k) => {
+        const namaBulan = arrBulan[mb.b.i] || ARR_SHORT_BLN[mb.b.i] || String(mb.b.i + 1);
+        thGrup += `<th colspan="${mb.daftarHari.length}" style="border: 1px solid black; padding: 3px;">${namaBulan}</th>`;
+        for (const d of mb.daftarHari) thTanggal += `<th style="border: 1px solid black; padding: 2px; width: 20px;">${d}</th>`;
+    });
+    // Body per siswa: sel per tanggal jadwal + total H/S/I/A/D seluruh periode.
+    const daftarSiswa = filterNis ? listMuridKelas.filter(m => filterNis.has(String(m.NIS || m.nis))) : listMuridKelas;
+    const trBody = daftarSiswa.map((m) => {
+        const nis = m.NIS || m.nis || "-";
+        const nisn = m.NISN || m.nisn || "-";
+        const nama = m["Nama Lengkap"] || m.nama || m.Nama || "-";
+        const noUrut = listMuridKelas.indexOf(m) + 1;
+        let tdDates = "", tH = 0, tS = 0, tI = 0, tA = 0, tD = 0;
+        for (const mb of daftarBulan) {
+            for (const tl of mb.tanggalLengkap) {
+                const sts = peta[`${String(nis)}|${tl}`] || "";
+                if (sts === 'H') tH++; if (sts === 'S') tS++; if (sts === 'I') tI++; if (sts === 'A') tA++; if (sts === 'D') tD++;
+                tdDates += `<td style="border: 1px solid black; padding: 2px;">${sts}</td>`;
+            }
+        }
+        return `<tr>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${noUrut}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${nis}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: center;">${escapeHtml(nisn)}</td>
+            <td style="border: 1px solid black; padding: 4px; text-align: left; white-space: nowrap;">${nama}</td>
+            ${tdDates}
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #e0ffe0;">${tH}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #ffffe0;">${tS}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #e0e0ff;">${tI}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #ffe0e0;">${tA}</td>
+            <td style="border: 1px solid black; padding: 4px; font-weight: bold; background: #f0e0ff;">${tD}</td>
+        </tr>`;
+    }).join('');
+    return `<table style="width: 100%; border-collapse: collapse; text-align: center; font-size: 9px;">
+        <thead style="background: #f0f0f0;">
+            <tr>
+                <th rowspan="2" style="border: 1px solid black; padding: 4px; width: 2%;">No</th>
+                <th rowspan="2" style="border: 1px solid black; padding: 4px; width: 8%;">NIS</th>
+                <th rowspan="2" style="border: 1px solid black; padding: 4px; width: 10%;">NISN</th>
+                <th rowspan="2" style="border: 1px solid black; padding: 4px; width: 14%;">Nama Siswa</th>
+                ${thGrup}
+                <th colspan="5" style="border: 1px solid black; padding: 3px;">Jumlah</th>
+            </tr>
+            <tr>${thTanggal}
+                <th style="border: 1px solid black; padding: 2px;">H</th>
+                <th style="border: 1px solid black; padding: 2px;">S</th>
+                <th style="border: 1px solid black; padding: 2px;">I</th>
+                <th style="border: 1px solid black; padding: 2px;">A</th>
+                <th style="border: 1px solid black; padding: 2px;">D</th>
+            </tr>
+        </thead>
+        <tbody>${trBody}</tbody>
+    </table>`;
+}
+
+/** Helper lama: tabel harian per bulan u/ cakupan SEMESTER/TAHUN — tidak lagi dipakai sejak
+ *  cakupan tersebut dialihkan ke tabel gabungan lebar (tabelGabunganRentang). */
+async function generateHarianRentangHTML(scope, filterNis) {
+  const elMapel = document.getElementById('select-mapel'), elKelas = document.getElementById('select-kelas');
+  const mapelRaw = elMapel ? elMapel.value : '', mapelName = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : (mapelRaw || '-');
+  const isEkskul = String(mapelRaw).startsWith('Ekskul|');
+  const className = elKelas ? elKelas.value : 'Semua Kelas';
+  const blnTahun = blnTahunCakupan(scope);
+  const tglAwal = `${blnTahun[0].tahun}-${pad2Angka(blnTahun[0].i + 1)}-01`;
+  const bAkhir = blnTahun[blnTahun.length - 1];
+  const tglAkhir = `${bAkhir.tahun}-${pad2Angka(bAkhir.i + 1)}-${pad2Angka(jumlahHariDalamBulan(bAkhir.tahun, bAkhir.i))}`;
+  const rows = await ambilAbsenRentangExport(tglAwal, tglAkhir);
+  const namaGuru = currentUser && currentUser.user ? (currentUser.user["Nama Guru"] || "_____________________") : "_____________________";
+  const kepsek = typeof namaKepsekGlobal !== 'undefined' ? namaKepsekGlobal : "_____________________";
+  const labelGuru = isEkskul ? "Pembina Ekstrakurikuler" : "Guru Mata Pelajaran";
+  const table = tabelGabunganRentang(blnTahun, rows, filterNis, mapelName, className);
+  const blnPertama = blnTahun[0], blnTerakhir = blnTahun[blnTahun.length - 1];
+  const labelScope = scope === 'SEMESTER'
+    ? `Semester <b>${blnPertama.i >= 6 ? 'Ganjil' : 'Genap'}</b> | Bulan <b>${arrBulan[blnPertama.i] || ARR_SHORT_BLN[blnPertama.i]} s.d. ${arrBulan[blnTerakhir.i] || ARR_SHORT_BLN[blnTerakhir.i]}</b> | Tahun <b>${blnPertama.tahun}</b>.`
+    : `Tahun Pelajaran <b>${currentTahun}</b>`;
+  return `<div style="font-family: 'Times New Roman', Times, serif; font-size: 10px; color: #000; background: #fff; padding: 20px;">
+            <h3 style="text-align: center; margin: 0 0 5px; font-size: 14px; font-weight: bold; text-transform: uppercase;">REKAP KEHADIRAN TATAP MUKA SISWA</h3>
+            <p style="text-align: center; margin: 0 0 12px; font-size: 11px;">
+                Mapel/Ekskul: <b>${mapelName}</b> &nbsp;|&nbsp; Kelas: <b>${className}</b><br>
+                ${labelScope}
+            </p>
+            ${table}
+            <table style="width: 100%; margin-top: 30px; border: none; text-align: center; font-size: 11px; page-break-inside: avoid;">
+                <tr>
+                    <td style="width: 50%; border: none; vertical-align: top;">Mengetahui,<br>Kepala Sekolah<br><br><br><br><br><b><u>${kepsek}</u></b></td>
+                    <td style="width: 50%; border: none; vertical-align: top;">${labelGuru}<br><br><br><br><br><b><u>${namaGuru}</u></b></td>
+                </tr>
+            </table>
+        </div>`;
+}
+
+/** Dialog opsi export absensi: cakupan data + pilihan siswa + layout kertas (PDF). */
+async function bukaOpsiExportAbsensi(format) {
+  const isPdf = format === 'pdf';
+  const o = bacaOpsiCetak('absen');
+  const chkSiswa = (listMuridKelas || []).map(m => {
+    const nis = String(m.NIS || m.nis || ''), nama = m['Nama Lengkap'] || m.nama || m.Nama || '-';
+    return `<label class="flex items-center gap-1.5 cursor-pointer bg-slate-800 p-1 rounded border border-white/10"><input type="checkbox" class="ex_tgt" value="${escapeHtml(nis)}" checked><span class="truncate text-[10px]">${escapeHtml(nis)} — ${escapeHtml(nama)}</span></label>`;
+  }).join('');
+  const box = "w-full bg-slate-800 border border-white/20 rounded px-2 py-1 text-[11px] text-white outline-none";
+  const res = await Swal.fire({
+    title: `<div class="text-base font-bold text-red-400"><i class="fa-solid fa-file-pdf"></i> Opsi Export ${isPdf ? 'PDF' : 'Excel'}</div>`,
+    width: 640, background: '#1e293b', color: '#fff', showCancelButton: true,
+    confirmButtonText: '<i class="fa-solid fa-download"></i> Buat Laporan', cancelButtonText: 'Batal',
+    html: `
+    <div class="text-left text-[11px] space-y-3 mt-3 text-slate-300">
+      <div class="bg-black/20 rounded p-2">
+        <label class="block font-bold text-blue-300 mb-1.5">Cakupan Data</label>
+        <div class="grid grid-cols-3 gap-1.5">
+          <label class="flex items-center gap-1.5 cursor-pointer"><input id="ex_cakupan_bulan" type="checkbox" class="accent-green-400" checked> Bulan ini <span class="text-slate-500">(1 bln)</span></label>
+          <label class="flex items-center gap-1.5 cursor-pointer"><input id="ex_cakupan_semester" type="checkbox" class="accent-amber-400"> Semester <span class="text-slate-500">(6 bln)</span></label>
+          <label class="flex items-center gap-1.5 cursor-pointer"><input id="ex_cakupan_tahun" type="checkbox" class="accent-blue-400"> Tahun Pelajaran <span class="text-slate-500">(12 bln)</span></label>
+        </div>
+        <p id="ex_info_cakupan" class="text-[10px] text-slate-400 mt-1.5"></p>
+      </div>
+      <div class="bg-black/20 rounded p-2">
+        <div class="flex items-center justify-between gap-2 mb-1.5">
+          <label class="font-bold text-blue-300">Siswa (<span id="ex_jml_tgt">0</span> dipilih)</label>
+          <div class="flex gap-1">
+            <input id="ex_cari_siswa" placeholder="Cari nama/NIS..." class="${box} max-w-40">
+            <button type="button" id="ex_btn_semua" class="px-2 py-1 rounded bg-green-700 hover:bg-green-600 text-white text-[10px]">Semua</button>
+            <button type="button" id="ex_btn_bersih" class="px-2 py-1 rounded bg-amber-700 hover:bg-amber-600 text-white text-[10px]">Bersihkan</button>
+          </div>
+        </div>
+        <label class="flex items-center gap-1.5 cursor-pointer mb-1.5 text-[11px]"><input type="checkbox" id="ex_semua_siswa" class="accent-green-400" checked> Semua siswa</label>
+        <div id="ex_daftar_siswa" class="grid grid-cols-2 gap-1.5" style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0.375rem;max-height:8rem;min-height:2.5rem;overflow-y:auto;overflow-x:hidden;padding-right:2px;">${chkSiswa || '<p class="text-[10px] text-slate-500">Tidak ada data siswa.</p>'}</div>
+      </div>
+      <div class="bg-black/20 rounded p-2 grid grid-cols-1 md:grid-cols-5 gap-2">
+        <div><label class="block font-bold text-blue-300 mb-1">Kertas</label><select id="ex_kertas" class="${box}"><option>A4</option><option>F4</option><option>Max</option><option>A5</option><option>Letter</option></select></div>
+        <div><label class="block font-bold text-blue-300 mb-1">Orientasi</label><select id="ex_orientasi" class="${box}"><option value="potret">Potret</option><option value="lanskap">Lanskap</option></select></div>
+        <div><label class="block font-bold text-blue-300 mb-1">Margin (cm)</label><input id="ex_margin" type="number" step="0.5" min="0" max="5" value="${o.margin || 1.5}" class="${box}"></div>
+        <div><label class="block font-bold text-blue-300 mb-1">Judul Dokumen</label><input id="ex_judul" placeholder="(default)" class="${box}"></div>
+        <div><label class="block font-bold text-blue-300 mb-1">Nama File</label><input id="ex_namafile" placeholder="(otomatis)" class="${box}"></div>
+      </div>
+      <p class="text-[9px] text-slate-500">${isPdf ? 'Tampilan layout dipakai untuk PDF. Cakupan paling spesifik yang dipilih yang menang (Bulan > Semester > TA).' : 'Ukuran kertas & orientasi ikut tersimpan di file untuk print Excel/WPS.'}</p>
+    </div>`,
+    didOpen: () => {
+      const pop = Swal.getPopup();
+      const updInfo = () => {
+        const ck = id => { const el = pop.querySelector('#' + id); return !!(el && el.checked); };
+        const b = ck('ex_cakupan_bulan'), s = ck('ex_cakupan_semester');
+        const smtL = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
+        const info = pop.querySelector('#ex_info_cakupan');
+        if (!info) return;
+        const scope = b ? 'BULAN' : (s ? 'SEMESTER' : 'TAHUN');
+        info.innerHTML = scope === 'BULAN' ? `Bulan <b>${currentBulan} ${currentTahun}</b> → <b class="text-green-300">tabel harian</b>`
+          : scope === 'SEMESTER' ? `Semester <b>${smtL}</b> (Jul–Des / Jan–Jun) → <b class="text-amber-300">tabel gabungan 6 bln</b>`
+          : `Tahun Pelajaran <b>${currentTahun}</b> (12 bulan) → <b class="text-blue-300">tabel gabungan 12 bln</b>`;
+      };
+      const countTgt = () => { const n = pop.querySelectorAll('.ex_tgt:checked').length; const el = pop.querySelector('#ex_jml_tgt'); if (el) el.textContent = n; };
+      ['ex_cakupan_bulan','ex_cakupan_semester','ex_cakupan_tahun'].forEach(id => { const el = pop.querySelector('#' + id); if (el) el.onchange = updInfo; });
+      const bSemua = pop.querySelector('#ex_btn_semua'); if (bSemua) bSemua.onclick = () => { pop.querySelectorAll('.ex_tgt').forEach(c => { c.checked = true; }); countTgt(); };
+      const bBersih = pop.querySelector('#ex_btn_bersih'); if (bBersih) bBersih.onclick = () => { pop.querySelectorAll('.ex_tgt').forEach(c => { c.checked = false; }); countTgt(); };
+      pop.querySelectorAll('.ex_tgt').forEach(c => { c.onchange = countTgt; });
+      const cari = pop.querySelector('#ex_cari_siswa');
+      if (cari) cari.oninput = () => {
+        const q = (cari.value || '').toLowerCase();
+        pop.querySelectorAll('.ex_tgt').forEach(c => { const lbl = c.closest('label'); if (lbl) lbl.style.display = (!q || lbl.textContent.toLowerCase().includes(q)) ? '' : 'none'; });
+      };
+      const semua = pop.querySelector('#ex_semua_siswa');
+      if (semua) semua.onchange = () => {
+        const on = semua.checked;
+        pop.querySelectorAll('.ex_tgt').forEach(c => { c.checked = on; });
+        const grid = pop.querySelector('#ex_daftar_siswa'); if (grid) grid.style.opacity = on ? '.5' : '1';
+        countTgt();
+      };
+      const kertas = pop.querySelector('#ex_kertas'); if (kertas && o.kertas) kertas.value = o.kertas;
+      const orientasi = pop.querySelector('#ex_orientasi'); if (orientasi && o.orientasi) orientasi.value = o.orientasi;
+      const margin = pop.querySelector('#ex_margin'); if (margin && o.margin != null) margin.value = o.margin;
+      const judul = pop.querySelector('#ex_judul'); if (judul && o.judul) judul.value = o.judul;
+      countTgt(); updInfo();
+    },
+    preConfirm: () => {
+      const pop = Swal.getPopup();
+      const ck = id => { const el = pop.querySelector('#' + id); return !!(el && el.checked); };
+      const b = ck('ex_cakupan_bulan'), s = ck('ex_cakupan_semester'), t = ck('ex_cakupan_tahun');
+      if (!b && !s && !t) { Swal.showValidationMessage('Pilih minimal 1 cakupan data.'); return false; }
+      const semua = ck('ex_semua_siswa');
+      if (semua) pop.querySelectorAll('.ex_tgt').forEach(c => { c.checked = true; });
+      const targets = [...(pop.querySelectorAll('.ex_tgt:checked') || [])].map(c => c.value);
+      if (!semua && targets.length === 0) { Swal.showValidationMessage('Pilih minimal 1 siswa.'); return false; }
+      const val = id => { const el = pop.querySelector('#' + id); return el ? el.value : ''; };
+      return {
+        scope: b ? 'BULAN' : (s ? 'SEMESTER' : 'TAHUN'),
+        semua, targets: new Set(targets),
+        kertas: val('ex_kertas') || 'A4',
+        orientasi: val('ex_orientasi') || 'lanskap',
+        margin: Math.min(5, Math.max(0, Number(val('ex_margin')) || 1.5)),
+        judul: val('ex_judul').trim(),
+        namaFile: val('ex_namafile').trim()
+      };
+    }
+  });
+  return res.isConfirmed ? res.value : null;
+}
+window.exportAbsensiExcel = async function() {
+  const p = await bukaOpsiExportAbsensi('excel');
+  if (!p) return;
+  const className = document.getElementById('select-kelas').value || 'Semua Kelas';
+  const filterNis = p.semua ? null : p.targets;
+  simpanOpsiCetak('absen', { kertas: p.kertas, orientasi: p.orientasi, margin: p.margin, judul: p.judul });
+  try {
+    let body;
+    if (p.scope === 'BULAN') { body = getAbsensiHTMLReport(filterNis); }
+    else { body = await generateHarianRentangHTML(p.scope, filterNis); }
+    const dasar = p.scope === 'BULAN'
+      ? `Kehadiran_${slugExport(className)}_${currentBulan}_${slugExport(currentTahun)}`
+      : `RekapKehadiran_${slugExport(className)}_${labelPeriodeExport(p.scope)}_${slugExport(currentTahun)}`;
+    let fileName = p.namaFile || dasar;
+    if (!/\.(xls|xlsx)$/i.test(fileName)) fileName += '.xls';
+    const htmlTable = `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel"><head><meta charset="UTF-8"><style>@page{size:${cssUkuranKertas({ kertas: p.kertas, orientasi: p.orientasi })};margin:${p.margin}cm}</style></head><body>${body}</body></html>`;
+    const blob = new Blob([htmlTable], { type: 'application/vnd.ms-excel' });
+    const url = URL.createObjectURL(blob), a = document.createElement('a');
+    a.href = url; a.download = fileName;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1500);
+    showToast('success', `Export selesai: ${fileName}`);
+  } catch (e) {
+    Swal.fire({ icon: 'error', title: 'Gagal Export', text: e.message || 'Periksa koneksi.', background: '#1e293b', color: '#fff' });
+  }
 };
 
-window.exportAbsensiPDF = function() {
-  const htmlContent = getAbsensiHTMLReport();
-  const printWindow = window.open('', '_blank');
-  // FIX LOW-BUG: popup blocker guard
-  if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak PDF.', background: '#1e293b', color: '#fff' });
-  printWindow.document.write(`
-    <html><head><title>Cetak PDF</title>
-    <style>@media print { @page { size: landscape; margin: 10mm; } }</style>
-    </head><body>${htmlContent}</body></html>
-  `);
-  printWindow.document.close(); 
-  printWindow.focus(); 
-  setTimeout(() => { printWindow.print(); printWindow.close(); }, 500);
+window.exportAbsensiPDF = async function() {
+  const p = await bukaOpsiExportAbsensi('pdf');
+  if (!p) return;
+  const className = document.getElementById('select-kelas').value || 'Semua Kelas';
+  const filterNis = p.semua ? null : p.targets;
+  simpanOpsiCetak('absen', { kertas: p.kertas, orientasi: p.orientasi, margin: p.margin, judul: p.judul });
+  try {
+    let isi;
+    if (p.scope === 'BULAN') { isi = getAbsensiHTMLReport(filterNis); }
+    else { isi = await generateHarianRentangHTML(p.scope, filterNis); }
+    const dasar = p.scope === 'BULAN'
+      ? `Kehadiran_${slugExport(className)}_${currentBulan}_${slugExport(currentTahun)}`
+      : `RekapKehadiran_${slugExport(className)}_${labelPeriodeExport(p.scope)}_${slugExport(currentTahun)}`;
+    const judulFile = p.namaFile || dasar;
+    bukaCetakHTML(judulFile, isi, { kertas: p.kertas, orientasi: p.orientasi, margin: p.margin, font: 'Times New Roman', ukuranFont: 11 });
+  } catch (e) {
+    Swal.fire({ icon: 'error', title: 'Gagal Export', text: e.message || 'Periksa koneksi.', background: '#1e293b', color: '#fff' });
+  }
 };
 
 // Info Kelas Khusus Absen
@@ -3637,9 +4055,15 @@ function downloadTemplateExcelAbsen() {
     const mapelRaw = document.getElementById('select-mapel').value;
     const mapel = mapelRaw.includes('|') ? mapelRaw.split('|')[1] : mapelRaw;
     const kelas = document.getElementById('select-kelas').value;
+
+    // [FIX] jumlah hari kalender bulan berjalan (bukan selalu 31; TA bisa lintas tahun)
+    const idxBulanTempl = arrBulan.indexOf(bulan);
+    const [tAwalTempl, tAkhirTempl] = String(tahun || '').split('/').map(Number);
+    const tahunBulanTempl = idxBulanTempl >= 6 ? (tAwalTempl || new Date().getFullYear()) : (tAkhirTempl || tAwalTempl || new Date().getFullYear());
+    const jmlHariTempl = new Date(tahunBulanTempl, idxBulanTempl + 1, 0).getDate();
     
     let headers = ["No", "NIS", "Nama Siswa"];
-    for(let i=1; i<=31; i++) headers.push(`Tgl_${i}`);
+    for(let i=1; i<=jmlHariTempl; i++) headers.push(`Tgl_${i}`);
     headers.push("Keterangan");
 
     let dataRows = [
@@ -3652,7 +4076,7 @@ function downloadTemplateExcelAbsen() {
     
     listMuridKelas.forEach((m, idx) => {
         let row = [idx + 1, m.nis, m.nama];
-        for(let i=1; i<=31; i++) {
+        for(let i=1; i<=jmlHariTempl; i++) {
             let el = document.getElementById(`A_${m.nis}_${i}`);
             row.push(el ? el.value : "");
         }
@@ -3796,6 +4220,11 @@ function urutMuridTampil() {
   const arr = [...listMuridKelas];
   if (sortNamaNilai === 'az') arr.sort((a, b) => String(a["Nama Lengkap"]).localeCompare(String(b["Nama Lengkap"]), 'id'));
   else if (sortNamaNilai === 'za') arr.sort((a, b) => String(b["Nama Lengkap"]).localeCompare(String(a["Nama Lengkap"]), 'id'));
+  // [REQ b1] Urut kolom Kelas (kategori Eskul): A-Z / Z-A — urut nama tetap sebagai tie-breaker (sort JS stabil)
+  if (currentKategoriNilai === "Data Nilai Eskul") {
+    if (sortKelasNilai === 'az') arr.sort((a, b) => String(a["Tingkat/Kelas"] || '').localeCompare(String(b["Tingkat/Kelas"] || ''), 'id', { numeric: true }));
+    else if (sortKelasNilai === 'za') arr.sort((a, b) => String(b["Tingkat/Kelas"] || '').localeCompare(String(a["Tingkat/Kelas"] || ''), 'id', { numeric: true }));
+  }
   return arr;
 }
 /** Siklus urut nama: default → A-Z → Z-A → default, lalu render ulang tabel aktif. */
@@ -3811,6 +4240,19 @@ function ikonUrutNamaNilai() {
   if (sortNamaNilai === 'az') return '<i class="fa-solid fa-arrow-down-a-z text-green-400" title="Urut A-Z (klik: Z-A)"></i>';
   if (sortNamaNilai === 'za') return '<i class="fa-solid fa-arrow-up-a-z text-red-400" title="Urut Z-A (klik: default)"></i>';
   return '<i class="fa-solid fa-sort text-slate-400" title="Urutkan Nama (klik: A-Z)"></i>';
+}
+// Urutan tampil kolom "Kelas" tabel Eskul: '' (default) | 'az' | 'za'
+let sortKelasNilai = '';
+/** Siklus urut kelas Eskul: default → A-Z → Z-A → default, lalu render ulang tabel Eskul. */
+function siklusUrutKelasNilai() {
+  sortKelasNilai = sortKelasNilai === 'az' ? 'za' : (sortKelasNilai === 'za' ? '' : 'az');
+  if (currentKategoriNilai === "Data Nilai Eskul") renderTabelEskul();
+}
+/** Ikon tombol urut kelas pada header "Kelas" tabel Eskul. */
+function ikonUrutKelasNilai() {
+  if (sortKelasNilai === 'az') return '<i class="fa-solid fa-arrow-down-a-z text-green-400" title="Urut Kelas A-Z (klik: Z-A)"></i>';
+  if (sortKelasNilai === 'za') return '<i class="fa-solid fa-arrow-up-a-z text-red-400" title="Urut Kelas Z-A (klik: default)"></i>';
+  return '<i class="fa-solid fa-sort text-slate-400" title="Urutkan Kelas (klik: A-Z)"></i>';
 }
 const LETTERS_KD = ['A','B','C','D','E','F','G','H'];
 
@@ -4231,6 +4673,24 @@ function kunciCacheNilai(katMapel, katEkskul, kelas) {
   return JSON.stringify([currentKategoriNilai, katMapel, katEkskul, kelas, currentTahun, currentSemesterNilai]);
 }
 
+/** [FIX WA] Default config per kategori Nilai — satu sumber kebenaran utk tabel & laporan WA (mencegah cP/cK/cS null).
+ *  Meniru default historis loadDataNilai (Pengetahuan/Keterampilan/Eskul) & renderTabelSikap. */
+function konfigurasiNilaiDefault(kategori) {
+  if (kategori === "Data Nilai Pengetahuan") {
+    return { active_kd: 2, kds: [{ name: "KD 1", t1: "Tugas 1", t2: "Tugas 2", uh: "Ulangan Harian" }, { name: "KD 2", t1: "Tugas 1", t2: "Tugas 2", uh: "Ulangan Harian" }], bobot: { cp: 50, uts: 20, uas: 30 } };
+  }
+  if (kategori === "Data Nilai Keterampilan") {
+    return { active_cp: 2, bobot: { prak: 40, proj: 30, port: 30 } };
+  }
+  if (kategori === "Data Nilai Sikap") {
+    return { active_cp: 3, active_sub_cp: 3, active_teman: 5, labels: { cp: ["CP A", "CP B", "CP C", "CP D"], sub: ["1", "2", "3", "4"] }, sikap_teman: { judul: 'Berilah nilai untuk 5 teman', keterangan: '', jumlah_teman: 5, sesi_buka: false, kriteria: { "4": "Selalu konsisten dilakukan", "3": "Sering dilakukan", "2": "Kadang-kadang dilakukan", "1": "Tidak pernah dilakukan" } } };
+  }
+  if (kategori === "Data Nilai Eskul") {
+    return { format_deskripsi: {} };
+  }
+  return null;
+}
+
 async function loadDataNilai(paksa = false) {
   const mapel = document.getElementById('select-mapel-nilai').value, kelas = document.getElementById('select-kelas-nilai').value;
   currentTahun = document.getElementById('select-tahun-nilai').value;
@@ -4272,15 +4732,9 @@ async function loadDataNilai(paksa = false) {
     if (errKonfig) throw errKonfig;
     configNilaiAktif = (konfigRow && konfigRow.config) || null;
 
-    // Default Config Injector
+    // Default Config Injector (satu sumber: konfigurasiNilaiDefault)
     if(!configNilaiAktif) {
-      if (currentKategoriNilai === "Data Nilai Pengetahuan") {
-        configNilaiAktif = { active_kd: 2, kds: [{name: "KD 1", t1: "Tugas 1", t2: "Tugas 2", uh: "Ulangan Harian"}, {name: "KD 2", t1: "Tugas 1", t2: "Tugas 2", uh: "Ulangan Harian"}], bobot: { cp: 50, uts: 20, uas: 30 } };
-      } else if (currentKategoriNilai === "Data Nilai Keterampilan") {
-        configNilaiAktif = { active_cp: 2, bobot: { prak: 40, proj: 30, port: 30 } };
-      } else if (currentKategoriNilai === "Data Nilai Eskul") {
-        configNilaiAktif = { format_deskripsi: {} };
-      }
+      configNilaiAktif = konfigurasiNilaiDefault(currentKategoriNilai);
     }
 
     // 2) Murid + status guru (sumber tunggal: tabel akun) — via cache sesi bersama
@@ -5537,16 +5991,22 @@ function getMasalColumnOptionsHTML() {
 // --- FUNGSI INPUT MASAL UTAMA ---
 // --- FUNGSI INPUT MASAL INTERAKTIF (UPDATE) ---
 function openPenilaianMasal() {
+  // [REQ b2/b3] Kategori Eskul: tanpa dropdown "Pilih Kolom" & nilai memakai huruf A-D
+  const isEskulMasal = currentKategoriNilai === "Data Nilai Eskul";
   Swal.fire({
     title: '<div class="text-base font-bold">Input Masal Interaktif</div>',
     html: `
       <div class="text-left">
+        ${isEskulMasal ? '' : `
         <label class="text-[10px] text-blue-300 font-bold">Pilih Kolom ${currentKategoriNilai.replace('Data Nilai ','')}</label>
         <select id="masal_kolom" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white mb-3 outline-none focus:border-blue-500">${getMasalColumnOptionsHTML()}</select>
+        `}
         
-        <label class="text-[10px] text-green-300 font-bold">Isi Masal & Reset Ceklis</label>
+        <label class="text-[10px] text-green-300 font-bold">Isi Masal & Reset Ceklis${isEskulMasal ? ' (A/B/C/D)' : ''}</label>
         <div class="flex gap-2 mb-2 items-center">
-            <input type="number" id="masal_nilai_master" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none focus:border-green-500" placeholder="0-100">
+            ${isEskulMasal
+                ? `<select id="masal_nilai_master" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none focus:border-green-500"><option value=""></option><option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option></select>`
+                : `<input type="number" id="masal_nilai_master" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 text-xs text-white outline-none focus:border-green-500" placeholder="0-100">`}
             <button type="button" id="btn-terapkan-master" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-[10px] font-bold shadow-md transition whitespace-nowrap">Terapkan <i class="fa-solid fa-bolt"></i></button>
             <span id="notif-masal" class="text-[10px] text-green-400 font-bold hidden transition-all">Berhasil!</span>
         </div>
@@ -5580,7 +6040,7 @@ function openPenilaianMasal() {
         
         let urutMasal = 'az'; // [REQ] Daftar Siswa default A-Z, dapat dibalik lewat tombol A-Z/Z-A
         const renderListSiswa = () => {
-            const field = selectKolom.value;
+            const field = isEskulMasal ? 'Nilai' : selectKolom.value;
             // Snapshot ceklis agar status pilihan tidak hilang saat daftar dirender ulang
             const ceklisSebelum = new Set([...container.querySelectorAll('.chk-masal:checked')].map(c => c.value));
             const daftar = listMuridKelas.slice().sort((a, b) =>
@@ -5594,7 +6054,9 @@ function openPenilaianMasal() {
                 <label id="lbl-masal-${m.NIS}" class="flex items-center gap-2 p-1 border-b border-white/5 cursor-pointer hover:bg-white/5 rounded transition">
                     <input type="checkbox" class="chk-masal w-3.5 h-3.5" value="${m.NIS}" id="chk-masal-${m.NIS}">
                     <span class="text-xs text-slate-300 truncate font-medium flex-1">${idx+1}. ${m["Nama Lengkap"]}</span>
-                    <input type="number" data-nis="${m.NIS}" class="input-masal-individu w-12 bg-black/60 border border-white/20 rounded px-1 py-1 text-[11px] text-center font-bold text-green-300 focus:bg-white/10 outline-none" value="${valSiswa}" placeholder="-">
+                    ${isEskulMasal
+                        ? `<select data-nis="${m.NIS}" class="input-masal-individu w-14 bg-black/60 border border-white/20 rounded px-1 py-1 text-[11px] text-center font-bold text-green-300 focus:bg-white/10 outline-none"><option value=""></option>${['A','B','C','D'].map(h => `<option value="${h}" ${String(valSiswa).toUpperCase() === h ? 'selected' : ''}>${h}</option>`).join('')}</select>`
+                        : `<input type="number" data-nis="${m.NIS}" class="input-masal-individu w-12 bg-black/60 border border-white/20 rounded px-1 py-1 text-[11px] text-center font-bold text-green-300 focus:bg-white/10 outline-none" value="${valSiswa}" placeholder="-">`}
                 </label>`;
             });
             container.innerHTML = html;
@@ -5604,14 +6066,16 @@ function openPenilaianMasal() {
                 inp.addEventListener('change', (e) => {
                     let nis = e.target.getAttribute('data-nis');
                     let val = e.target.value;
-                    if(val > 100) { val = 100; e.target.value = 100; }
-                    if(val < 0) { val = 0; e.target.value = 0; }
-                    updateNilaiLangsung(nis, selectKolom.value, val);
+                    if(!isEskulMasal) {
+                        if(val > 100) { val = 100; e.target.value = 100; }
+                        if(val < 0) { val = 0; e.target.value = 0; }
+                    }
+                    updateNilaiLangsung(nis, isEskulMasal ? 'Nilai' : selectKolom.value, val);
                 });
             });
         };
 
-        selectKolom.addEventListener('change', renderListSiswa);
+        if (selectKolom) selectKolom.addEventListener('change', renderListSiswa);
         renderListSiswa();
 
         // [REQ] Toggle urutan Daftar Siswa: A-Z / Z-A
@@ -5627,12 +6091,12 @@ function openPenilaianMasal() {
         popup.querySelector('#btn-terapkan-master').addEventListener('click', () => {
             let masterVal = popup.querySelector('#masal_nilai_master').value;
             if(masterVal === '') return;
-            if(masterVal > 100) masterVal = 100; if(masterVal < 0) masterVal = 0;
+            if(!isEskulMasal) { if(masterVal > 100) masterVal = 100; if(masterVal < 0) masterVal = 0; }
             
             let checked = popup.querySelectorAll('.chk-masal:checked');
             if(checked.length === 0) return;
             
-            let field = selectKolom.value;
+            let field = isEskulMasal ? 'Nilai' : selectKolom.value;
             checked.forEach(chk => {
                 let nis = chk.value;
                 let inp = popup.querySelector(`.input-masal-individu[data-nis="${nis}"]`);
@@ -5678,7 +6142,7 @@ function openPenilaianMasal() {
                 const inp = popup.querySelector(`.input-masal-individu[data-nis="${nis}"]`);
                 if(inp) {
                     inp.focus();
-                    inp.select();
+                    if(typeof inp.select === 'function') inp.select();
                 }
               }
             }, () => {});
@@ -7118,7 +7582,7 @@ async function shareBelumTuntasWA(e, mode = '') {
           ]);
           if (nv.error) throw nv.error;
           const rows = (nv.data || []).map(r => ({ NIS: r.nis, ...(r.data || {}) }));
-          return [rows, (kf.data && kf.data.config) || null];
+          return [rows, (kf.data && kf.data.config) || konfigurasiNilaiDefault(sheet)];
         };
         const [dataP, cP] = await ambilKategoriNilai("Data Nilai Pengetahuan");
         const [dataK, cK] = await ambilKategoriNilai("Data Nilai Keterampilan");
@@ -7126,51 +7590,138 @@ async function shareBelumTuntasWA(e, mode = '') {
         if (!modePk) { const [ds, cs] = await ambilKategoriNilai("Data Nilai Sikap"); dataS = ds; cS = cs; }
 
         const isKosongAtauKurang = (val) => (val === "" || val === null || Number(val) < 71);
-        let hasData = false;
+        const LTRS = ['A','B','C','D'];
+
+        // Hitung tunggakan per siswa dengan kunci komponen (utk filter dialog opsi & teks WA)
+        const perSiswa = listMuridKelas.map((m) => {
+            const p = dataP.find(d => d.NIS == m.NIS) || {};
+            const k = dataK.find(d => d.NIS == m.NIS) || {};
+            const s = dataS.find(d => d.NIS == m.NIS) || {};
+            const tP = [], tK = [], tS = [];
+
+            // Cek Pengetahuan
+            for(let i=0; i<(cP.active_kd||0); i++) {
+                const ltr = ['A','B','C','D','E','F','G','H'][i];
+                if(isKosongAtauKurang(p[`KD ${ltr} Rata-rata`])) tP.push({ v:`KD_${ltr}`, label: cP.kds?.[i]?.name || `KD ${ltr}` });
+            }
+            if(isKosongAtauKurang(p["UTS"])) tP.push({ v:'UTS', label:'UTS' });
+            if(isKosongAtauKurang(p["UAS/UKK"])) tP.push({ v:'UAS', label:'UAS' });
+
+            // Cek Keterampilan
+            for(let i=0; i<(cK.active_cp||0); i++) if(isKosongAtauKurang(k[`Optimum ${LTRS[i]}`])) tK.push({ v:`Kr_${LTRS[i]}`, label: cK.labels?.cp[i] || `Prak CP ${LTRS[i]}` });
+            for(let j=1; j<=(cK.active_proj||0); j++) if(isKosongAtauKurang(k[`Projek ${j}`])) tK.push({ v:`Proj_${j}`, label: cK.labels?.proj[j-1] || `Projek ${j}` });
+            for(let j=1; j<=(cK.active_port||0); j++) if(isKosongAtauKurang(k[`Porto ${j}`])) tK.push({ v:`Port_${j}`, label: cK.labels?.port[j-1] || `Porto ${j}` });
+
+            // Cek Sikap (dilewati pada mode gabungan Pengetahuan & Keterampilan)
+            if (!modePk) {
+                for(let i=0; i<(cS.active_cp||0); i++) {
+                    for(let j=1; j<=(cS.active_sub_cp||0); j++) {
+                        if(isKosongAtauKurang(s[`CP ${LTRS[i]}${j}`])) tS.push({ v:`Obs_${LTRS[i]}${j}`, label:`Obs ${cS.labels?.cp[i]||LTRS[i]}-${cS.labels?.sub[j-1] || j}` });
+                    }
+                }
+                if(isKosongAtauKurang(s["Nilai Akhir Raport"])) tS.push({ v:'Rapor', label:'Nilai Akhir (Rapor)' });
+            }
+            return { m, tP, tK, tS };
+        });
+
+        // Daftar komponen utk ceklis dialog (mengikuti kolom aktif pada config)
+        const daftarKomponen = [];
+        for(let i=0; i<(cP.active_kd||0); i++) {
+            const ltr = ['A','B','C','D','E','F','G','H'][i];
+            daftarKomponen.push({ v:`KD_${ltr}`, label:`KD ${ltr} (${cP.kds?.[i]?.name || `KD ${ltr}`})` });
+        }
+        daftarKomponen.push({ v:'UTS', label:'UTS' }, { v:'UAS', label:'UAS/UKK' });
+        for(let i=0; i<(cK.active_cp||0); i++) daftarKomponen.push({ v:`Kr_${LTRS[i]}`, label:`${cK.labels?.cp[i] || `Prak CP ${LTRS[i]}`} (Optimum ${LTRS[i]})` });
+        for(let j=1; j<=(cK.active_proj||0); j++) daftarKomponen.push({ v:`Proj_${j}`, label: cK.labels?.proj[j-1] || `Projek ${j}` });
+        for(let j=1; j<=(cK.active_port||0); j++) daftarKomponen.push({ v:`Port_${j}`, label: cK.labels?.port[j-1] || `Porto ${j}` });
+        if (!modePk) {
+            for(let i=0; i<(cS.active_cp||0); i++) {
+                for(let j=1; j<=(cS.active_sub_cp||0); j++) daftarKomponen.push({ v:`Obs_${LTRS[i]}${j}`, label:`Obs ${cS.labels?.cp[i]||LTRS[i]}-${j}` });
+            }
+            daftarKomponen.push({ v:'Rapor', label:'Nilai Akhir (Rapor)' });
+        }
         
+        // Cek apakah ada tunggakan (jika tidak, laporan selesai tanpa dialog opsi)
+        const adaTunggakan = perSiswa.some(x => x.tP.length > 0 || x.tK.length > 0 || x.tS.length > 0);
+        if (!adaTunggakan) return Swal.fire({icon: 'success', title: 'Sempurna!', text: modePk ? 'Semua siswa tuntas (Pengetahuan & Keterampilan).' : 'Semua siswa tuntas (Pengetahuan, Keterampilan, Sikap).', background: '#1e293b', color: '#fff'});
+
+        // [REQ a2] Dialog opsi: ceklis komponen nilai + ceklis nama siswa yang dilaporkan
+        const daftarOpsiCheck = daftarKomponen.map(k => `<label class="flex items-center gap-1.5 text-[10px] text-slate-300 cursor-pointer hover:bg-white/5 rounded px-1 py-0.5"><input type="checkbox" class="chk-komponen-nilai" value="${k.v}" checked>${escapeHtml(k.label)}</label>`).join('');
+        const daftarOpsiSiswa = perSiswa.map((x, i) => {
+            const gabung = [...x.tP, ...x.tK, ...x.tS].map(t => t.label);
+            const ringkas = gabung.length
+                ? `<span class="text-red-400/90">${escapeHtml(gabung.slice(0, 2).join(', '))}${gabung.length > 2 ? ' …' : ''}</span>`
+                : `<span class="text-green-500">(tuntas)</span>`;
+            return `<label class="flex items-center gap-2 p-0.5 border-b border-white/5 cursor-pointer hover:bg-white/5 rounded text-[11px] text-slate-300"><input type="checkbox" class="chk-siswa-nilai" value="${x.m.NIS}" ${gabung.length ? 'checked' : ''}><span class="truncate flex-1">${i + 1}. ${escapeHtml(x.m["Nama Lengkap"] || '')}</span>${ringkas}</label>`;
+        }).join('');
+
+        const pilihanOpsi = await Swal.fire({
+            title: '<div class="text-base font-bold">Opsi Laporan Belum Tuntas</div>',
+            html: `
+              <div class="text-left">
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-[10px] text-blue-300 font-bold">KOMPONEN NILAI YANG DICEK:</label>
+                  <div class="flex gap-1">
+                    <button type="button" id="btn-semua-komponen" class="text-[9px] bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 text-white transition">Semua</button>
+                    <button type="button" id="btn-kosong-komponen" class="text-[9px] bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 text-white transition">Kosongkan</button>
+                  </div>
+                </div>
+                <div id="opsi-komponen-nilai" class="grid grid-cols-2 gap-x-3 gap-y-0.5 max-h-[18vh] overflow-y-auto custom-scrollbar bg-black/20 rounded border border-white/10 p-1 mb-2">${daftarOpsiCheck}</div>
+                <div class="flex items-center justify-between mb-1">
+                  <label class="text-[10px] text-purple-300 font-bold">NAMA SISWA YANG DILAPORKAN:</label>
+                  <div class="flex gap-1">
+                    <button type="button" id="btn-semua-siswa" class="text-[9px] bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 text-white transition">Semua</button>
+                    <button type="button" id="btn-kosong-siswa" class="text-[9px] bg-white/10 px-1.5 py-0.5 rounded hover:bg-white/20 text-white transition">Kosongkan</button>
+                  </div>
+                </div>
+                <div id="opsi-cek-siswa" class="max-h-[26vh] overflow-y-auto custom-scrollbar bg-black/20 rounded border border-white/10 p-1">${daftarOpsiSiswa}</div>
+              </div>
+            `,
+            background: '#1e293b', color: '#fff', width: 620,
+            showCancelButton: true, cancelButtonText: 'Batal', cancelButtonColor: '#475569',
+            confirmButtonText: 'Lanjut <i class="fa-solid fa-arrow-right"></i>', confirmButtonColor: '#16a34a',
+            didOpen: () => {
+                const el = Swal.getPopup();
+                el.querySelector('#btn-semua-komponen').addEventListener('click', () => el.querySelectorAll('.chk-komponen-nilai').forEach(c => c.checked = true));
+                el.querySelector('#btn-kosong-komponen').addEventListener('click', () => el.querySelectorAll('.chk-komponen-nilai').forEach(c => c.checked = false));
+                el.querySelector('#btn-semua-siswa').addEventListener('click', () => el.querySelectorAll('.chk-siswa-nilai').forEach(c => c.checked = true));
+                el.querySelector('#btn-kosong-siswa').addEventListener('click', () => el.querySelectorAll('.chk-siswa-nilai').forEach(c => c.checked = false));
+            },
+            preConfirm: () => {
+                const el = Swal.getPopup();
+                const cekNilai = [...el.querySelectorAll('.chk-komponen-nilai:checked')].map(c => c.value);
+                const cekSiswa = [...el.querySelectorAll('.chk-siswa-nilai:checked')].map(c => c.value);
+                if (!cekSiswa.length) { Swal.showValidationMessage('Pilih minimal satu siswa.'); return false; }
+                return { cekNilai, cekSiswa };
+            }
+        });
+        if (!pilihanOpsi.isConfirmed) return;
+
+        const setNilai = new Set(pilihanOpsi.value?.cekNilai || []);
+        const setSiswa = new Set(pilihanOpsi.value?.cekSiswa || []);
+        let hasData = false;
+        let noUrut = 0;
+
         let textWA = `*INFORMASI NILAI BELUM TUNTAS / KOSONG*\n`;
         textWA += `TA: ${currentTahun} | Smt: ${currentSemesterNilai}\nMapel: ${mapel} | Kelas: ${kelas}\n\n`;
         textWA += `Berikut daftar siswa yang memiliki nilai kosong atau di bawah KKM (71)${modePk ? ' — Pengetahuan & Keterampilan' : ''}:\n\n`;
 
-        listMuridKelas.forEach((m, idx) => {
-            let p = dataP.find(d => d.NIS == m.NIS) || {};
-            let k = dataK.find(d => d.NIS == m.NIS) || {};
-            let s = dataS.find(d => d.NIS == m.NIS) || {};
-            let tP=[], tK=[], tS=[];
-
-            // Cek Pengetahuan
-            for(let i=0; i<cP.active_kd; i++) {
-                let ltr = ['A','B','C','D','E','F','G','H'][i];
-                if(isKosongAtauKurang(p[`KD ${ltr} Rata-rata`])) tP.push(cP.kds[i]?.name || `KD ${ltr}`);
-            }
-            if(isKosongAtauKurang(p["UTS"])) tP.push("UTS"); if(isKosongAtauKurang(p["UAS/UKK"])) tP.push("UAS");
-
-            // Cek Keterampilan
-            const LTRS = ['A','B','C','D'];
-            for(let i=0; i<cK.active_cp; i++) if(isKosongAtauKurang(k[`Optimum ${LTRS[i]}`])) tK.push(cK.labels?.cp[i] || `Prak CP ${LTRS[i]}`);
-            for(let j=1; j<=cK.active_proj; j++) if(isKosongAtauKurang(k[`Projek ${j}`])) tK.push(cK.labels?.proj[j-1] || `Projek ${j}`);
-            for(let j=1; j<=cK.active_port; j++) if(isKosongAtauKurang(k[`Porto ${j}`])) tK.push(cK.labels?.port[j-1] || `Porto ${j}`);
-
-            // Cek Sikap (dilewati pada mode gabungan Pengetahuan & Keterampilan)
-            if (!modePk) {
-                for(let i=0; i<cS.active_cp; i++) {
-                    for(let j=1; j<=cS.active_sub_cp; j++) {
-                        if(isKosongAtauKurang(s[`CP ${LTRS[i]}${j}`])) tS.push(`Obs ${cS.labels?.cp[i]||LTRS[i]}-${j}`);
-                    }
-                }
-                if(isKosongAtauKurang(s["Nilai Akhir Raport"])) tS.push("Nilai Akhir (Rapor)");
-            }
-
-            if (tP.length > 0 || tK.length > 0 || tS.length > 0) {
+        perSiswa.forEach(({ m, tP, tK, tS }) => {
+            if (!setSiswa.has(String(m.NIS))) return;
+            const wP = tP.filter(x => setNilai.has(x.v)).map(x => x.label);
+            const wK = tK.filter(x => setNilai.has(x.v)).map(x => x.label);
+            const wS = tS.filter(x => setNilai.has(x.v)).map(x => x.label);
+            if (wP.length > 0 || wK.length > 0 || wS.length > 0) {
                 hasData = true;
-                textWA += `${idx+1}. *${m["Nama Lengkap"]}*\n`;
-                if(tP.length>0) textWA += `   ~> Pgthn: _${tP.join(', ')}_\n`;
-                if(tK.length>0) textWA += `   ~> Ktrmpln: _${tK.join(', ')}_\n`;
-                if(tS.length>0) textWA += `   ~> Sikap: _${tS.join(', ')}_\n`;
+                noUrut++;
+                textWA += `${noUrut}. *${m["Nama Lengkap"]}*\n`;
+                if (wP.length > 0) textWA += `   ~> Pgthn: _${wP.join(', ')}_\n`;
+                if (wK.length > 0) textWA += `   ~> Ktrmpln: _${wK.join(', ')}_\n`;
+                if (wS.length > 0) textWA += `   ~> Sikap: _${wS.join(', ')}_\n`;
             }
         });
 
-        if(!hasData) return Swal.fire({icon: 'success', title: 'Sempurna!', text: modePk ? 'Semua siswa tuntas (Pengetahuan & Keterampilan).' : 'Semua siswa tuntas (Pengetahuan, Keterampilan, Sikap).', background: '#1e293b', color: '#fff'});
+        if (!hasData) return Swal.fire({icon: 'info', title: 'Tidak Ada Pilihan', text: 'Tidak ada siswa/komponen yang cocok dengan opsi yang Anda pilih.', background: '#1e293b', color: '#fff'});
 
         textWA += `\n_Mohon segera dilengkapi. Terima kasih._`;
         return tampilkanBroadcastWA(textWA);
@@ -8065,7 +8616,9 @@ function renderTabelEskul() {
             <div class="flex items-center justify-between gap-1 pr-1"><span class="truncate font-semibold">Nama Siswa</span><button onclick="event.stopPropagation(); siklusUrutNamaNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Nama (A-Z / Z-A)">${ikonUrutNamaNilai()}</button></div>
             <div class="col-resizer absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/50 transition-colors"></div>
           </th>
-          <th class="px-2 py-2 border-r border-white/10 bg-slate-700/60 w-20">Kelas</th>
+          <th class="px-2 py-2 border-r border-white/10 bg-slate-700/60 w-24">
+            <div class="flex items-center justify-center gap-1"><span>Kelas</span><button onclick="event.stopPropagation(); siklusUrutKelasNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Kelas (A-Z / Z-A)">${ikonUrutKelasNilai()}</button></div>
+          </th>
           <th class="px-2 py-2 border-r border-white/10 bg-indigo-900/40 w-20">Nilai<br>(A/B/C/D)</th>
           <th class="px-2 py-2 border-r border-white/10 bg-green-900/40 w-32">Predikat Akhir</th>
           <th class="px-2 py-2 border-r border-white/10 bg-purple-900/40">Deskripsi Ketercapaian <span class="text-[8px] text-slate-400 normal-case">(otomatis — Format di tombol Set)</span></th>
@@ -8610,7 +9163,7 @@ function onToggleEkskulForm(el) {
     // Tampilkan/sembunyikan blok sub-ekstrakurikuler mengikuti status centang tiap ekskul
     semua.forEach(c => {
         const wrap = document.querySelector(`.sub-ekskul-form-wrap[data-ekskul-sub="${CSS.escape(c.value)}"]`);
-        if (wrap) wrap.style.display = c.checked ? '' : 'none';
+        if (wrap) wrap.style.display = c.checked ? 'grid' : 'none';
     });
 }
 
@@ -8688,6 +9241,35 @@ function terapkanPopupPilihJabatan(jenis) {
     tutupPopupPilihJabatan();
 }
 
+/** Suntik CSS responsif khusus popup "Edit/Tambah Akun Murid" (scoped ke .swal-mobile-akun).
+ *  Dipasang inline supaya tampilan mobile tetap rapi walau web/css/style.css belum di-build ulang. */
+function suntikCSSMobileFormAkun() {
+    if (document.getElementById('swal-mobile-akun-style')) return;
+    const styleEl = document.createElement('style');
+    styleEl.id = 'swal-mobile-akun-style';
+    styleEl.textContent = `
+        .swal2-popup.swal-mobile-akun .swal2-html-container { text-align: left; padding-left: 0; padding-right: 0; overflow: visible !important; }
+        @media (max-width: 640px) {
+            .swal2-popup.swal-mobile-akun {
+                width: calc(100vw - 12px) !important;
+                max-width: 100vw !important;
+                max-height: 96dvh !important;
+                margin: 0 !important;
+                padding: 0.75rem !important;
+                border-radius: 0.75rem;
+            }
+            .swal2-popup.swal-mobile-akun .swal2-title { padding: 0 0 0.5rem; font-size: 0.95rem; }
+            .swal2-popup.swal-mobile-akun .swal2-html-container { padding-bottom: env(safe-area-inset-bottom, 0) !important; }
+            .swal2-popup.swal-mobile-akun .swal2-actions { flex-wrap: wrap !important; gap: 0.4rem !important; }
+            .swal2-popup.swal-mobile-akun .swal2-styled { margin: 0 !important; flex: 1 1 auto; }
+        }
+        @media (max-width: 380px) {
+            .swal2-popup.swal-mobile-akun .swal2-actions .swal2-styled { width: 100% !important; }
+        }
+    `;
+    document.head.appendChild(styleEl);
+}
+
 async function openFormAkunMurid(isNew, data = {}) {
     // Ambil pilihan dari Master Data (nama kolom = nama persis gaya Sheets)
     const listKelas = urutAz([...new Set(masterDataCache.map(m => m["Tingkat/Kelas"]).filter(Boolean))]);
@@ -8761,7 +9343,7 @@ async function openFormAkunMurid(isNew, data = {}) {
             <input type="checkbox" class="chk-ekskul-form" value="${escJs(e)}" onchange="onToggleEkskulForm(this)" ${ekskulArr.includes(e) ? 'checked' : ''}>
             <span class="break-words">${e}</span>
         </label>
-        ${subs ? `<div class="sub-ekskul-form-wrap ml-5 mt-1 grid grid-cols-2 gap-1" data-ekskul-sub="${escJs(e)}" style="${ekskulArr.includes(e) ? '' : 'display:none;'}">
+        ${subs ? `<div class="sub-ekskul-form-wrap ml-5 mt-1" data-ekskul-sub="${escJs(e)}" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(118px,1fr));gap:0.25rem;${ekskulArr.includes(e) ? '' : 'display:none;'}">
                 ${subs.map(s => `
                     <label class="flex items-center gap-1.5 cursor-pointer hover:text-white bg-slate-900/60 p-1 rounded border border-white/10 text-[10px]">
                         <input type="checkbox" class="chk-subekskul-form" data-ekskul="${escJs(e)}" value="${escJs(s.nama_sub)}" ${(formSubEkskulSel[e] || []).includes(s.nama_sub) ? 'checked' : ''}>
@@ -8774,11 +9356,11 @@ async function openFormAkunMurid(isNew, data = {}) {
 
 
     // Section header tipis untuk pengelompokan form (padat & rapi)
-    const sec = (label) => `<div class="sm:col-span-2 flex items-center gap-2 mt-1 first:mt-0"><span class="text-[9px] font-bold uppercase tracking-wider text-slate-500 whitespace-nowrap">${label}</span><span class="flex-1 h-px bg-white/10"></span></div>`;
+    const sec = (label) => `<div class="sm:col-span-2 flex items-center gap-2 mt-1 first:mt-0"><span class="text-[9px] font-bold uppercase tracking-wider text-slate-500 whitespace-normal" style="line-height:1.2;">${label}</span><span class="flex-1 h-px bg-white/10"></span></div>`;
     const lbl = "font-bold text-blue-300";
 
     const formHTML = `
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left text-[11px] text-slate-300 mt-1 max-h-[70vh] overflow-y-auto custom-scrollbar p-1 pr-2">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left text-[11px] text-slate-300 mt-1 max-h-[70vh] overflow-y-auto overflow-x-hidden custom-scrollbar p-1 pr-2 min-w-0" style="max-height:70vh;overflow-y:auto;overflow-x:hidden;">
             ${sec('Identitas Siswa')}
             <div><label class="${lbl}">ID Akun</label><input id="f_idakun" value="${escJs(nisV)}" readonly class="w-full bg-black/60 border border-white/10 rounded px-2 py-1 mt-0.5 text-slate-400 outline-none opacity-70"></div>
             <div><label class="${lbl}">NIS *</label><input id="f_nis" value="${escJs(nisV)}" ${!isNew?'readonly':''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500 disabled:opacity-50"></div>
@@ -8832,13 +9414,13 @@ async function openFormAkunMurid(isNew, data = {}) {
 
             ${sec('Jabatan & Ekstrakurikuler')}
             <div><label class="${lbl} mb-1 block">Jabatan Kelas</label>
-                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10">
+                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
                     <div id="badge-jabatan-kelas" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
                     <button type="button" onclick="openPopupPilihJabatan('kelas')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
                 </div>
             </div>
             <div><label class="${lbl} mb-1 block">Jabatan Ekstrakurikuler</label>
-                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10">
+                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
                     <div id="badge-jabatan-ekskul" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
                     <button type="button" onclick="openPopupPilihJabatan('ekskul')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
                 </div>
@@ -8846,7 +9428,7 @@ async function openFormAkunMurid(isNew, data = {}) {
 
             <div class="sm:col-span-2">
                 <label class="${lbl} mb-1 block">Ekstrakurikuler <span class="font-normal text-slate-400">(pilih lebih dari satu)</span></label>
-                <div class="grid grid-cols-2 gap-1.5 bg-black/20 p-1.5 rounded border border-white/10 max-h-24 overflow-y-auto custom-scrollbar">
+                <div class="bg-black/20 p-1.5 rounded border border-white/10 overflow-y-auto" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(132px,1fr));gap:0.375rem;max-height:9.5rem;">
                     ${chkEkskulHTML}
                 </div>
             </div>
@@ -8868,11 +9450,17 @@ async function openFormAkunMurid(isNew, data = {}) {
         </div>
     `;
 
+    // Lebar modal responsif: maksimal 640px; di layar kecil (mobile) selebar viewport minus 12px
+    const lebarLayar = window.innerWidth || document.documentElement.clientWidth || 640;
+    const lebarModalSwal = Math.min(640, lebarLayar - 12);
+
     Swal.fire({
         title: `<div class="text-base font-bold">${isNew ? 'Tambah' : 'Edit'} Akun Murid</div>`,
-        html: formHTML, width: 640, background: '#1e293b', color: '#fff',
+        html: formHTML, width: lebarModalSwal, background: '#1e293b', color: '#fff',
+        customClass: { popup: 'swal-mobile-akun' },
         showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-save"></i> Simpan Data',
         didOpen: () => {
+            suntikCSSMobileFormAkun();
             renderFormRiwayatSiswa();
             renderChipsJabatan('badge-jabatan-kelas', formJabatanKelasSel);
             renderChipsJabatan('badge-jabatan-ekskul', formJabatanEkskulSel);
@@ -8971,7 +9559,7 @@ function renderFormRiwayatSiswa() {
     const e = formRiwayatSiswaData[formRiwayatSiswaTahun] || { kelas: '', status: 'Aktif', ket: '' };
     const tahunLain = riwayatTahunList().filter(t => t !== formRiwayatSiswaTahun);
     konten.innerHTML = `
-        <div class="grid grid-cols-2 gap-2 text-left">
+        <div class="text-left" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(136px,1fr));gap:0.5rem;">
             <div><label class="block text-[10px] font-bold text-sky-300 mb-0.5">Kelas</label>
                 <select id="rs_kelas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none">
                     <option value="">-- Ikuti Kelas Statis --</option>
@@ -9363,22 +9951,344 @@ function resetPasswordMurid(nis, nama) {
 // ==========================================
 // LOGIKA FILTER & CETAK QR CODE MURID
 // ==========================================
-function openExportQRMurid() {
+// ---- Panel Pilih Siswa untuk Export QR: ceklis, cari nama, sort A-Z/Z-A, sinkron filter ----
+let qrModalState = null; // { rows, kolom: 'no'|'nis'|'nisn'|'nama'|'kelas'|'tahun'|'sub', arah: 'asc'|'desc', cari }
+
+/** Baris siswa dari cache: kolom dinormalisasi + daftar ekskul terpisah. */
+function qrBuatBaris() {
+    return (cacheAkunMurid || []).map(m => {
+        const nis = String(m.nis_nip || m.NIS || '');
+        return {
+            m, nis,
+            nisn: String(m.nisn || m.NISN || ''),
+            nama: String(m.nama_lengkap || m["Nama Lengkap"] || ''),
+            kelas: String(m.tingkat_kelas || m["Tingkat/Kelas"] || ''),
+            tahun: String(m.tahun_pelajaran || m["ID Tahun Pelajaran"] || ''),
+            eks: String(m.ekstrakurikuler || m.Ekstrakurikuler || '').split(',').map(s => s.trim()).filter(Boolean),
+            sub: '' // diisi sekali oleh muridSubEkskulLookup saat modal dibuka
+        };
+    });
+}
+
+/** Baca chip filter grup (Tahun/Kelas/Ekskul) → { semua, set }. "(semua)" on = tanpa pembatasan. */
+function qrBacaFilter(nama) {
+    const grup = document.querySelector(`[data-qr-grup="${nama}"]`);
+    const set = new Set();
+    if (!grup) return { semua: true, set };
+    const cekSemua = grup.querySelector('.qr-f-semua');
+    if (cekSemua && cekSemua.checked) return { semua: true, set };
+    grup.querySelectorAll('input[name^="qr-f-"]:not(.qr-f-semua)').forEach(c => { if (c.checked) set.add(c.value); });
+    return { semua: set.size === 0, set };
+}
+
+/** Cocokkan baris dengan filter chip Tahun/Kelas/Ekskul (tanpa kata kunci cari). */
+function qrBarisCocokFilter(r) {
+    const fTahun = qrBacaFilter('tahun');
+    const fKelas = qrBacaFilter('kelas');
+    const fEkskul = qrBacaFilter('ekskul');
+    if (!fTahun.semua && !fTahun.set.has(r.tahun)) return false;
+    if (!fKelas.semua && !fKelas.set.has(r.kelas)) return false;
+    if (!fEkskul.semua && !r.eks.some(e => fEkskul.set.has(e))) return false;
+    return true;
+}
+
+/** Baris yang tampil = cocok filter dasar + kata kunci cari. */
+function qrFilterSiswa() {
+    if (!qrModalState) return [];
+    const cari = (qrModalState.cari || '').toLowerCase();
+    return qrModalState.rows.filter(r => qrBarisCocokFilter(r) && (!cari || (r.nama + ' ' + r.nis + ' ' + r.nisn).toLowerCase().includes(cari)));
+}
+
+/** Pemetaan kolom → pengambil nilai untuk sortir per kolom (A-Z / Z-A). */
+const QR_KOLOM_NILAI = {
+    no:    () => '',
+    nis:   (r) => r.nis,
+    nisn:  (r) => r.nisn,
+    nama:  (r) => r.nama,
+    kelas: (r) => r.kelas,
+    tahun: (r) => r.tahun,
+    sub:   (r) => r.sub
+};
+
+/** Urutkan daftar sesuai kolom + arah aktif. Kolom 'no' = urutan natural (terbalik utk Z-A). */
+function qrSortRows(list) {
+    const kolom = (qrModalState && qrModalState.kolom) || 'nama';
+    const arah = (qrModalState && qrModalState.arah) || 'asc';
+    if (kolom === 'no') {
+        const rows = list.slice();
+        if (arah === 'desc') rows.reverse();
+        return rows;
+    }
+    const multi = arah === 'asc' ? 1 : -1;
+    const ambil = QR_KOLOM_NILAI[kolom] || QR_KOLOM_NILAI.nama;
+    return list.slice().sort((a, b) => {
+        const va = String(ambil(a) || '');
+        const vb = String(ambil(b) || '');
+        // Baris tanpa nilai (mis. Sub Ekskul '-') selalu diletakkan di akhir
+        if (kolom === 'sub') {
+            if (!va && !vb) return 0;
+            if (!va) return 1;
+            if (!vb) return -1;
+        }
+        const cmp = va.localeCompare(vb, 'id', { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return multi * cmp;
+        // Tie-breaker: NIS agar urutan stabil
+        return multi * String(a.nis).localeCompare(String(b.nis), 'id', { numeric: true });
+    });
+}
+
+/** Set NIS yang sedang diceklis di tabel. */
+function qrTercek() {
+    const set = new Set();
+    document.querySelectorAll('#qr-tbody .qrck:checked').forEach(el => set.add(el.value));
+    return set;
+}
+
+/* Draft "siswa dipilih cetak": tersimpan otomatis tiap ganti ceklis, direset saat tombol Cancel. */
+const QR_DRAFT_KEY = 'sisip_qr_draft_terpilih';
+function qrBacaDraft() {
+    try { return new Set(JSON.parse(localStorage.getItem(QR_DRAFT_KEY) || '[]')); } catch (e) { return new Set(); }
+}
+function qrSimpanDraft() {
+    try {
+        const arr = (qrModalState && qrModalState.terpilih) ? [...qrModalState.terpilih] : [];
+        if (arr.length) localStorage.setItem(QR_DRAFT_KEY, JSON.stringify(arr));
+        else localStorage.removeItem(QR_DRAFT_KEY);
+    } catch (e) { /* abaikan */ }
+}
+function qrHapusDraft() {
+    try { localStorage.removeItem(QR_DRAFT_KEY); } catch (e) { /* abaikan */ }
+    if (qrModalState) qrModalState.terpilih.clear();
+}
+
+/** Toggle ceklis satu siswa: perbarui state + simpan draft. */
+function qrUbahCek(cb) {
+    if (!qrModalState || !cb) return;
+    if (cb.checked) qrModalState.terpilih.add(cb.value);
+    else qrModalState.terpilih.delete(cb.value);
+    qrSimpanDraft();
+    qrUpdateInfo();
+}
+
+/** Render ulang tbody + info bar; ceklis dipertahankan untuk baris yang masih tampil. */
+function qrRenderSiswa() {
+    const tbody = document.getElementById('qr-tbody');
+    if (!tbody || !qrModalState) return;
+    const tercek = (qrModalState.terpilih || new Set()); // baca sebelum tbody ditimpa
+    const rows = qrSortRows(qrFilterSiswa());
+    tbody.innerHTML = rows.map((r, i) => `
+        <tr class="border-b border-white/10">
+            <td class="px-1.5 py-1 text-center">${i + 1}</td>
+            <td class="px-1.5 py-1 text-center"><input type="checkbox" class="qrck" value="${escJs(r.nis)}" onchange="qrUbahCek(this)" ${tercek.has(r.nis) ? 'checked' : ''}></td>
+            <td class="px-1.5 py-1">${escJs(r.nis)}</td>
+            <td class="px-1.5 py-1">${escJs(r.nisn)}</td>
+            <td class="px-1.5 py-1 whitespace-nowrap">${escJs(r.nama)}</td>
+            <td class="px-1.5 py-1">${escJs(r.kelas)}</td>
+            <td class="px-1.5 py-1">${escJs(r.tahun)}</td>
+            <td class="px-1.5 py-1">${r.sub ? escJs(r.sub) : '<span class="text-slate-500">-</span>'}</td>
+        </tr>`).join('') || `<tr><td colspan="8" class="px-2 py-3 text-center text-slate-400">Tidak ada siswa sesuai filter.</td></tr>`;
+    qrUpdateInfo();
+    perbaruiTombolArahSort();
+    qrUpdateFilterContext();
+    ['tahun', 'kelas', 'ekskul'].forEach(qrUpdateGrupBadge);
+}
+
+/** Info bar: jumlah terceklis vs tampil vs total. */
+function qrUpdateInfo() {
+    const info = document.getElementById('qr-info');
+    if (!info) return;
+    const tampil = document.querySelectorAll('#qr-tbody tr').length;
+    const total = (qrModalState ? qrModalState.rows : []).length;
+    const dipilih = (qrModalState && qrModalState.terpilih) ? qrModalState.terpilih.size : qrTercek().size;
+    info.innerHTML = `<i class="fa-solid fa-check-double text-indigo-400 mr-1"></i><b class="text-indigo-300">${dipilih}</b> siswa dipilih cetak &middot; <b class="text-slate-200">${tampil}</b> tampil dari ${total} siswa`;
+    // Sinkronkan checkbox master di header ("ceklis semua" daftar yang sedang tampil)
+    const master = document.querySelector('.qrck-all');
+    if (master) {
+        const semua = document.querySelectorAll('#qr-tbody .qrck');
+        const cek = document.querySelectorAll('#qr-tbody .qrck:checked');
+        master.checked = semua.length > 0 && cek.length === semua.length;
+        master.indeterminate = cek.length > 0 && cek.length < semua.length;
+    }
+}
+
+function qrCeklisSemua() {
+    document.querySelectorAll('#qr-tbody .qrck').forEach(el => { el.checked = true; });
+    if (qrModalState) document.querySelectorAll('#qr-tbody .qrck').forEach(el => qrModalState.terpilih.add(el.value));
+    qrSimpanDraft();
+    qrUpdateInfo();
+}
+
+function qrHapusCeklis() {
+    document.querySelectorAll('#qr-tbody .qrck').forEach(el => { el.checked = false; });
+    if (qrModalState) document.querySelectorAll('#qr-tbody .qrck').forEach(el => qrModalState.terpilih.delete(el.value));
+    qrSimpanDraft();
+    qrUpdateInfo();
+}
+
+/** Ceklis semua / hapus semua daftar yang sedang tampil (checkbox master di header). */
+function qrCeklisSemuaTampil(el) {
+    document.querySelectorAll('#qr-tbody .qrck').forEach(c => {
+        c.checked = el.checked;
+        if (qrModalState) {
+            if (el.checked) qrModalState.terpilih.add(c.value);
+            else qrModalState.terpilih.delete(c.value);
+        }
+    });
+    qrSimpanDraft();
+    qrUpdateInfo();
+}
+
+/** Pilih kolom sort saat header diklik; klik kolom yang sama membalik arah A-Z ⇄ Z-A. */
+function qrSetSort(kolom) {
+    if (!qrModalState) return;
+    if (qrModalState.kolom === kolom) {
+        qrModalState.arah = qrModalState.arah === 'asc' ? 'desc' : 'asc';
+    } else {
+        qrModalState.kolom = kolom;
+        qrModalState.arah = 'asc';
+    }
+    perbaruiTombolArahSort();
+    qrRenderSiswa();
+}
+
+/** Sinkronkan label tombol "Filter A-Z/Z-A" + indikator ▲/▼ pada kolom aktif. */
+function perbaruiTombolArahSort() {
+    const btn = document.getElementById('qr-btn-az');
+    if (btn) {
+        btn.innerHTML = (qrModalState && qrModalState.arah === 'asc')
+            ? '<i class="fa-solid fa-arrow-down-a-z mr-1"></i>Filter A-Z'
+            : '<i class="fa-solid fa-arrow-up-z-a mr-1"></i>Filter Z-A';
+    }
+    document.querySelectorAll('.qr-sort-ico').forEach(el => {
+        const kolom = el.getAttribute('data-kolom');
+        const aktif = !!(qrModalState && qrModalState.kolom === kolom);
+        el.textContent = aktif ? (qrModalState.arah === 'asc' ? '▲' : '▼') : '';
+        el.style.opacity = aktif ? '1' : '0.25';
+    });
+}
+
+/** Toggle arah sort A-Z ⇄ Z-A (tombol toolbar); ceklis dipertahankan. */
+function qrArahSort() {
+    if (!qrModalState) return;
+    qrModalState.arah = qrModalState.arah === 'asc' ? 'desc' : 'asc';
+    perbaruiTombolArahSort();
+    qrRenderSiswa();
+}
+
+/** Teks konteks filter aktif (Tahun/Kelas/Ekskul) yang membatasi daftar "Pilih Spesifik 1 Siswa". */
+function qrUpdateFilterContext() {
+    const el = document.getElementById('qr-filter-context');
+    if (!el) return;
+    const labelN = { tahun: 'Tahun', kelas: 'Kelas', ekskul: 'Ekskul' };
+    const parts = [];
+    ['tahun', 'kelas', 'ekskul'].forEach(n => {
+        const f = qrBacaFilter(n);
+        if (!f.semua && f.set.size) {
+            parts.push(`${labelN[n]}: <b class="text-slate-300">${escapeHtml(urutAz([...f.set]).join(', '))}</b>`);
+        }
+    });
+    el.innerHTML = parts.length
+        ? `<i class="fa-solid fa-filter text-indigo-400 mr-1"></i>Daftar siswa mengikuti Filter — ${parts.join(' &middot; ')}`
+        : `<i class="fa-solid fa-filter text-slate-500 mr-1"></i>Tanpa filter Tahun/Kelas/Ekskul: semua siswa tampil`;
+}
+
+function qrCari() {
+    if (!qrModalState) return;
+    qrModalState.cari = ((document.getElementById('qr_cari') || {}).value || '').trim();
+    qrRenderSiswa();
+}
+
+/** Ukuran kertas print (mm) untuk pilihan di modal QR. */
+const QR_KERTAS = {
+    a4: { label: 'A4', w: 210, h: 297 },
+    f4: { label: 'F4 / Folio', w: 210, h: 330 },
+    a5: { label: 'A5', w: 148, h: 210 },
+    a3: { label: 'A3', w: 297, h: 420 }
+};
+
+/** HTML grup filter kolapsibel: tombol header (klik → buka/tutup + scroll) + chip checkbox. */
+function qrChipFilterHTML(nama, label, list) {
+    const chip = (v, extra) => `<label class="inline-flex items-center gap-1 bg-slate-800 border border-white/20 rounded px-2 py-1 text-[10px] text-slate-200 cursor-pointer select-none"><input type="checkbox" ${extra} onchange="qrGantiFilter('${nama}', this)"> ${escapeHtml(v)}</label>`;
+    return `<div class="qr-grup mb-1.5" data-qr-grup="${nama}">
+        <button type="button" onclick="qrToggleGrup('${nama}')" class="w-full flex items-center justify-between gap-2 bg-slate-800 border border-white/20 rounded px-2 py-1.5 text-[10px] font-bold text-indigo-300 text-left cursor-pointer transition hover:bg-slate-700" title="Klik untuk buka/tutup & scroll ke pilihan">
+            <span class="flex items-center gap-1"><i class="fa-solid fa-sliders mr-0.5"></i>${label} <span class="qr-grup-badge ml-1 inline-block bg-indigo-500/20 text-indigo-200 rounded px-1 py-0.5 text-[9px] font-normal">semua</span></span>
+            <i class="fa-solid fa-chevron-down qr-grup-ico transition-transform"></i>
+        </button>
+        <div class="qr-grup-chip hidden flex-wrap gap-1 p-1.5 bg-black/20 border border-white/10 rounded">
+            ${chip('(semua)', 'class="qr-f-semua" checked')}
+            ${(list || []).map(v => chip(v, `name="qr-f-${nama}" value="${escJs(v)}"`)).join('')}
+        </div>
+    </div>`;
+}
+
+/** Toggle chip filter: "(semua)" menang; memilih spesifik mematikan "(semua)"; kosong → kembali "(semua)". */
+function qrGantiFilter(nama, el) {
+    const grup = document.querySelector(`[data-qr-grup="${nama}"]`);
+    if (!grup) return;
+    const cekSemua = grup.querySelector('.qr-f-semua');
+    const chips = [...grup.querySelectorAll('input[name^="qr-f-"]:not(.qr-f-semua)')];
+    if (el && el !== cekSemua && el.checked) cekSemua.checked = false; // pilih spesifik → matikan (semua)
+    if (!cekSemua.checked && chips.every(c => !c.checked)) cekSemua.checked = true; // tak ada spesifik → (semua) nyala lagi
+    if (cekSemua.checked && chips.some(c => c.checked)) chips.forEach(c => { c.checked = false; }); // (semua) → matikan spesifik
+    qrRenderSiswa();
+}
+
+/** Buka/tutup grup chip filter; saat dibuka, scroll ke badan chips agar langsung terlihat. */
+function qrToggleGrup(nama) {
+    const g = document.querySelector(`[data-qr-grup="${nama}"]`);
+    if (!g) return;
+    const d = g.querySelector('.qr-grup-chip');
+    const i = g.querySelector('.qr-grup-ico');
+    if (!d) return;
+    const buka = d.classList.contains('hidden');
+    d.classList.toggle('hidden', !buka);
+    d.classList.toggle('flex', buka);
+    if (i) i.style.transform = buka ? 'rotate(180deg)' : '';
+    if (buka) setTimeout(() => d.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 60);
+}
+
+/** Badge status grup: "semua" (default / 0 dipilih) atau "N dipilih" sesuai chip aktif. */
+function qrUpdateGrupBadge(nama) {
+    const g = document.querySelector(`[data-qr-grup="${nama}"]`);
+    if (!g) return;
+    const b = g.querySelector('.qr-grup-badge');
+    if (!b) return;
+    const cekSemua = g.querySelector('.qr-f-semua');
+    const chips = [...g.querySelectorAll('input[name^="qr-f-"]:not(.qr-f-semua)')];
+    if (!chips.length) { b.textContent = 'semua'; return; }
+    const n = chips.filter(c => c.checked).length;
+    b.textContent = (cekSemua && cekSemua.checked) || !n ? 'semua' : `${n} dipilih`;
+}
+
+/** Baris info pilihan kertas (ukuran mm + jumlah kolom). */
+function qrGantiKertas() {
+    const el = document.getElementById('qr-kertas-info');
+    if (!el) return;
+    const k = QR_KERTAS[(document.getElementById('qr_kertas') || {}).value] || QR_KERTAS.a4;
+    const orient = (document.getElementById('qr_orient') || {}).value || 'potret';
+    const kolom = (document.getElementById('qr_kolom') || {}).value || '4';
+    const w = orient === 'lanskap' ? k.h : k.w;
+    const h = orient === 'lanskap' ? k.w : k.h;
+    el.innerHTML = `<i class="fa-solid fa-ruler text-emerald-400 mr-1"></i>${k.label} ${orient === 'lanskap' ? 'lanskap' : 'potret'} &middot; ${w}×${h}mm &middot; <b class="text-slate-300">${kolom} kolom</b> per baris`;
+}
+
+async function openExportQRMurid() {
     // Ambil data unik dari cache untuk opsi dropdown (skema tabel akun: snake_case)
     const listTahun = urutAz([...new Set(cacheAkunMurid.map(m => m.tahun_pelajaran || m["ID Tahun Pelajaran"]).filter(Boolean))]);
     const listKelas = urutAz([...new Set(cacheAkunMurid.map(m => m.tingkat_kelas || m["Tingkat/Kelas"]).filter(Boolean))]);
-    const listSiswa = cacheAkunMurid.slice()
-      .sort((a, b) => String(a.nama_lengkap || a["Nama Lengkap"] || '').localeCompare(String(b.nama_lengkap || b["Nama Lengkap"] || ''), 'id', { sensitivity: 'base' }))
-      .map(m => {
-        const nis = m.nis_nip || m.NIS;
-        const nama = m.nama_lengkap || m["Nama Lengkap"] || '';
-        return `<option value="${escJs(nis)}">${escJs(nis)} - ${escJs(nama)}</option>`;
-      }).join('');
-    
+
     // Pecah ekstrakurikuler jika pakai koma
     let rawEkskul = [];
-    cacheAkunMurid.forEach(m => { if(m.ekstrakurikuler || m.Ekstrakurikuler) rawEkskul = rawEkskul.concat((m.ekstrakurikuler || m.Ekstrakurikuler).split(',').map(e => e.trim())); });
+    cacheAkunMurid.forEach(m => { if (m.ekstrakurikuler || m.Ekstrakurikuler) rawEkskul = rawEkskul.concat((m.ekstrakurikuler || m.Ekstrakurikuler).split(',').map(e => e.trim())); });
     const listEkskul = urutAz(denganSto([...new Set(rawEkskul)].filter(Boolean)));
+
+    // State panel pilih siswa (data Sub Ekskul dihitung sekali saat modal dibuka)
+    const rows = qrBuatBaris();
+    try {
+        const subMap = await muridSubEkskulLookup(cacheAkunMurid || []);
+        rows.forEach(r => { r.sub = subMap[r.nis] ? subMap[r.nis].replace(/\|/g, ', ').replace(/; /g, ' \u00B7 ') : ''; });
+    } catch (e) { /* gagal ambil sub ekskul -> kolom '-' */ }
+    qrModalState = { rows, kolom: 'nama', arah: 'asc', cari: '', terpilih: qrBacaDraft() };
 
     let formHTML = `
         <div class="text-left text-xs text-slate-300">
@@ -9388,18 +10298,58 @@ function openExportQRMurid() {
                 <option value="NISN">NISN Siswa</option>
             </select>
 
-            <label class="block font-bold text-indigo-300 mb-1 mt-2">Filter Tahun Pelajaran</label>
-            <select id="qr_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mb-3 outline-none text-white"><option value="ALL">Semua Tahun</option>${listTahun.map(t => `<option value="${t}">${t}</option>`).join('')}</select>
+            ${qrChipFilterHTML('tahun', 'Filter Tahun Pelajaran', listTahun)}
+            ${qrChipFilterHTML('kelas', 'Filter Kelas', listKelas)}
+            ${qrChipFilterHTML('ekskul', 'Filter Ekstrakurikuler', listEkskul)}
 
-            <label class="block font-bold text-indigo-300 mb-1">Filter Kelas</label>
-            <select id="qr_kelas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mb-3 outline-none text-white"><option value="ALL">Semua Kelas</option>${listKelas.map(k => `<option value="${k}">${k}</option>`).join('')}</select>
+            <label class="block font-bold text-emerald-300 mb-1">Pilihan Kertas Cetak</label>
+            <div class="flex gap-1.5 mb-1.5 flex-wrap">
+                <select id="qr_kertas" onchange="qrGantiKertas()" class="bg-slate-700 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none">
+                    <option value="a4">A4 (210×297 mm)</option>
+                    <option value="f4">F4 / Folio (210×330 mm)</option>
+                    <option value="a5">A5 (148×210 mm)</option>
+                    <option value="a3">A3 (297×420 mm)</option>
+                </select>
+                <select id="qr_orient" onchange="qrGantiKertas()" class="bg-slate-700 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none">
+                    <option value="potret">Potret</option>
+                    <option value="lanskap">Lanskap</option>
+                </select>
+                <select id="qr_kolom" onchange="qrGantiKertas()" class="bg-slate-700 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none">
+                    <option value="2">2 kolom</option>
+                    <option value="3">3 kolom</option>
+                    <option value="4" selected>4 kolom</option>
+                    <option value="6">6 kolom</option>
+                </select>
+            </div>
+            <div id="qr-kertas-info" class="text-[9px] text-slate-400 mb-1.5"></div>
+            
+            <label class="block font-bold text-indigo-300 mb-1">Pilih Spesifik 1 Siswa (Opsional) <span class="text-[9px] font-normal text-slate-400">(biarkan kosong semua = cetak semua sesuai filter)</span></label>
+            <div class="flex gap-1.5 mb-1.5 flex-wrap">
+                <input type="text" id="qr_cari" oninput="qrCari()" placeholder="cari nama siswa" class="flex-1 min-w-0 bg-black/40 border border-white/20 rounded px-2 py-1 text-white outline-none focus:border-indigo-500" style="min-width:120px;">
+                <button type="button" onclick="qrCeklisSemua()" class="bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap"><i class="fa-solid fa-check-double mr-1"></i>Ceklis Semua</button>
+                <button type="button" onclick="qrHapusCeklis()" class="bg-black/40 hover:bg-slate-700 border border-white/20 text-slate-300 px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap"><i class="fa-solid fa-xmark mr-1"></i>Hapus Ceklis</button>
+                <button type="button" id="qr-btn-az" onclick="qrArahSort()" class="bg-black/40 hover:bg-slate-700 border border-white/20 text-slate-300 px-2 py-1 rounded text-[10px] font-bold whitespace-nowrap"><i class="fa-solid fa-arrow-down-a-z mr-1"></i>Filter A-Z</button>
+            </div>
+            <div id="qr-filter-context" class="text-[9px] text-slate-500 mb-1.5"></div>
+            <div class="bg-black/20 border border-white/20 rounded overflow-auto" style="max-height:40vh;">
+                <table class="w-full text-[10px] text-slate-300" style="min-width:600px;">
+                    <thead class="sticky top-0 bg-slate-800 text-slate-200">
+                        <tr class="text-left">
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('no')" title="Urutkan No (A-Z / Z-A)">No <span class="qr-sort-ico" data-kolom="no"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold text-center"><input type="checkbox" class="qrck-all" onchange="qrCeklisSemuaTampil(this)" title="Ceklis semua / hapus semua pada daftar tampil"></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('nis')" title="Urutkan NIS (A-Z / Z-A)">NIS <span class="qr-sort-ico" data-kolom="nis"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('nisn')" title="Urutkan NISN (A-Z / Z-A)">NISN <span class="qr-sort-ico" data-kolom="nisn"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('nama')" title="Urutkan Nama Lengkap (A-Z / Z-A)">Nama Lengkap <span class="qr-sort-ico" data-kolom="nama"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('kelas')" title="Urutkan Kelas (A-Z / Z-A)">Kelas <span class="qr-sort-ico" data-kolom="kelas"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('tahun')" title="Urutkan Tahun Pelajaran (A-Z / Z-A)">Tahun Pelajaran <span class="qr-sort-ico" data-kolom="tahun"></span></th>
+                            <th class="px-1.5 py-1.5 font-bold cursor-pointer select-none" onclick="qrSetSort('sub')" title="Urutkan Sub Ekskul (A-Z / Z-A)">Sub Ekskul <span class="qr-sort-ico" data-kolom="sub"></span></th>
+                        </tr>
+                    </thead>
+                    <tbody id="qr-tbody"></tbody>
+                </table>
+            </div>
+            <div id="qr-info" class="text-[9px] text-slate-400 mt-1"></div>
 
-            <label class="block font-bold text-indigo-300 mb-1">Filter Ekstrakurikuler</label>
-            <select id="qr_ekskul" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mb-3 outline-none text-white"><option value="ALL">Semua Ekstrakurikuler</option>${listEkskul.map(e => `<option value="${e}">${e}</option>`).join('')}</select>
-            
-            <label class="block font-bold text-indigo-300 mb-1">Pilih Spesifik 1 Siswa (Opsional)</label>
-            <select id="qr_siswa" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1.5 mb-3 outline-none text-white"><option value="ALL">Cetak Semua Siswa Berdasarkan Filter Di Atas</option>${listSiswa}</select>
-            
             <label class="block font-bold text-yellow-300 mb-1 mt-2">Label Tambahan (Misal: Mata Pelajaran)</label>
             <input type="text" id="qr_label_mapel" placeholder="Kosongkan jika tidak perlu..." class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mb-2 text-white outline-none focus:border-indigo-500">
         </div>
@@ -9407,36 +10357,63 @@ function openExportQRMurid() {
 
     Swal.fire({
         title: '<i class="fa-solid fa-qrcode text-indigo-400"></i> Export QR Code',
-        html: formHTML, background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-print"></i> Generate & Cetak'
-    }).then((res) => {
-        if (res.isConfirmed) {
-            const config = {
+        html: formHTML, background: '#1e293b', color: '#fff', showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-print"></i> Generate & Cetak',
+        didOpen: () => { qrRenderSiswa(); qrGantiKertas(); },
+        preConfirm: () => {
+            const cek = (qrModalState && qrModalState.terpilih) ? qrModalState.terpilih : new Set();
+            const base = (qrModalState ? qrModalState.rows : []).filter(qrBarisCocokFilter);
+            if (!cek.size && !base.length) {
+                Swal.showValidationMessage('Tidak ada siswa yang cocok dengan filter tersebut.');
+                return false;
+            }
+            return {
                 target: document.getElementById('qr_target').value,
-                tahun: document.getElementById('qr_tahun').value,
-                kelas: document.getElementById('qr_kelas').value,
-                ekskul: document.getElementById('qr_ekskul').value,
-                siswa: document.getElementById('qr_siswa').value,
+                tahun: [...qrBacaFilter('tahun').set],
+                kelas: [...qrBacaFilter('kelas').set],
+                ekskul: [...qrBacaFilter('ekskul').set],
+                kertas: (document.getElementById('qr_kertas') || {}).value || 'a4',
+                orient: (document.getElementById('qr_orient') || {}).value || 'potret',
+                kolom: (document.getElementById('qr_kolom') || {}).value || '4',
+                targets: cek,
                 label_mapel: document.getElementById('qr_label_mapel').value
             };
-            cetakQRMuridTerfilter(config);
+        }
+    }).then((res) => {
+        if (res.isConfirmed) {
+            cetakQRMuridTerfilter(res.value);
+        } else if (res.dismiss === 'cancel') {
+            qrHapusDraft(); // klik "cancel" → reset draft "siswa dipilih cetak"
         }
     });
 }
 
 function cetakQRMuridTerfilter(config) {
-    let filtered = cacheAkunMurid;
-    if (config.siswa !== 'ALL') {
-        filtered = filtered.filter(m => (m.nis_nip || m.NIS) === config.siswa);
+    let filtered = (cacheAkunMurid || []).slice();
+    const targets = (config.targets && config.targets.size) ? config.targets : null;
+    if (targets) {
+        // Cetak hanya siswa yang diceklis di panel pilih siswa
+        filtered = filtered.filter(m => targets.has(String(m.nis_nip || m.NIS)));
     } else {
-        if (config.tahun !== 'ALL') filtered = filtered.filter(m => (m.tahun_pelajaran || m["ID Tahun Pelajaran"] || "") === config.tahun);
-        if (config.kelas !== 'ALL') filtered = filtered.filter(m => (m.tingkat_kelas || m["Tingkat/Kelas"] || "") === config.kelas);
-        if (config.ekskul !== 'ALL') filtered = filtered.filter(m => {
+        // Cetak semua siswa sesuai filter chip (tahun/kelas/ekskul multi-pilih)
+        const fTahun = config.tahun || [];
+        const fKelas = config.kelas || [];
+        const fEkskul = config.ekskul || [];
+        if (fTahun.length) filtered = filtered.filter(m => fTahun.includes(m.tahun_pelajaran || m["ID Tahun Pelajaran"] || ""));
+        if (fKelas.length) filtered = filtered.filter(m => fKelas.includes(m.tingkat_kelas || m["Tingkat/Kelas"] || ""));
+        if (fEkskul.length) filtered = filtered.filter(m => {
             const e = m.ekstrakurikuler || m.Ekstrakurikuler || "";
-            return e.split(',').map(x => x.trim()).includes(config.ekskul);
+            return e.split(',').map(x => x.trim()).some(x => fEkskul.includes(x));
         });
     }
 
     if(filtered.length === 0) return Swal.fire('Kosong', 'Tidak ada siswa yang cocok dengan filter tersebut.', 'warning');
+
+    // Konfigurasi kertas: ukuran (mm) + orientasi + jumlah kolom (default A4 potret 4 kolom)
+    const kertas = QR_KERTAS[config.kertas] || QR_KERTAS.a4;
+    const lanskap = config.orient === 'lanskap';
+    const kolom = Math.min(6, Math.max(2, parseInt(config.kolom, 10) || 4));
+    const mmW = lanskap ? kertas.h : kertas.w;
+    const mmH = lanskap ? kertas.w : kertas.h;
 
     const printWindow = window.open('', '_blank');
     
@@ -9452,6 +10429,7 @@ function cetakQRMuridTerfilter(config) {
         
         return `
             <div class="qr-card">
+                <span class="scissor" aria-hidden="true">✂</span>
                 <div class="card-header">
                     <h4>${escapeHtml(m.nama_lengkap || m["Nama Lengkap"] || '-')}</h4>
                     <p>${escapeHtml(m.tingkat_kelas || m["Tingkat/Kelas"] || '-')}</p>
@@ -9460,7 +10438,7 @@ function cetakQRMuridTerfilter(config) {
                 <div class="card-footer">
                     <p class="qr-val">${escapeHtml(qrDataVal)}</p>
                     ${config.label_mapel ? `<span class="lbl-mapel">${escapeHtml(config.label_mapel)}</span>` : ''}
-                    ${config.ekskul !== 'ALL' ? `<span class="lbl-eks">${escapeHtml(config.ekskul)}</span>` : ''}
+                    ${(config.ekskul && config.ekskul.length) ? `<span class="lbl-eks">${escapeHtml(config.ekskul.join(', '))}</span>` : ''}
                 </div>
             </div>
         `;
@@ -9469,7 +10447,7 @@ function cetakQRMuridTerfilter(config) {
     printWindow.document.write(`
         <html>
             <head>
-                <title>Cetak QR Code Siswa A4</title>
+                <title>Cetak QR Code Siswa ${kertas.label} ${lanskap ? 'Lanskap' : 'Potret'} ${kolom} Kolom</title>
                 <style>
                     * { box-sizing: border-box; }
                     body { 
@@ -9478,9 +10456,9 @@ function cetakQRMuridTerfilter(config) {
                         background: #fff;
                         font-family: Arial, sans-serif;
                     }
-                    /* Mengatur Ukuran A4 dan Margin Ujung Kertas Maksimal */
+                    /* Ukuran & orientasi kertas sesuai pilihan (mm eksplisit) */
                     @page { 
-                        size: A4; 
+                        size: ${mmW}mm ${mmH}mm; 
                         margin: 5mm; 
                     }
                     .info-header {
@@ -9489,15 +10467,15 @@ function cetakQRMuridTerfilter(config) {
                     }
                     .info-header h2 { margin: 5px 0; font-size: 14px; }
                     
-                    /* Sistem 4 Kolom Rapat */
+                    /* Grid kartu sesuai jumlah kolom pilihan; gap = jalur gunting */
                     .grid-container {
                         display: grid;
-                        grid-template-columns: repeat(4, 1fr);
-                        gap: 3px; /* Jarak antar kartu sangat kecil */
+                        grid-template-columns: repeat(${kolom}, 1fr);
+                        gap: 6px; /* jalur potong antar kartu */
                         width: 100%;
                     }
                     
-                    /* Desain Kartu Mini */
+                    /* Desain Kartu Mini — garis putus-putus sebagai panduan potong */
                     .qr-card {
                         border: 1px dashed #666;
                         border-radius: 4px;
@@ -9508,7 +10486,19 @@ function cetakQRMuridTerfilter(config) {
                         justify-content: space-between;
                         align-items: center;
                         height: 100%;
+                        position: relative;
                         page-break-inside: avoid; /* Mencegah kartu terpotong di tengah halaman */
+                    }
+                    .qr-card .scissor {
+                        position: absolute;
+                        left: -1px;
+                        top: -1px;
+                        font-size: 9px;
+                        color: #999;
+                        line-height: 1;
+                        background: #fff;
+                        padding: 0 2px;
+                        z-index: 2;
                     }
                     .card-header { width: 100%; min-height: 25px; margin-bottom: 2px; }
                     .card-header h4 { margin: 0; font-size: 10px; line-height: 1.1; text-transform: uppercase; }
@@ -9521,16 +10511,23 @@ function cetakQRMuridTerfilter(config) {
                     .lbl-mapel { display: block; margin-top: 2px; font-size: 7px; background: #eee; padding: 1px; }
                     .lbl-eks { display: block; margin-top: 1px; font-size: 7px; color: #555; }
 
+                    /* Kolom banyak (5-6) → kartu lebih kecil */
+                    body.kertas-sempit .qr-card { padding: 3px; }
+                    body.kertas-sempit .qr-card img { width: 54px; height: 54px; }
+                    body.kertas-sempit .card-header h4 { font-size: 8px; }
+                    body.kertas-sempit .qr-val { font-size: 9px; }
+                    body.kertas-sempit .card-header { min-height: 22px; }
+
                     /* Menghilangkan header info saat di print agar muat lebih banyak */
                     @media print {
                         .info-header { display: none; }
                     }
                 </style>
             </head>
-            <body>
+            <body class="${kolom >= 5 ? 'kertas-sempit' : ''}">
                 <div class="info-header">
                     <h2>PREVIEW QR CODE KEHADIRAN</h2>
-                    <p style="margin: 0; font-size: 10px;">Akan otomatis disembunyikan saat dicetak (Total: ${filtered.length} Siswa)</p>
+                    <p style="margin: 0; font-size: 10px;">${kertas.label} ${lanskap ? 'Lanskap' : 'Potret'} · ${kolom} kolom — otomatis disembunyikan saat dicetak (Total: ${filtered.length} Siswa)</p>
                 </div>
                 <div class="grid-container">
                     ${htmlCards}
@@ -13566,13 +14563,24 @@ async function renderTabInfoEkskul() {
         </div>
       </div>
       <div class="flex gap-2 items-center justify-end flex-wrap">
-        <button onclick="exportInfoEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
-        <button onclick="exportInfoEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
-        <button onclick="exportInfoEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
+        <label for="ekskul-export-scope" class="text-[10px] uppercase text-slate-400 font-bold"><i class="fa-solid fa-download"></i> Export:</label>
+        <select id="ekskul-export-scope" class="bg-slate-700 border border-white/20 rounded-lg px-2 py-1.5 text-xs text-white outline-none" title="Pilih cakupan data yang diexport">
+          <option value="semua">Semua</option>
+          <option value="pengumuman">Pengumuman &amp; Berita</option>
+          <option value="piket">Jadwal Piket</option>
+          <option value="agenda">Agenda Terdekat</option>
+          <option value="anggota">Pengurus &amp; Anggota</option>
+        </select>
+        <button onclick="exportInfoEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Export Excel sesuai cakupan di atas"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
+        <button onclick="exportInfoEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Export PDF sesuai cakupan di atas"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
+        <button onclick="exportInfoEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Bagikan via WhatsApp sesuai cakupan di atas"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
       </div>
-      <div id="info-pengumuman-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengumuman...</div>
-      <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        <div id="info-pengumuman-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengumuman...</div>
         <div id="info-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
+      </div>
+      <div id="info-piket-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat jadwal piket...</div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div id="info-pengurus-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengurus...</div>
         <div id="info-anggota-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat anggota...</div>
       </div>
@@ -13598,6 +14606,9 @@ async function renderTabInfoEkskul() {
           </div>`).join('')}
     </div>`;
   })();
+
+  // Kartu "Jadwal Piket" (read-only, default ringkas = hari ini & besok) — sebaris penuh di bawah grid Pengumuman+Agenda.
+  muatInfoPiketEkskul(aktif);
 
   const anggota = await ambilAnggotaEkskul(aktif);
   const petaJab = petaJabatanAnggota(aktif, anggota);
@@ -13651,70 +14662,200 @@ async function renderTabInfoEkskul() {
     </div>`;
   }
 
-  // ---------- Kartu terpisah: ANGGOTA (tabel Nama | Sub-Ekskul | Kelas, warna per Sub, A-Z/Z-A) ----------
+  // ---------- Kartu terpisah: ANGGOTA (mode PC jadi 2 tabel samping-samping agar halaman tidak panjang) ----------
   const boxAg = document.getElementById('info-anggota-ekskul');
   if (boxAg) {
     const ambilNilaiAnggota = (a, kolom) => kolom === 'sub' ? (subMap[String(a.nis_nip)] || []).join(', ') : (kolom === 'kelas' ? a.tingkat_kelas : a.nama_lengkap);
     const listAnggota = sortInfoAnggota.kolom ? terapkanSortKolom(anggota, sortInfoAnggota, ambilNilaiAnggota) : anggota;
     const thA = (label, kolom) => `<th class="p-2 cursor-pointer select-none" onclick="gantiSortInfoEkskul('anggota','${kolom}')">${label} ${ikonSortInfo('anggota', kolom)}</th>`;
+    // Satu tabel utuh (nomor baris dimulai dari `mulai + 1`); dipakai utuh di layar kecil, dibagi 2 di lg+.
+    const tabelAnggota = (slice, mulai) => `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
+      <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${thA('Nama', 'nama')}${thA('Sub-Ekskul', 'sub')}${thA('Kelas', 'kelas')}<th class="p-2">Kontak</th></tr></thead>
+      <tbody>${slice.map((a, i) => {
+        const subSaya = subMap[String(a.nis_nip)] || [];
+        const w = subSaya.length ? warnaSub(subSaya[0], subs) : { border: 'border-white/10', text: 'text-slate-400', bg: '' };
+        return `<tr class="border-b border-white/5 hover:bg-white/5 border-l-4 ${w.border}">
+          <td class="p-2"><i class="fa-solid fa-user text-indigo-300 text-[9px]"></i> ${mulai + i + 1}. ${escapeHtml(a.nama_lengkap || '-')}</td>
+          <td class="p-2 border-l border-white/10">${subSaya.length ? subSaya.map(s => { const ws = warnaSub(s, subs); return `<span class="text-[9px] px-1.5 py-0.5 rounded ${ws.bg} ${ws.text} font-bold mr-1"><i class="fa-solid fa-circle text-[6px]"></i> ${escapeHtml(s)}</span>`; }).join('') : '<span class="text-slate-500">-</span>'}</td>
+          <td class="p-2 border-l border-white/10">${escapeHtml(a.tingkat_kelas || '-')}</td>
+          <td class="p-2 border-l border-white/10">${linkWA(a.no_telepon || '', `Assalamualaikum, kami menghubungi ${a.nama_lengkap || ''} terkait kegiatan ${aktif}.`)}</td>
+        </tr>`;
+      }).join('')}</tbody></table></div>`;
+    const mid = Math.ceil(listAnggota.length / 2);
+    const isiAnggota = listAnggota.length > 1
+      ? `<div class="grid grid-cols-1 lg:grid-cols-2 gap-3">${tabelAnggota(listAnggota.slice(0, mid), 0)}${tabelAnggota(listAnggota.slice(mid), mid)}</div>`
+      : tabelAnggota(listAnggota, 0);
     boxAg.outerHTML = `<div class="bg-white/5 border border-white/10 rounded-xl p-3">
-      <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-users"></i> Anggota (${anggota.length})</h3>
+      <h3 class="text-[11px] font-bold text-yellow-300 uppercase mb-2"><i class="fa-solid fa-users"></i> Anggota (${anggota.length})${listAnggota.length > 1 ? ' <span class="text-[9px] text-slate-500 normal-case hidden lg:inline">— 2 kolom di layar besar</span>' : ''}</h3>
       ${anggota.length === 0
         ? `<p class="italic text-slate-400 text-[11px]">Belum ada anggota aktif.</p>`
-        : `<div class="overflow-x-auto"><table class="w-full text-[11px] text-left border-collapse">
-          <thead><tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">${thA('Nama', 'nama')}${thA('Sub-Ekskul', 'sub')}${thA('Kelas', 'kelas')}<th class="p-2">Kontak</th></tr></thead>
-          <tbody>${listAnggota.map((a, i) => {
-            const subSaya = subMap[String(a.nis_nip)] || [];
-            const w = subSaya.length ? warnaSub(subSaya[0], subs) : { border: 'border-white/10', text: 'text-slate-400', bg: '' };
-            return `<tr class="border-b border-white/5 hover:bg-white/5 border-l-4 ${w.border}">
-              <td class="p-2"><i class="fa-solid fa-user text-indigo-300 text-[9px]"></i> ${i + 1}. ${escapeHtml(a.nama_lengkap || '-')}</td>
-              <td class="p-2 border-l border-white/10">${subSaya.length ? subSaya.map(s => { const ws = warnaSub(s, subs); return `<span class="text-[9px] px-1.5 py-0.5 rounded ${ws.bg} ${ws.text} font-bold mr-1"><i class="fa-solid fa-circle text-[6px]"></i> ${escapeHtml(s)}</span>`; }).join('') : '<span class="text-slate-500">-</span>'}</td>
-              <td class="p-2 border-l border-white/10">${escapeHtml(a.tingkat_kelas || '-')}</td>
-              <td class="p-2 border-l border-white/10">${linkWA(a.no_telepon || '', `Assalamualaikum, kami menghubungi ${a.nama_lengkap || ''} terkait kegiatan ${aktif}.`)}</td>
-            </tr>`;
-          }).join('')}</tbody></table></div>`}
+        : isiAnggota}
     </div>`;
   }
 }
 
-/** Export tabel Pengurus & Anggota (Info Ekskul) ke Excel (.xlsx). */
-function exportInfoEkskulExcel() {
-  const c = window.__cacheInfoEkskul;
-  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
-  const data = [[`PENGURUS & ANGGOTA - ${c.aktif}`], [], ['Nama', 'Jabatan', 'Sub-Ekskul', 'Kelas']];
-  c.anggota.forEach(a => data.push([a.nama_lengkap || '', c.petaJab[String(a.nis_nip)] || a.jabatan || '', (c.subMap[String(a.nis_nip)] || []).join(', '), a.tingkat_kelas || '']));
-  const ws = XLSX.utils.aoa_to_sheet(data);
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Pengurus & Anggota');
-  XLSX.writeFile(wb, `pengurus-anggota-${c.aktif || 'ekskul'}.xlsx`);
+// ==================== [UPGRADE 2026-10-10] EXPORT INFO EKSULK BERDASARKAN CAKUPAN ====================
+/** Cakupan export Info Ekskul yang sedang dipilih (dibaca dari <select id="ekskul-export-scope">). */
+function scopeExportInfoEkskul() {
+  const el = document.getElementById('ekskul-export-scope');
+  return (el && el.value) || 'semua';
 }
 
-/** Cetak tabel Pengurus & Anggota (Info Ekskul) ke jendela print. */
-function exportInfoEkskulPDF() {
-  const c = window.__cacheInfoEkskul;
-  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  const trs = c.anggota.map(a => `<tr><td>${escapeHtml(a.nama_lengkap || '')}</td><td>${escapeHtml(c.petaJab[String(a.nis_nip)] || a.jabatan || '-')}</td><td>${escapeHtml((c.subMap[String(a.nis_nip)] || []).join(', ') || '-')}</td><td>${escapeHtml(a.tingkat_kelas || '-')}</td></tr>`).join('');
-  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Pengurus & Anggota - ${escapeHtml(c.aktif)}</title>
-  <style>body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;} h1{font-size:15px;margin-bottom:2px;} table{width:100%;border-collapse:collapse;margin-top:12px;} th,td{border:1px solid #999;padding:5px 6px;} th{background:#eee;text-align:left;}</style></head><body>
-  <h1>Pengurus & Anggota — ${escapeHtml(c.aktif)}</h1>
-  <table><thead><tr><th>Nama</th><th>Jabatan</th><th>Sub-Ekskul</th><th>Kelas</th></tr></thead><tbody>${trs}</tbody></table>
-  <script>window.onload=()=>{window.print();};<\\/script></body></html>`;
+/** Apakah jadwal piket punya setidaknya satu slot terisi? */
+function adaJadwalPiketTerkisi(st) {
+  return !!(st && st.hari && st.hari.length && st.piket && Object.keys(st.piket).some(h => (st.piket[h] || []).length));
+}
+
+/** Baris panjang (Hari | Piket | NIS | Nama) untuk export jadwal piket (Excel/WA). */
+function barisJadwalPiket(st) {
+  const rows = [];
+  (st.hari || []).forEach(h => {
+    const slot = (st.piket[h] || []).filter(p => p && (p.nis || p.nama));
+    if (!slot.length) { rows.push([h, '-', '', '']); return; }
+    slot.forEach((p, i) => rows.push([h, i + 1, p.nis || '', p.nama || '']));
+  });
+  return rows;
+}
+
+/** Kumpulkan data yang diperlukan export Info Ekskul sesuai cakupan (fetch hanya bagian yang diminta). */
+async function ambilDataExportInfoEkskul(scope) {
+  const aktif = window.__ekskulAktif;
+  const c = window.__cacheInfoEkskul || { anggota: [], petaJab: {}, subMap: {}, subs: [], aktif };
+  const d = { aktif, anggota: c.anggota || [], petaJab: c.petaJab || {}, subMap: c.subMap || {}, subs: c.subs || [], pengumuman: [], agenda: [], piket: null };
+  const perlu = (sc) => scope === 'semua' || scope === sc;
+  if (perlu('pengumuman')) {
+    try {
+      const { data } = await supaClient.from('pengumuman_ekskul').select('judul, isi, created_at').eq('ekskul', aktif).order('created_at', { ascending: false }).limit(200);
+      d.pengumuman = data || [];
+    } catch (e) { console.warn('ambilDataExportInfoEkskul/pengumuman:', e); }
+  }
+  if (perlu('agenda')) {
+    try {
+      const { data } = await supaClient.from('agenda_ekskul').select('*').eq('ekskul', aktif).order('tanggal', { ascending: false, nullsFirst: false });
+      const hariIni = new Date().toISOString().split('T')[0];
+      d.agenda = urutkanAgendaEkskul((data || []).filter(r => agendaBerulang(r) || String(r.tanggal || '') >= hariIni)).slice(0, 5);
+    } catch (e) { console.warn('ambilDataExportInfoEkskul/agenda:', e); }
+  }
+  if (perlu('piket')) d.piket = await bacaJadwalPiket(aktif);
+  return d;
+}
+
+/** Excel: 1 sheet per bagian sesuai cakupan ("Semua" = workbook multi-sheet; bagian kosong dilewati). */
+async function exportInfoEkskulExcel() {
+  const scope = scopeExportInfoEkskul();
+  const d = await ambilDataExportInfoEkskul(scope);
+  if (typeof XLSX === 'undefined') return Swal.fire('Error', 'Library SheetJS (XLSX) tidak ditemukan.', 'error');
+  const wb = XLSX.utils.book_new();
+  const tambah = (nama, rows) => {
+    if (!rows || rows.length < 3) return;
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, String(nama).slice(0, 31));
+  };
+  if (scope === 'semua' || scope === 'pengumuman') {
+    const rows = [[`PENGUMUMAN & BERITA - ${d.aktif}`], ['Tanggal', 'Judul', 'Isi']];
+    d.pengumuman.forEach(p => rows.push([String(p.created_at || '').split('T')[0], p.judul || '', p.isi || '']));
+    tambah('Pengumuman & Berita', rows);
+  }
+  if (scope === 'semua' || scope === 'piket') {
+    if (adaJadwalPiketTerkisi(d.piket)) {
+      const rows = [[`JADWAL PIKET - ${d.aktif}`], ['Hari', 'Piket', 'NIS', 'Nama'], ...barisJadwalPiket(d.piket)];
+      tambah('Jadwal Piket', rows);
+    }
+  }
+  if (scope === 'semua' || scope === 'agenda') {
+    const rows = [[`AGENDA TERDEKAT - ${d.aktif}`], ['Jadwal', 'Kegiatan', 'Keterangan']];
+    d.agenda.forEach(r => rows.push([labelJadwalAgenda(r), r.kegiatan || '', r.keterangan || '']));
+    tambah('Agenda Terdekat', rows);
+  }
+  if (scope === 'semua' || scope === 'anggota') {
+    const rows = [[`PENGURUS & ANGGOTA - ${d.aktif}`], ['Nama', 'Jabatan', 'Sub-Ekskul', 'Kelas']];
+    d.anggota.forEach(a => rows.push([a.nama_lengkap || '', d.petaJab[String(a.nis_nip)] || a.jabatan || '', (d.subMap[String(a.nis_nip)] || []).join(', '), a.tingkat_kelas || '']));
+    tambah('Pengurus & Anggota', rows);
+  }
+  if (!wb.SheetNames.length) return showToast('error', 'Tidak ada data untuk diexport.');
+  XLSX.writeFile(wb, `info-ekskul-${scope}-${d.aktif || 'ekskul'}.xlsx`);
+}
+
+/** PDF: jendela print berisi 1 tabel per bagian sesuai cakupan. */
+async function exportInfoEkskulPDF() {
+  const scope = scopeExportInfoEkskul();
+  const d = await ambilDataExportInfoEkskul(scope);
+  const GAYA = '<style>body{font-family:Arial,sans-serif;font-size:11px;color:#111;padding:24px;} h1{font-size:15px;margin-bottom:2px;} h2{font-size:12px;margin:16px 0 2px;} table{width:100%;border-collapse:collapse;margin-top:8px;} th,td{border:1px solid #999;padding:5px 6px;} th{background:#eee;text-align:left;}</style>';
+  const TBL_KEPALA = (kolom) => `<table><thead><tr>${kolom.map(k => `<th>${escapeHtml(k)}</th>`).join('')}</tr></thead>`;
+  let sections = '';
+  if (scope === 'semua' || scope === 'pengumuman') {
+    if (d.pengumuman.length) {
+      const trs = d.pengumuman.map(p => `<tr><td>${escapeHtml(String(p.created_at || '').split('T')[0])}</td><td>${escapeHtml(p.judul || '')}</td><td>${escapeHtml(p.isi || '')}</td></tr>`).join('');
+      sections += `<h2>Pengumuman &amp; Berita</h2>${TBL_KEPALA(['Tanggal', 'Judul', 'Isi'])}<tbody>${trs}</tbody></table>`;
+    }
+  }
+  if (scope === 'semua' || scope === 'piket') {
+    if (adaJadwalPiketTerkisi(d.piket)) {
+      const maxSlot = Math.max(...d.piket.hari.map(h => (d.piket.piket[h] || []).length));
+      sections += `<h2>Jadwal Piket</h2>${racikTabelPiketHTML(d.piket.piket, d.piket.hari, maxSlot, false)}`;
+    }
+  }
+  if (scope === 'semua' || scope === 'agenda') {
+    if (d.agenda.length) {
+      const trs = d.agenda.map(r => `<tr><td>${escapeHtml(labelJadwalAgenda(r))}</td><td>${escapeHtml(r.kegiatan || '')}</td><td>${escapeHtml(r.keterangan || '')}</td></tr>`).join('');
+      sections += `<h2>Agenda Terdekat</h2>${TBL_KEPALA(['Jadwal', 'Kegiatan', 'Keterangan'])}<tbody>${trs}</tbody></table>`;
+    }
+  }
+  if (scope === 'semua' || scope === 'anggota') {
+    if (d.anggota.length) {
+      const trs = d.anggota.map(a => `<tr><td>${escapeHtml(a.nama_lengkap || '')}</td><td>${escapeHtml(d.petaJab[String(a.nis_nip)] || a.jabatan || '-')}</td><td>${escapeHtml((d.subMap[String(a.nis_nip)] || []).join(', ') || '-')}</td><td>${escapeHtml(a.tingkat_kelas || '-')}</td></tr>`).join('');
+      sections += `<h2>Pengurus &amp; Anggota</h2>${TBL_KEPALA(['Nama', 'Jabatan', 'Sub-Ekskul', 'Kelas'])}<tbody>${trs}</tbody></table>`;
+    }
+  }
+  if (!sections) return showToast('error', 'Tidak ada data untuk diexport.');
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Info Ekskul - ${escapeHtml(d.aktif)}</title>${GAYA}</head><body><h1>Info Ekskul — ${escapeHtml(d.aktif)}</h1>${sections}<script>window.onload=()=>{window.print();};<\\/script></body></html>`;
   const w = window.open('', '_blank');
   if (!w) return showToast('error', 'Popup diblokir browser. Izinkan popup untuk export PDF.');
   w.document.write(html); w.document.close();
 }
 
-/** Bagikan ringkasan Pengurus & Anggota (Info Ekskul) via WhatsApp. */
-function exportInfoEkskulWA() {
-  const c = window.__cacheInfoEkskul;
-  if (!c || !c.anggota.length) return showToast('error', 'Tidak ada data untuk diexport.');
-  let teks = `*PENGURUS & ANGGOTA - ${c.aktif}*\n\n`;
-  c.anggota.forEach((a, i) => {
-    const jab = c.petaJab[String(a.nis_nip)] || a.jabatan || '';
-    const sub = c.subMap[String(a.nis_nip)] || '';
-    teks += `${i + 1}. ${a.nama_lengkap || '-'}${jab ? ' (' + jab + ')' : ''}${sub ? ' [' + sub + ']' : ''} - ${a.tingkat_kelas || '-'}\n`;
-  });
+/** WhatsApp: teks gabungan bagian-bagian sesuai cakupan (tetap bisa diedit di preview sebelum kirim). */
+async function exportInfoEkskulWA() {
+  const scope = scopeExportInfoEkskul();
+  const d = await ambilDataExportInfoEkskul(scope);
+  let teks = '';
+  if (scope === 'semua' || scope === 'pengumuman') {
+    if (d.pengumuman.length) {
+      teks += `*PENGUMUMAN & BERITA - ${d.aktif}*\n\n`;
+      d.pengumuman.forEach((p, i) => teks += `${i + 1}. ${p.judul || '-'} — ${String(p.created_at || '').split('T')[0]}\n   ${p.isi || ''}\n`);
+      teks += '\n';
+    }
+  }
+  if (scope === 'semua' || scope === 'piket') {
+    if (adaJadwalPiketTerkisi(d.piket)) {
+      teks += `*JADWAL PIKET - ${d.aktif}*\n\n`;
+      d.piket.hari.forEach(h => {
+        const slot = (d.piket.piket[h] || []).filter(p => p && (p.nis || p.nama));
+        if (!slot.length) { teks += `*${h}:* -\n`; return; }
+        teks += `*${h}:*\n`;
+        slot.forEach((p, i) => teks += `${i + 1}. ${p.nama || '-'} (${p.nis || ''})\n`);
+        teks += '\n';
+      });
+    }
+  }
+  if (scope === 'semua' || scope === 'agenda') {
+    if (d.agenda.length) {
+      teks += `*AGENDA TERDEKAT - ${d.aktif}*\n\n`;
+      d.agenda.forEach((r, i) => teks += `${i + 1}. ${r.kegiatan || '-'} (${labelJadwalAgenda(r)})${r.keterangan ? '\n   ' + r.keterangan : ''}\n`);
+      teks += '\n';
+    }
+  }
+  if (scope === 'semua' || scope === 'anggota') {
+    if (d.anggota.length) {
+      teks += `*PENGURUS & ANGGOTA - ${d.aktif}*\n\n`;
+      d.anggota.forEach((a, i) => {
+        const jab = d.petaJab[String(a.nis_nip)] || a.jabatan || '';
+        const sub = d.subMap[String(a.nis_nip)] || '';
+        teks += `${i + 1}. ${a.nama_lengkap || '-'}${jab ? ' (' + jab + ')' : ''}${sub ? ' [' + sub + ']' : ''} - ${a.tingkat_kelas || '-'}\n`;
+      });
+    }
+  }
+  if (!teks.trim()) return showToast('error', 'Tidak ada data untuk diexport.');
   Swal.fire({
     title: '<i class="fa-brands fa-whatsapp"></i> Preview Pesan',
     html: `<textarea id="ie_wa_preview" class="w-full h-52 bg-black/40 border border-white/20 rounded p-2 text-xs text-white outline-none custom-scrollbar">${escapeHtml(teks)}</textarea>`,
@@ -13950,7 +15091,7 @@ const GRUP_SUBTAB_EKSKUL = {
   persuratan: [['dispensasi', 'Surat Dispensasi', 'fa-file-signature'], ['arsipsurat', 'Arsip Surat', 'fa-inbox'], ['proposal', 'Proposal Kegiatan', 'fa-file-lines'], ['lpj', 'LPJ', 'fa-file-invoice-dollar']],
   profil: [['profil', 'Anggota', 'fa-users'], ['pendaftaran', 'Pendaftaran Baru', 'fa-user-plus']],
   keuangan: [['kasumum', 'Kas Umum', 'fa-wallet'], ['kasanggota', 'Kas Anggota', 'fa-hand-holding-dollar'], ['inventaris', 'Inventaris', 'fa-boxes-stacked'], ['peminjaman', 'Peminjaman Alat', 'fa-right-left']],
-  jurnal: [['agenda', 'Agenda Kegiatan', 'fa-calendar-check'], ['proker', 'Program Kerja', 'fa-list-check'], ['jurnalharian', 'Jurnal/Logbook', 'fa-book'], ['materi', 'Materi & Tugas', 'fa-book-open']],
+  jurnal: [['agenda', 'Agenda Kegiatan', 'fa-calendar-check'], ['proker', 'Program Kerja', 'fa-list-check'], ['piket', 'Jadwal Piket', 'fa-clipboard-list'], ['jurnalharian', 'Jurnal/Logbook', 'fa-book'], ['materi', 'Materi & Tugas', 'fa-book-open']],
   arsip: [['sertifikat', 'Sertifikat & Prestasi', 'fa-award']]
 };
 function switchSubTabEkskul(grup, sub) {
@@ -13974,9 +15115,360 @@ async function renderGrupEkskul(grup) {
   if (sub === 'kasumum') return renderTabKasUmumEkskul();
   if (sub === 'kasanggota') return renderTabKasAnggotaEkskul();
   if (sub === 'agenda') return renderTabAgendaEkskul();
+  if (sub === 'piket') return renderTabPiketEkskul();
   if (sub === 'jurnalharian') return renderSubEkskulCrud('jurnal');
   return renderSubEkskulCrud(sub);
 }
+
+// ---------- JADWAL PIKET (sub-tab "Jurnal & Program Kerja" + kartu di Info Ekskul) ----------
+const DAFTAR_HARI_PIKET = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
+const DAFTAR_HARI_BAKU_PIKET = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+/** Baca jadwal piket satu ekskul dari DB (fallback: hari baku Senin–Sabtu, piket kosong). */
+async function bacaJadwalPiket(ekskul) {
+  let row = null;
+  try {
+    const { data } = await supaClient.from('jadwal_piket_ekskul').select('*').eq('ekskul', ekskul).maybeSingle();
+    row = data;
+  } catch (e) { console.warn('bacaJadwalPiket:', e); }
+  const hari = (Array.isArray(row?.hari) && row.hari.length)
+    ? row.hari.filter(h => DAFTAR_HARI_PIKET.includes(h))
+    : [...DAFTAR_HARI_BAKU_PIKET];
+  const piket = (row?.piket && typeof row.piket === 'object' && !Array.isArray(row.piket)) ? row.piket : {};
+  return { hari, piket };
+}
+
+/** Simpan (upsert) jadwal piket satu ekskul: insert bila belum ada baris, update bila sudah. */
+async function simpanJadwalPiket(ekskul, hari, piket) {
+  if (!ekskul) return false;
+  const updated_at = new Date().toISOString();
+  try {
+    const { data: ada, error: errCek } = await supaClient.from('jadwal_piket_ekskul').select('id').eq('ekskul', ekskul).maybeSingle();
+    if (errCek) throw errCek;
+    if (ada) {
+      const { error } = await supaClient.from('jadwal_piket_ekskul').update({ hari, piket, updated_at }).eq('ekskul', ekskul);
+      if (error) throw error;
+    } else {
+      const { error } = await supaClient.from('jadwal_piket_ekskul').insert({ ekskul, hari, piket, updated_at });
+      if (error) throw error;
+    }
+    return true;
+  } catch (e) {
+    console.warn('simpanJadwalPiket:', e);
+    showToast('error', 'Gagal menyimpan jadwal piket.');
+    return false;
+  }
+}
+
+/** Chip nama di sel tabel (bolehKelola: bisa drag + tombol ✕ untuk membatalkan ke antrian). */
+function chipPiketHTML(p, hari, bolehKelola) {
+  const nama = escapeHtml(String(p.nama || p.nis || '-'));
+  if (!bolehKelola) return `<div class="bg-slate-800/70 border border-white/10 text-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap">${nama}</div>`;
+  return `<div data-piket-chip data-hari="${escJs(hari)}" data-nis="${escJs(String(p.nis))}" data-nama="${escJs(p.nama || '')}" draggable="true"
+    ondragstart="piketDragMulai(event)" ondragend="piketDragSelesai()"
+    class="cursor-grab active:cursor-grabbing bg-indigo-900/40 border border-indigo-500/40 text-indigo-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1 hover:border-yellow-400" title="Seret ke hari lain">
+    <span>${nama}</span>
+    <button type="button" onclick="piketHapusChip('${escJs(hari)}','${escJs(String(p.nis))}')" class="text-slate-400 hover:text-red-300" title="Kembalikan ke antrian"><i class="fa-solid fa-xmark text-[9px]"></i></button>
+  </div>`;
+}
+
+/** Chip nama di Antrian Siswa (belum terjadwal). */
+function chipPoolPiketHTML(a) {
+  return `<div data-piket-chip data-hari="" data-nis="${escJs(String(a.nis_nip))}" data-nama="${escJs(a.nama_lengkap || '')}" draggable="true"
+    ondragstart="piketDragMulai(event)" ondragend="piketDragSelesai()"
+    class="cursor-grab active:cursor-grabbing bg-emerald-900/40 border border-emerald-500/40 text-emerald-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap hover:border-yellow-400" title="Seret ke kolom hari piket">
+    ${escapeHtml(a.nama_lengkap || '-')}
+  </div>`;
+}
+
+/** Builder tabel jadwal piket (kolom = hari, baris = slot Piket 1..n). Dipakai halaman & Info Ekskul. */
+function racikTabelPiketHTML(piket, hari, maxSlot, bolehKelola) {
+  const trHeader = `<tr class="text-slate-400 uppercase text-[9px] border-b border-white/10">
+    <th class="p-2 text-center w-14">Slot</th>${hari.map(h => `<th class="p-2 text-center">${escapeHtml(h)}</th>`).join('')}</tr>`;
+  const trs = Array.from({ length: maxSlot }, (_, r) => {
+    const tds = hari.map(h => {
+      const p = (piket[h] || [])[r];
+      const isi = p ? chipPiketHTML(p, h, bolehKelola) : (bolehKelola ? '<span class="text-[9px] text-slate-600">＋</span>' : '');
+      const attr = bolehKelola
+        ? `ondragover="piketDragIzinkan(event)" ondragleave="piketDragKeluar(event)" ondrop="piketDragDrop(event,'${escJs(h)}')"`
+        : '';
+      return `<td data-sel-hari="${escJs(h)}" ${attr} class="p-1.5 border border-white/10 text-center align-top min-h-[38px]">${isi}</td>`;
+    }).join('');
+    return `<tr class="border-b border-white/5"><td class="p-1.5 border border-white/10 text-center text-[9px] uppercase text-slate-500 font-bold">Piket ${r + 1}</td>${tds}</tr>`;
+  }).join('');
+  return `<table class="w-full text-[11px] text-left border-collapse"><thead>${trHeader}</thead><tbody>${trs}</tbody></table>`;
+}
+
+// ---------- Drag & drop chip piket (vanilla HTML5 DnD, tanpa library) ----------
+function piketDragMulai(e) {
+  const el = (e.target && e.target.closest) ? e.target.closest('[data-piket-chip]') : null;
+  if (!el) return;
+  window.__dragPiket = { hari: el.dataset.hari || '', nis: String(el.dataset.nis || ''), nama: el.dataset.nama || '' };
+  try {
+    e.dataTransfer.setData('text/plain', JSON.stringify(window.__dragPiket));
+    e.dataTransfer.effectAllowed = 'move';
+  } catch (_) {}
+}
+function piketDragSelesai() {
+  window.__dragPiket = null;
+  piketBersihkanSorot();
+}
+function piketDragIzinkan(e) {
+  e.preventDefault();
+  try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
+  const td = (e.currentTarget && e.currentTarget.closest) ? e.currentTarget.closest('td[data-sel-hari]') : null;
+  if (td && !td.dataset.sorot) { td.dataset.sorot = '1'; td.style.outline = '1px dashed #facc15'; td.style.outlineOffset = '-1px'; td.style.background = 'rgba(250,204,21,0.08)'; }
+}
+function piketDragKeluar(e) {
+  const td = (e.currentTarget && e.currentTarget.closest) ? e.currentTarget.closest('td[data-sel-hari]') : null;
+  if (td) piketBersihkanSorotTd(td);
+}
+function piketBersihkanSorotTd(td) {
+  delete td.dataset.sorot; td.style.outline = ''; td.style.outlineOffset = ''; td.style.background = '';
+}
+function piketBersihkanSorot() {
+  document.querySelectorAll('#content-ekskul-sub td[data-sel-hari]').forEach(td => piketBersihkanSorotTd(td));
+}
+/** Drop chip: (1) ke sel hari → pindah ke hari itu; (2) ke Antrian (hari='') → batalkan jadwal. */
+function piketDragDrop(e, hariTarget) {
+  e.preventDefault();
+  const drag = window.__dragPiket;
+  const st = window.__piketState;
+  if (!drag || !drag.nis || !st) return piketDragSelesai();
+  piketBersihkanSorot();
+  if (hariTarget) {
+    const arr = st.piket[hariTarget] = st.piket[hariTarget] || [];
+    if (arr.some(p => String(p.nis) === String(drag.nis))) return piketDragSelesai(); // sudah ada di hari tujuan
+    arr.push({ nis: drag.nis, nama: drag.nama });
+  }
+  if (drag.hari && drag.hari !== hariTarget) {
+    st.piket[drag.hari] = (st.piket[drag.hari] || []).filter(p => String(p.nis) !== String(drag.nis));
+  }
+  window.__dragPiket = null;
+  simpanJadwalPiket(st.ekskul, st.hari, st.piket).then(ok => { if (ok) renderTabPiketEkskul(); });
+}
+/** Tombol ✕ pada chip di sel: kembalikan anggota ke Antrian Siswa. */
+function piketHapusChip(hari, nis) {
+  const st = window.__piketState;
+  if (!st || !hari) return;
+  st.piket[hari] = (st.piket[hari] || []).filter(p => String(p.nis) !== String(nis));
+  simpanJadwalPiket(st.ekskul, st.hari, st.piket).then(ok => { if (ok) renderTabPiketEkskul(); });
+}
+
+/** Modal pilihan hari aktif (Custom Hari): checkbox Senin–Minggu. */
+function modalCustomHariPiket() {
+  const st = window.__piketState;
+  if (!st) return;
+  const html = `<div class="text-left p-1">${DAFTAR_HARI_PIKET.map(h => `
+    <label class="flex items-center gap-2 py-1 cursor-pointer">
+      <input type="checkbox" class="piket-hari-cb" value="${h}" ${st.hari.includes(h) ? 'checked' : ''}><span class="text-sm">${h}</span>
+    </label>`).join('')}</div>`;
+  Swal.fire({
+    title: 'Pilih Hari Aktif Piket (Custom)',
+    html,
+    confirmButtonText: 'Terapkan',
+    showCancelButton: true,
+    cancelButtonText: 'Batal',
+    preConfirm: () => {
+      const cek = [...document.querySelectorAll('.piket-hari-cb:checked')].map(cb => cb.value);
+      if (!cek.length) return Swal.showValidationMessage('Minimal pilih 1 hari.');
+      return DAFTAR_HARI_PIKET.filter(h => cek.includes(h));
+    }
+  }).then(async (r) => {
+    if (!r.isConfirmed) return;
+    const baru = r.value;
+    Object.keys(st.piket).forEach(h => { if (!baru.includes(h)) delete st.piket[h]; }); // hari dibuang → anggotanya kembali ke antrian
+    st.hari = baru;
+    const ok = await simpanJadwalPiket(st.ekskul, st.hari, st.piket);
+    if (ok) renderTabPiketEkskul();
+  });
+}
+
+/** Generate otomatis: setiap anggota piket 1×/minggu, dibagi merata ke semua hari aktif. */
+function generateJadwalPiket() {
+  const st = window.__piketState;
+  if (!st) return;
+  if (!st.anggota.length) return showToast('error', 'Belum ada anggota ekskul untuk dijadwalkan.');
+  if (!st.hari.length) return showToast('error', 'Pilih minimal 1 hari aktif dahulu (tombol Custom Hari).');
+  Swal.fire({
+    title: 'Generate Otomatis Jadwal Piket',
+    html: '<div class="text-left text-sm">Urutan siswa disusun bagaimana?</div>',
+    input: 'radio',
+    inputOptions: { acak: 'Acak (diacak setiap generate)', az: 'Urut A–Z (menurut nama)' },
+    inputValue: 'acak',
+    confirmButtonText: 'Generate',
+    showCancelButton: true,
+    cancelButtonText: 'Batal',
+    inputValidator: (v) => (!v ? 'Pilih salah satu mode.' : null)
+  }).then(async (r) => {
+    if (!r.isConfirmed) return;
+    const d = st.hari.length;
+    const list = [...st.anggota].sort((a, b) => String(a.nama_lengkap || '').localeCompare(String(b.nama_lengkap || ''), 'id'));
+    if (r.value === 'acak') { for (let i = list.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [list[i], list[j]] = [list[j], list[i]]; } }
+    const baru = {};
+    st.hari.forEach(h => { baru[h] = []; });
+    list.forEach((a, i) => { baru[st.hari[i % d]].push({ nis: String(a.nis_nip), nama: a.nama_lengkap || '' }); });
+    st.piket = baru;
+    const ok = await simpanJadwalPiket(st.ekskul, st.hari, st.piket);
+    if (ok) renderTabPiketEkskul();
+  });
+}
+
+/** Kosongkan seluruh jadwal (semua nama kembali ke Antrian Siswa). */
+function bersihkanJadwalPiket() {
+  const st = window.__piketState;
+  if (!st) return;
+  Swal.fire({
+    title: 'Kosongkan Jadwal Piket?',
+    text: 'Semua nama akan kembali ke Antrian Siswa.',
+    icon: 'warning', showCancelButton: true, confirmButtonText: 'Ya, kosongkan', cancelButtonText: 'Batal', confirmButtonColor: '#dc2626'
+  }).then(async (r) => {
+    if (!r.isConfirmed) return;
+    st.piket = {};
+    const ok = await simpanJadwalPiket(st.ekskul, st.hari, st.piket);
+    if (ok) renderTabPiketEkskul();
+  });
+}
+
+/** Urutkan permanen nama siswa di setiap hari aktif (A-Z / Z-A) lalu simpan ke DB (khusus pembina/pengurus). */
+function aturUrutPiketPermanen(mode) {
+  const st = window.__piketState;
+  if (!st) return;
+  const arah = mode === 'za' ? -1 : 1;
+  st.hari.forEach(h => {
+    const arr = st.piket[h] || [];
+    arr.sort((a, b) => arah * String(a.nama || a.nis || '').localeCompare(String(b.nama || b.nis || ''), 'id'));
+  });
+  simpanJadwalPiket(st.ekskul, st.hari, st.piket).then(ok => {
+    if (ok) {
+      showToast('success', `Urutan piket diurutkan ${mode === 'za' ? 'Z–A' : 'A–Z'} per hari.`);
+      renderTabPiketEkskul();
+    }
+  });
+}
+
+/** Halaman sub-tab "Jadwal Piket" (grup Jurnal & Program Kerja). */
+async function renderTabPiketEkskul() {
+  const box = boxEkskul();
+  const aktif = window.__ekskulAktif;
+  if (!aktif) { box.innerHTML = '<div class="p-6 text-center text-slate-400">Pilih ekstrakurikuler dahulu.</div>'; return; }
+  const akses = hakAksesEkskulUntuk(aktif);
+  const bolehKelola = akses === 'admin' || akses === 'guru' || akses === 'pengurus';
+  const [st, anggota] = await Promise.all([bacaJadwalPiket(aktif), ambilAnggotaEkskul(aktif)]);
+  window.__piketState = { ekskul: aktif, hari: st.hari, piket: st.piket, anggota, bolehKelola };
+  st.hari.forEach(h => { st.piket[h] = st.piket[h] || []; });
+  Object.keys(st.piket).forEach(h => { if (!st.hari.includes(h)) delete st.piket[h]; }); // buang kunci hari non-aktif (sisa lama)
+  const terpakai = new Set(Object.keys(st.piket).flatMap(h => st.piket[h]).map(p => String(p.nis)));
+  const pool = anggota.filter(a => !terpakai.has(String(a.nis_nip)));
+  const maxSlot = Math.max(1, ...Object.keys(st.piket).map(h => st.piket[h].length));
+
+  box.innerHTML = `
+    <div class="p-4 space-y-3">
+      <div class="bg-white/5 border border-white/10 rounded-xl p-3">
+        <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-broom"></i> Jadwal Piket — ${escapeHtml(aktif)}</h3>
+          ${bolehKelola ? `<div class="flex gap-1.5 flex-wrap">
+            <button onclick="modalCustomHariPiket()" class="bg-violet-700 hover:bg-violet-600 text-white px-2.5 py-1 rounded text-[10px] font-bold transition" title="Pilih hari aktif piket"><i class="fa-solid fa-calendar-days"></i> Custom Hari</button>
+            <button onclick="generateJadwalPiket()" class="bg-amber-600 hover:bg-amber-500 text-white px-2.5 py-1 rounded text-[10px] font-bold transition" title="Bagikan anggota merata (1× piket/minggu)"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate Otomatis</button>
+            <button onclick="bersihkanJadwalPiket()" class="bg-red-700 hover:bg-red-600 text-white px-2.5 py-1 rounded text-[10px] font-bold transition" title="Kosongkan semua hari"><i class="fa-solid fa-eraser"></i> Bersihkan</button>
+          </div>` : ''}
+        </div>
+        <div class="flex flex-wrap gap-1.5 items-center">
+          <span class="text-[10px] uppercase text-slate-400 font-bold mr-1">Hari aktif:</span>
+          ${st.hari.map(h => `<span class="bg-violet-900/40 border border-violet-500/40 text-violet-200 px-2 py-0.5 rounded-full text-[10px] font-bold">${escapeHtml(h)}</span>`).join('')}
+          <span class="text-[10px] text-slate-500 italic">${bolehKelola ? 'Seret nama siswa ke kolom hari untuk menyusun jadwal.' : 'Jadwal disusun oleh pembina/pengurus ekskul.'}</span>
+        </div>
+      </div>
+
+      ${bolehKelola ? `
+      <div id="antrian-piket" ondragover="piketDragIzinkan(event)" ondragleave="piketDragKeluar(event)" ondrop="piketDragDrop(event,'')"
+        class="bg-emerald-950/20 border-2 border-dashed border-emerald-500/30 rounded-xl p-3">
+        <div class="flex items-center justify-between gap-2 flex-wrap mb-1.5">
+          <span class="text-[10px] uppercase text-emerald-300 font-bold"><i class="fa-solid fa-users"></i> Antrian Siswa (belum terjadwal) — ${pool.length} orang</span>
+          <span class="text-[9px] text-slate-500 italic">Seret ke salah satu kolom hari di tabel.</span>
+        </div>
+        <div class="flex flex-wrap gap-1.5">${pool.length ? pool.map(a => chipPoolPiketHTML(a)).join('') : '<span class="italic text-slate-400 text-[10px]">Semua siswa sudah terjadwal. Seret ke Antrian untuk membatalkan.</span>'}</div>
+      </div>` : ''}
+
+      <div class="bg-white/5 border border-white/10 rounded-xl p-3">
+        <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+          <h4 class="text-[11px] font-bold text-slate-300 uppercase"><i class="fa-solid fa-table-list"></i> Tabel Piket</h4>
+          ${!bolehKelola ? '<span class="text-[9px] text-slate-500 italic">Hak baca — susunan oleh pembina/pengurus.</span>' : `<div class="flex gap-1.5 items-center flex-wrap">
+            <span class="text-[9px] uppercase text-slate-500 font-bold">Urut per hari:</span>
+            <button onclick="aturUrutPiketPermanen('az')" class="bg-sky-700 hover:bg-sky-600 text-white px-2 py-1 rounded text-[10px] font-bold transition" title="Urutkan nama A–Z di tiap hari lalu simpan"><i class="fa-solid fa-arrow-down-a-z"></i> A–Z</button>
+            <button onclick="aturUrutPiketPermanen('za')" class="bg-sky-700 hover:bg-sky-600 text-white px-2 py-1 rounded text-[10px] font-bold transition" title="Urutkan nama Z–A di tiap hari lalu simpan"><i class="fa-solid fa-arrow-down-z-a"></i> Z–A</button>
+          </div>`}
+        </div>
+        ${st.hari.length
+          ? `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, st.hari, maxSlot, bolehKelola)}</div>
+             ${bolehKelola ? '<p class="text-[9px] text-slate-500 mt-1.5"><i class="fa-solid fa-circle-info"></i> Perubahan tersimpan otomatis ke database.</p>' : ''}`
+          : `<p class="italic text-slate-400 text-xs">Belum ada hari aktif.${bolehKelola ? ' Klik tombol <b>Custom Hari</b> untuk memilih.' : ''}</p>`}
+      </div>
+    </div>`;
+}
+
+/** Kartu "Jadwal Piket" di Info Ekskul — read-only, default RINGKAS (kolom hari ini & besok), bisa diperluas via tombol toggle. */
+let infoPiketRingkas = true;
+
+async function muatInfoPiketEkskul(aktif) {
+  const box = document.getElementById('info-piket-ekskul');
+  if (!box) return;
+  const st = await bacaJadwalPiket(aktif);
+  if (!document.getElementById('info-piket-ekskul')) return;
+  const ada = st.hari.length && Object.keys(st.piket).some(h => (st.piket[h] || []).length);
+  window.__cacheInfoPiket = { aktif, st, ada };
+  renderInfoPiketEkskul();
+}
+
+/** Render kartu piket Info Ekskul dari cache; mode ringkas hanya menampilkan kolom hari ini & besok. */
+function renderInfoPiketEkskul() {
+  const c = window.__cacheInfoPiket;
+  const box = document.getElementById('info-piket-ekskul');
+  if (!c || !box) return;
+  const { st, ada } = c;
+  const NAMA_HARI_INDO = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const now = new Date();
+  const ini = NAMA_HARI_INDO[now.getDay()];
+  const besok = NAMA_HARI_INDO[(now.getDay() + 1) % 7];
+  const ringkasHari = infoPiketRingkas ? st.hari.filter(h => h === ini || h === besok) : null;
+  const adaRingkas = ringkasHari !== null && ringkasHari.length > 0;
+  const maxSlot = ada ? Math.max(...st.hari.map(h => (st.piket[h] || []).length)) : 1;
+  const maxSlotR = adaRingkas ? Math.max(...ringkasHari.map(h => (st.piket[h] || []).length)) : maxSlot;
+  const judulExtra = infoPiketRingkas && adaRingkas ? ' <span class="text-[9px] text-slate-400 normal-case">(hari ini &amp; besok)</span>' : '';
+  const tombolToggle = ada
+    ? `<button onclick="toggleInfoPiket()" class="text-[10px] px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white font-bold transition" title="${infoPiketRingkas ? 'Perluas ke semua hari' : 'Ringkas jadi hari ini & besok'}"><i class="fa-solid ${infoPiketRingkas ? 'fa-chevron-down' : 'fa-chevron-up'}"></i> ${infoPiketRingkas ? 'Lihat Lengkap' : 'Ringkas'}</button>`
+    : '';
+  const isi = !ada
+    ? '<p class="italic text-slate-400 text-[11px]">Belum ada jadwal piket — disusun pembina/pengurus di tab "Jurnal &amp; Program Kerja → Jadwal Piket".</p>'
+    : infoPiketRingkas
+      ? (adaRingkas
+        ? `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, ringkasHari, maxSlotR, false)}</div>`
+        : '<p class="italic text-slate-400 text-[11px]">Tidak ada piket hari ini &amp; besok. Klik <b>Lihat Lengkap</b> untuk jadwal semua hari.</p>')
+      : `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, st.hari, maxSlot, false)}</div>`;
+  const catatan = ada
+    ? (infoPiketRingkas && adaRingkas
+      ? '<p class="text-[9px] text-slate-500 mt-1.5">Tampil jadwal hari ini &amp; besok. Klik "Lihat Lengkap" untuk semua hari.</p>'
+      : '<p class="text-[9px] text-slate-500 mt-1.5">Susunan lengkap ada di Jurnal &amp; Program Kerja → Jadwal Piket.</p>')
+    : '';
+  box.outerHTML = `<div id="info-piket-ekskul" class="bg-white/5 border border-white/10 rounded-xl p-3">
+    <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+      <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-broom"></i> Jadwal Piket${judulExtra}</h3>
+      ${tombolToggle}
+    </div>
+    ${isi}
+    ${catatan}
+  </div>`;
+}
+
+/** Perluas / ringkas kartu jadwal piket di Info Ekskul (tanpa query ulang ke DB). */
+function toggleInfoPiket() {
+  infoPiketRingkas = !infoPiketRingkas;
+  renderInfoPiketEkskul();
+}
+
+
+// [FIX] deklarasi variabel filter sub-ekskul tab Profil & Anggota (dipakai gantiFilterSubAnggotaProfil & renderTabProfilEkskul)
+let filterSubAnggotaProfil = '';
 
 async function renderTabProfilEkskul() {
   const box = boxEkskul();
@@ -18631,7 +20123,9 @@ async function cariMuridRapor(nis) {
 const OPSI_CETAK_DEFAULT = {
     rapor:    { kertas: 'A4', orientasi: 'potret', margin: 2, font: 'Times New Roman', ukuranFont: 11, logo: true,  garisKop: 'ganda',  alamat: true, kontak: true, npsn: true,  judul: '', judulDefault: 'LEMBAR RAPOR', ttdKiri: 'Wali Kelas',        ttdKanan: 'Kepala Sekolah', selang: true },
     surat:    { kertas: 'A4', orientasi: 'potret', margin: 2, font: 'Times New Roman', ukuranFont: 12, logo: true,  garisKop: 'ganda',  alamat: true, kontak: true, npsn: true,  judul: '', judulDefault: '(dari perihal)', ttdKiri: '', ttdKanan: 'Kepala Sekolah', selang: false },
-    kuitansi: { kertas: 'A5', orientasi: 'potret', margin: 1, font: 'Times New Roman', ukuranFont: 12, logo: false, garisKop: 'tunggal', alamat: true, kontak: false, npsn: false, judul: '', judulDefault: 'KUITANSI', ttdKiri: 'Bendahara Sekolah', ttdKanan: 'Petugas', selang: false }
+    kuitansi: { kertas: 'A5', orientasi: 'potret', margin: 1, font: 'Times New Roman', ukuranFont: 12, logo: false, garisKop: 'tunggal', alamat: true, kontak: false, npsn: false, judul: '', judulDefault: 'KUITANSI', ttdKiri: 'Bendahara Sekolah', ttdKanan: 'Petugas', selang: false },
+    leger:    { kertas: 'A4', orientasi: 'lanskap', margin: 1.5, font: 'Times New Roman', ukuranFont: 9, logo: true,  garisKop: 'ganda',  alamat: true, kontak: true, npsn: true,  judul: '', judulDefault: 'LEGER NILAI SUMATIF', ttdKiri: '', ttdKanan: 'Kepala Sekolah', selang: false },
+    absen:    { kertas: 'A4', orientasi: 'lanskap', margin: 1.5, font: 'Times New Roman', ukuranFont: 9, logo: false, garisKop: 'tanpa',  alamat: false, kontak: false, npsn: false, judul: '', judulDefault: 'DAFTAR HADIR TATAP MUKA', ttdKiri: '', ttdKanan: 'Kepala Sekolah', selang: false }
 };
 
 function bacaOpsiCetak(jenis) {
@@ -18645,7 +20139,8 @@ function simpanOpsiCetak(jenis, opsi) {
 function keluargaFont(f) { return f === 'Times New Roman' ? "'Times New Roman', Times, serif" : `'${f || 'Arial'}', sans-serif`; }
 /** CSS @page size utk pilihan kertas/orientasi. */
 function cssUkuranKertas(o) {
-    const m = { 'A4': 'A4', 'A5': 'A5', 'Letter': 'Letter', 'F4': '215mm 330mm' }[o.kertas] || 'A4';
+    const m = { 'A4': 'A4', 'A5': 'A5', 'Letter': 'Letter', 'F4': '215mm 330mm', 'Max': 'auto' }[o.kertas] || 'A4';
+    if (m === 'auto') return o.orientasi === 'lanskap' ? 'landscape' : 'auto';
     if (m.includes('mm')) return o.orientasi === 'lanskap' ? '330mm 215mm' : m;
     return `${m} ${o.orientasi === 'lanskap' ? 'landscape' : 'portrait'}`;
 }
@@ -18678,7 +20173,7 @@ async function dialogOpsiCetak(jenis, labelTombol = 'Cetak') {
             <div class="text-left text-[11px] text-slate-300 mt-2 space-y-2">
                 <div class="grid grid-cols-4 gap-2">
                     <div><label class="font-bold text-blue-300">Kertas</label>
-                    <select id="oc-kertas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option>A4</option><option>A5</option><option>F4</option><option>Letter</option></select></div>
+                    <select id="oc-kertas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option>A4</option><option>F4</option><option>Max</option><option>A5</option><option>Letter</option></select></div>
                     <div><label class="font-bold text-blue-300">Orientasi</label>
                     <select id="oc-orientasi" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="potret">Potret</option><option value="lanskap">Lanskap</option></select></div>
                     <div><label class="font-bold text-blue-300">Margin (cm)</label>
@@ -19550,7 +21045,7 @@ async function cetakLegerPDF() {
             <td style="width:60%;border:none;"></td>
             <td style="border:none;text-align:center;">Kepala Sekolah<br><br><br><br><br><b><u>${escapeHtml(kepsek)}</u></b></td>
         </tr></table>`;
-    bukaCetakHTML(`Leger — ${d.kelas}`, isi);
+    bukaCetakHTML(`Leger — ${d.kelas}`, isi, bacaOpsiCetak('leger'));
 }
 
 /** Modal murid: pilih TA & semester → cetak rapor sendiri (data sendiri saja). */
