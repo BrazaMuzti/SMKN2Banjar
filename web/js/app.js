@@ -15160,13 +15160,13 @@ async function simpanJadwalPiket(ekskul, hari, piket) {
   }
 }
 
-/** Chip nama di sel tabel (bolehKelola: bisa drag + tombol ✕ untuk membatalkan ke antrian). */
+/** Chip nama di sel tabel (bolehKelola: bisa digeser via pointer mouse/touch + tombol ✕ untuk membatalkan ke antrian). */
 function chipPiketHTML(p, hari, bolehKelola) {
   const nama = escapeHtml(String(p.nama || p.nis || '-'));
   if (!bolehKelola) return `<div class="bg-slate-800/70 border border-white/10 text-slate-200 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap">${nama}</div>`;
-  return `<div data-piket-chip data-hari="${escJs(hari)}" data-nis="${escJs(String(p.nis))}" data-nama="${escJs(p.nama || '')}" draggable="true"
-    ondragstart="piketDragMulai(event)" ondragend="piketDragSelesai()"
-    class="cursor-grab active:cursor-grabbing bg-indigo-900/40 border border-indigo-500/40 text-indigo-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1 hover:border-yellow-400" title="Seret ke hari lain">
+  return `<div data-piket-chip data-hari="${escJs(hari)}" data-nis="${escJs(String(p.nis))}" data-nama="${escJs(p.nama || '')}"
+    onpointerdown="piketPointerMulai(event)"
+    class="piket-chip-sentuh cursor-grab active:cursor-grabbing bg-indigo-900/40 border border-indigo-500/40 text-indigo-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap inline-flex items-center gap-1 hover:border-yellow-400" title="Geser ke hari lain (mouse atau sentuh)">
     <span>${nama}</span>
     <button type="button" onclick="piketHapusChip('${escJs(hari)}','${escJs(String(p.nis))}')" class="text-slate-400 hover:text-red-300" title="Kembalikan ke antrian"><i class="fa-solid fa-xmark text-[9px]"></i></button>
   </div>`;
@@ -15174,9 +15174,9 @@ function chipPiketHTML(p, hari, bolehKelola) {
 
 /** Chip nama di Antrian Siswa (belum terjadwal). */
 function chipPoolPiketHTML(a) {
-  return `<div data-piket-chip data-hari="" data-nis="${escJs(String(a.nis_nip))}" data-nama="${escJs(a.nama_lengkap || '')}" draggable="true"
-    ondragstart="piketDragMulai(event)" ondragend="piketDragSelesai()"
-    class="cursor-grab active:cursor-grabbing bg-emerald-900/40 border border-emerald-500/40 text-emerald-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap hover:border-yellow-400" title="Seret ke kolom hari piket">
+  return `<div data-piket-chip data-hari="" data-nis="${escJs(String(a.nis_nip))}" data-nama="${escJs(a.nama_lengkap || '')}"
+    onpointerdown="piketPointerMulai(event)"
+    class="piket-chip-sentuh cursor-grab active:cursor-grabbing bg-emerald-900/40 border border-emerald-500/40 text-emerald-100 rounded px-1.5 py-0.5 text-[10px] font-bold whitespace-nowrap hover:border-yellow-400" title="Geser ke kolom hari piket (mouse atau sentuh)">
     ${escapeHtml(a.nama_lengkap || '-')}
   </div>`;
 }
@@ -15189,62 +15189,127 @@ function racikTabelPiketHTML(piket, hari, maxSlot, bolehKelola) {
     const tds = hari.map(h => {
       const p = (piket[h] || [])[r];
       const isi = p ? chipPiketHTML(p, h, bolehKelola) : (bolehKelola ? '<span class="text-[9px] text-slate-600">＋</span>' : '');
-      const attr = bolehKelola
-        ? `ondragover="piketDragIzinkan(event)" ondragleave="piketDragKeluar(event)" ondrop="piketDragDrop(event,'${escJs(h)}')"`
-        : '';
-      return `<td data-sel-hari="${escJs(h)}" ${attr} class="p-1.5 border border-white/10 text-center align-top min-h-[38px]">${isi}</td>`;
+      return `<td data-sel-hari="${escJs(h)}" class="p-1.5 border border-white/10 text-center align-top min-h-[38px]">${isi}</td>`;
     }).join('');
     return `<tr class="border-b border-white/5"><td class="p-1.5 border border-white/10 text-center text-[9px] uppercase text-slate-500 font-bold">Piket ${r + 1}</td>${tds}</tr>`;
   }).join('');
   return `<table class="w-full text-[11px] text-left border-collapse"><thead>${trHeader}</thead><tbody>${trs}</tbody></table>`;
 }
 
-// ---------- Drag & drop chip piket (vanilla HTML5 DnD, tanpa library) ----------
-function piketDragMulai(e) {
-  const el = (e.target && e.target.closest) ? e.target.closest('[data-piket-chip]') : null;
-  if (!el) return;
-  window.__dragPiket = { hari: el.dataset.hari || '', nis: String(el.dataset.nis || ''), nama: el.dataset.nama || '' };
-  try {
-    e.dataTransfer.setData('text/plain', JSON.stringify(window.__dragPiket));
-    e.dataTransfer.effectAllowed = 'move';
-  } catch (_) {}
-}
-function piketDragSelesai() {
-  window.__dragPiket = null;
-  piketBersihkanSorot();
-}
-function piketDragIzinkan(e) {
-  e.preventDefault();
-  try { e.dataTransfer.dropEffect = 'move'; } catch (_) {}
-  const td = (e.currentTarget && e.currentTarget.closest) ? e.currentTarget.closest('td[data-sel-hari]') : null;
-  if (td && !td.dataset.sorot) { td.dataset.sorot = '1'; td.style.outline = '1px dashed #facc15'; td.style.outlineOffset = '-1px'; td.style.background = 'rgba(250,204,21,0.08)'; }
-}
-function piketDragKeluar(e) {
-  const td = (e.currentTarget && e.currentTarget.closest) ? e.currentTarget.closest('td[data-sel-hari]') : null;
-  if (td) piketBersihkanSorotTd(td);
-}
-function piketBersihkanSorotTd(td) {
-  delete td.dataset.sorot; td.style.outline = ''; td.style.outlineOffset = ''; td.style.background = '';
-}
-function piketBersihkanSorot() {
-  document.querySelectorAll('#content-ekskul-sub td[data-sel-hari]').forEach(td => piketBersihkanSorotTd(td));
-}
-/** Drop chip: (1) ke sel hari → pindah ke hari itu; (2) ke Antrian (hari='') → batalkan jadwal. */
-function piketDragDrop(e, hariTarget) {
-  e.preventDefault();
-  const drag = window.__dragPiket;
+// ---------- Drag & drop chip piket (Pointer Events — mouse desktop & sentuh HP Firefox/Chrome) ----------
+// Catatan: API HTML5 DnD (draggable/ondragstart/ondrop) TIDAK berfungsi di layar sentuh (browser mobile),
+// jadi dipakai Pointer Events: pointerdown → geser (ambang 8px) → elementFromPoint cari sel hari /
+// antrian → drop. Berfungsi untuk mouse & sentuh, tanpa library tambahan.
+let __piketPointer = null; // state drag aktif: { el, hari, nis, nama, x, y, mulai, ghost }
+
+/** Mulai pantau pointer pada chip piket (Antrian & sel tabel). */
+function piketPointerMulai(e) {
+  if (e.pointerType === 'mouse' && e.button !== 0) return; // hanya tombol kiri
+  if (e.target.closest('button')) return; // tombol ✕ — biarkan klik biasa
+  const el = e.target.closest('[data-piket-chip]');
+  if (!el || __piketPointer) return;
   const st = window.__piketState;
-  if (!drag || !drag.nis || !st) return piketDragSelesai();
-  piketBersihkanSorot();
+  if (!st) return;
+  __piketPointer = { el, pid: e.pointerId, hari: el.dataset.hari || '', nis: String(el.dataset.nis || ''), nama: el.dataset.nama || '', x: e.clientX, y: e.clientY, mulai: false, ghost: null };
+  window.addEventListener('pointermove', piketPointerGerak, { passive: false });
+  window.addEventListener('pointerup', piketPointerSelesai);
+  window.addEventListener('pointercancel', piketPointerBatal);
+}
+
+/** Gerakkan chip (ghost) + sorot sel/antrian yang sedang disentuh pointer. */
+function piketPointerGerak(e) {
+  const p = __piketPointer;
+  if (!p || p.pid !== e.pointerId) return;
+  if (!p.mulai) {
+    const dx = e.clientX - p.x, dy = e.clientY - p.y;
+    if (Math.sqrt(dx * dx + dy * dy) < 8) return; // masih di bawah ambang → biarkan tap/gestur lain
+    p.mulai = true;
+    p.ghost = piketPointerBuatGhost(p);
+    if (p.el) p.el.classList.add('opacity-40');
+  }
+  if (e.cancelable) e.preventDefault(); // cegah scroll saat drag aktif
+  if (p.ghost) { p.ghost.style.left = (e.clientX + 10) + 'px'; p.ghost.style.top = (e.clientY + 10) + 'px'; }
+  piketPointerSorotTarget(e.clientX, e.clientY);
+}
+
+/** Buat elemen "ghost" (bayangan chip) yang mengikuti kursor/jari. */
+function piketPointerBuatGhost(p) {
+  const lama = document.getElementById('ghost-piket');
+  if (lama) lama.remove();
+  const g = document.createElement('div');
+  g.id = 'ghost-piket';
+  g.textContent = p.nama || p.nis || '-';
+  g.className = 'fixed z-[999] pointer-events-none whitespace-nowrap rounded px-2 py-1 text-[11px] font-bold text-white bg-slate-700 border border-yellow-400 shadow-lg';
+  g.style.left = (p.x + 10) + 'px';
+  g.style.top = (p.y + 10) + 'px';
+  document.body.appendChild(g);
+  return g;
+}
+
+/** Sorot sel hari / antrian yang berada tepat di bawah koordinat pointer. */
+function piketPointerSorotTarget(x, y) {
+  const semua = document.querySelectorAll('#content-ekskul-sub td[data-sel-hari], #content-ekskul-sub #antrian-piket');
+  semua.forEach(n => n.classList.remove('piket-sorot-aktif'));
+  const el = document.elementFromPoint(x, y);
+  if (!el) return;
+  const td = el.closest('td[data-sel-hari]');
+  const target = td || el.closest('#antrian-piket');
+  if (target) target.classList.add('piket-sorot-aktif');
+}
+
+/** Lepas pointer: jatuhkan chip ke target (sel hari / antrian / luar = batal tanpa perubahan). */
+function piketPointerSelesai(e) {
+  const p = __piketPointer;
+  if (!p || p.pid !== e.pointerId) return;
+  if (p.mulai) {
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    let hariTarget = null;
+    if (el) {
+      const td = el.closest('td[data-sel-hari]');
+      if (td) hariTarget = td.dataset.hari;
+      else if (el.closest('#antrian-piket')) hariTarget = '';
+    }
+    piketPointerBersihkanUI();
+    if (hariTarget !== null) piketTerapkanDrop(p, hariTarget);
+  } else {
+    piketPointerBersihkanUI();
+  }
+}
+
+/** Batalkan drag (mis. pointercancel saat gestur dibatalkan sistem). */
+function piketPointerBatal(e) {
+  if (!__piketPointer || __piketPointer.pid !== e.pointerId) return;
+  piketPointerBersihkanUI();
+}
+
+/** Bersihkan semua jejak UI drag + sambungan listener. */
+function piketPointerBersihkanUI() {
+  window.removeEventListener('pointermove', piketPointerGerak);
+  window.removeEventListener('pointerup', piketPointerSelesai);
+  window.removeEventListener('pointercancel', piketPointerBatal);
+  const p = __piketPointer;
+  if (p) {
+    if (p.el) p.el.classList.remove('opacity-40');
+    if (p.ghost) p.ghost.remove();
+  }
+  const g = document.getElementById('ghost-piket');
+  if (g) g.remove();
+  document.querySelectorAll('#content-ekskul-sub td[data-sel-hari], #content-ekskul-sub #antrian-piket').forEach(n => n.classList.remove('piket-sorot-aktif'));
+  __piketPointer = null;
+}
+
+/** Terapkan hasil drop: (1) ke sel hari → tambah ke hari itu; (2) ke Antrian (hari='') → batalkan jadwal. Lalu simpan ke DB & render ulang. */
+function piketTerapkanDrop(drag, hariTarget) {
+  const st = window.__piketState;
+  if (!drag || !drag.nis || !st || typeof hariTarget !== 'string') return;
   if (hariTarget) {
     const arr = st.piket[hariTarget] = st.piket[hariTarget] || [];
-    if (arr.some(p => String(p.nis) === String(drag.nis))) return piketDragSelesai(); // sudah ada di hari tujuan
+    if (arr.some(p => String(p.nis) === String(drag.nis))) return; // sudah ada di hari tujuan
     arr.push({ nis: drag.nis, nama: drag.nama });
   }
   if (drag.hari && drag.hari !== hariTarget) {
     st.piket[drag.hari] = (st.piket[drag.hari] || []).filter(p => String(p.nis) !== String(drag.nis));
   }
-  window.__dragPiket = null;
   simpanJadwalPiket(st.ekskul, st.hari, st.piket).then(ok => { if (ok) renderTabPiketEkskul(); });
 }
 /** Tombol ✕ pada chip di sel: kembalikan anggota ke Antrian Siswa. */
@@ -15364,6 +15429,7 @@ async function renderTabPiketEkskul() {
 
   box.innerHTML = `
     <div class="p-4 space-y-3">
+      <style>#content-ekskul-sub .piket-chip-sentuh{touch-action:none;-webkit-user-select:none;user-select:none}#content-ekskul-sub td[data-sel-hari].piket-sorot-aktif,#content-ekskul-sub #antrian-piket.piket-sorot-aktif{outline:1px dashed #facc15;outline-offset:-1px;background:rgba(250,204,21,0.08)}</style>
       <div class="bg-white/5 border border-white/10 rounded-xl p-3">
         <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
           <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-broom"></i> Jadwal Piket — ${escapeHtml(aktif)}</h3>
@@ -15376,18 +15442,17 @@ async function renderTabPiketEkskul() {
         <div class="flex flex-wrap gap-1.5 items-center">
           <span class="text-[10px] uppercase text-slate-400 font-bold mr-1">Hari aktif:</span>
           ${st.hari.map(h => `<span class="bg-violet-900/40 border border-violet-500/40 text-violet-200 px-2 py-0.5 rounded-full text-[10px] font-bold">${escapeHtml(h)}</span>`).join('')}
-          <span class="text-[10px] text-slate-500 italic">${bolehKelola ? 'Seret nama siswa ke kolom hari untuk menyusun jadwal.' : 'Jadwal disusun oleh pembina/pengurus ekskul.'}</span>
+          <span class="text-[10px] text-slate-500 italic">${bolehKelola ? 'Geser nama siswa (mouse/touch) ke kolom hari untuk menyusun jadwal.' : 'Jadwal disusun oleh pembina/pengurus ekskul.'}</span>
         </div>
       </div>
 
       ${bolehKelola ? `
-      <div id="antrian-piket" ondragover="piketDragIzinkan(event)" ondragleave="piketDragKeluar(event)" ondrop="piketDragDrop(event,'')"
-        class="bg-emerald-950/20 border-2 border-dashed border-emerald-500/30 rounded-xl p-3">
+      <div id="antrian-piket" class="bg-emerald-950/20 border-2 border-dashed border-emerald-500/30 rounded-xl p-3">
         <div class="flex items-center justify-between gap-2 flex-wrap mb-1.5">
           <span class="text-[10px] uppercase text-emerald-300 font-bold"><i class="fa-solid fa-users"></i> Antrian Siswa (belum terjadwal) — ${pool.length} orang</span>
-          <span class="text-[9px] text-slate-500 italic">Seret ke salah satu kolom hari di tabel.</span>
+          <span class="text-[9px] text-slate-500 italic">Geser ke salah satu kolom hari di tabel.</span>
         </div>
-        <div class="flex flex-wrap gap-1.5">${pool.length ? pool.map(a => chipPoolPiketHTML(a)).join('') : '<span class="italic text-slate-400 text-[10px]">Semua siswa sudah terjadwal. Seret ke Antrian untuk membatalkan.</span>'}</div>
+        <div class="flex flex-wrap gap-1.5">${pool.length ? pool.map(a => chipPoolPiketHTML(a)).join('') : '<span class="italic text-slate-400 text-[10px]">Semua siswa sudah terjadwal. Geser ke Antrian untuk membatalkan.</span>'}</div>
       </div>` : ''}
 
       <div class="bg-white/5 border border-white/10 rounded-xl p-3">
@@ -15407,8 +15472,10 @@ async function renderTabPiketEkskul() {
     </div>`;
 }
 
-/** Kartu "Jadwal Piket" di Info Ekskul — read-only, default RINGKAS (kolom hari ini & besok), bisa diperluas via tombol toggle. */
+/** Kartu "Jadwal Piket" di Info Ekskul — read-only, default CIUT (konten disembunyikan).
+ *  Klik "Lihat" → terbuka mode ringkas (kolom hari ini & besok), tombol "Lihat Lengkap" untuk semua hari. */
 let infoPiketRingkas = true;
+let infoPiketBuka = false; // default: ciut — isi kartu baru tampil setelah tombol "Lihat" diklik
 
 async function muatInfoPiketEkskul(aktif) {
   const box = document.getElementById('info-piket-ekskul');
@@ -15420,7 +15487,7 @@ async function muatInfoPiketEkskul(aktif) {
   renderInfoPiketEkskul();
 }
 
-/** Render kartu piket Info Ekskul dari cache; mode ringkas hanya menampilkan kolom hari ini & besok. */
+/** Render kartu piket Info Ekskul dari cache; default ciut — konten muncul saat dibuka. */
 function renderInfoPiketEkskul() {
   const c = window.__cacheInfoPiket;
   const box = document.getElementById('info-piket-ekskul');
@@ -15431,37 +15498,49 @@ function renderInfoPiketEkskul() {
   const ini = NAMA_HARI_INDO[now.getDay()];
   const besok = NAMA_HARI_INDO[(now.getDay() + 1) % 7];
   const ringkasHari = infoPiketRingkas ? st.hari.filter(h => h === ini || h === besok) : null;
-  const adaRingkas = ringkasHari !== null && ringkasHari.length > 0;
+  const adaRingkas = ringkasHari !== null && ringkasHari.length > 0 && ringkasHari.some(h => (st.piket[h] || []).length);
   const maxSlot = ada ? Math.max(...st.hari.map(h => (st.piket[h] || []).length)) : 1;
   const maxSlotR = adaRingkas ? Math.max(...ringkasHari.map(h => (st.piket[h] || []).length)) : maxSlot;
-  const judulExtra = infoPiketRingkas && adaRingkas ? ' <span class="text-[9px] text-slate-400 normal-case">(hari ini &amp; besok)</span>' : '';
-  const tombolToggle = ada
-    ? `<button onclick="toggleInfoPiket()" class="text-[10px] px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white font-bold transition" title="${infoPiketRingkas ? 'Perluas ke semua hari' : 'Ringkas jadi hari ini & besok'}"><i class="fa-solid ${infoPiketRingkas ? 'fa-chevron-down' : 'fa-chevron-up'}"></i> ${infoPiketRingkas ? 'Lihat Lengkap' : 'Ringkas'}</button>`
+  const jumlahTerjadwal = ada ? st.hari.reduce((n, h) => n + (st.piket[h] || []).length, 0) : 0;
+  const ekstraJudul = !infoPiketBuka && ada
+    ? ` <span class="text-[9px] text-slate-400 normal-case">(${jumlahTerjadwal} orang terjadwal)</span>`
+    : (infoPiketBuka && infoPiketRingkas && adaRingkas ? ' <span class="text-[9px] text-slate-400 normal-case">(hari ini &amp; besok)</span>' : '');
+  const tombolUtama = `<button onclick="toggleInfoPiket()" class="text-[10px] px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white font-bold transition" title="${infoPiketBuka ? 'Ciutkan jadwal piket' : 'Lihat jadwal piket'}"><i class="fa-solid ${infoPiketBuka ? 'fa-chevron-up' : 'fa-chevron-down'}"></i> ${infoPiketBuka ? 'Ciutkan' : 'Lihat'}</button>`;
+  const tombolLengkap = (ada && infoPiketBuka)
+    ? `<button onclick="infoPiketLihatLengkap()" class="text-[10px] px-2 py-1 rounded bg-sky-700 hover:bg-sky-600 text-white font-bold transition" title="${infoPiketRingkas ? 'Perluas ke semua hari' : 'Ringkas jadi hari ini & besok'}"><i class="fa-solid ${infoPiketRingkas ? 'fa-expand' : 'fa-compress'}"></i> ${infoPiketRingkas ? 'Lihat Lengkap' : 'Ringkas'}</button>`
     : '';
   const isi = !ada
     ? '<p class="italic text-slate-400 text-[11px]">Belum ada jadwal piket — disusun pembina/pengurus di tab "Jurnal &amp; Program Kerja → Jadwal Piket".</p>'
-    : infoPiketRingkas
-      ? (adaRingkas
-        ? `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, ringkasHari, maxSlotR, false)}</div>`
-        : '<p class="italic text-slate-400 text-[11px]">Tidak ada piket hari ini &amp; besok. Klik <b>Lihat Lengkap</b> untuk jadwal semua hari.</p>')
-      : `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, st.hari, maxSlot, false)}</div>`;
-  const catatan = ada
+    : !infoPiketBuka
+      ? '<p class="text-[10px] text-slate-400 italic">Jadwal piket tersedia — klik <b>Lihat</b> untuk menampilkan.</p>'
+      : infoPiketRingkas
+        ? (adaRingkas
+          ? `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, ringkasHari, maxSlotR, false)}</div>`
+          : '<p class="italic text-slate-400 text-[11px]">Tidak ada piket hari ini &amp; besok. Klik <b>Lihat Lengkap</b> untuk jadwal semua hari.</p>')
+        : `<div class="overflow-x-auto">${racikTabelPiketHTML(st.piket, st.hari, maxSlot, false)}</div>`;
+  const catatan = infoPiketBuka && ada
     ? (infoPiketRingkas && adaRingkas
       ? '<p class="text-[9px] text-slate-500 mt-1.5">Tampil jadwal hari ini &amp; besok. Klik "Lihat Lengkap" untuk semua hari.</p>'
       : '<p class="text-[9px] text-slate-500 mt-1.5">Susunan lengkap ada di Jurnal &amp; Program Kerja → Jadwal Piket.</p>')
     : '';
   box.outerHTML = `<div id="info-piket-ekskul" class="bg-white/5 border border-white/10 rounded-xl p-3">
     <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
-      <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-broom"></i> Jadwal Piket${judulExtra}</h3>
-      ${tombolToggle}
+      <h3 class="text-[11px] font-bold text-yellow-300 uppercase"><i class="fa-solid fa-broom"></i> Jadwal Piket${ekstraJudul}</h3>
+      <div class="flex items-center gap-1.5">${tombolLengkap}${tombolUtama}</div>
     </div>
     ${isi}
     ${catatan}
   </div>`;
 }
 
-/** Perluas / ringkas kartu jadwal piket di Info Ekskul (tanpa query ulang ke DB). */
+/** Buka / ciutkan kartu jadwal piket di Info Ekskul (tanpa query ulang ke DB). */
 function toggleInfoPiket() {
+  infoPiketBuka = !infoPiketBuka;
+  renderInfoPiketEkskul();
+}
+
+/** Perluas ke semua hari / kembali ringkas hari ini & besok (hanya saat kartu terbuka). */
+function infoPiketLihatLengkap() {
   infoPiketRingkas = !infoPiketRingkas;
   renderInfoPiketEkskul();
 }
