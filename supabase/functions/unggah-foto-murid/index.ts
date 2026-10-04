@@ -1,29 +1,34 @@
 // Edge Function: unggah-foto-murid
-// Upload foto siswa ke Google Drive (Service Account) lalu menyimpan URL-nya
-// ke tabel akun.url_foto — integrasi penuh Google Drive API untuk "Data Akun Murid".
+// Upload foto siswa ke Google Drive lewat perantara Google Apps Script (GAS) Web App,
+// lalu menyimpan URL-nya ke akun.url_foto.
+//
+// KENAPA VIA GAS (bukan Google Drive API langsung):
+//   - Menghindari kuota Google Drive API standar; unggahan "dicatut" lewat akun
+//     Google pemilik script (execute as Me).
+//   - Kredensial Google (folder tujuan, akses publik) tersimpan di GAS; URL Web App
+//     + token rahasia hanya hidup di Supabase secret, tidak pernah sampai ke browser.
 //
 // KENAPA verify_jwt = false:
-//   Murid "lokal" (login NIS+password, bukan akun Supabase Auth/Google) hanya punya
-//   token sesi aplikasi `lokal-*` yang tidak bisa diverifikasi sebagai JWT Supabase.
-//   Karena itu gateway tidak menolak request (verify_jwt = false) dan otorisasi
-//   ditangani bertingkat di dalam fungsi:
-//     1. Bila Authorization = JWT Supabase yang valid (RS256) → identitas pemanggil
+//   Murid "lokal" (login NIS+password) hanya punya token sesi aplikasi `lokal-*`
+//   yang tidak bisa diverifikasi sebagai JWT Supabase. Otorisasi ditangani
+//   bertingkat di dalam fungsi:
+//     1. Bila Authorization = JWT Supabase valid (RS256) → identitas pemanggil
 //        benar-benar diketahui dari auth.getUser().
 //     2. Bila bukan JWT (token lokal) → klaim pemanggil (NIS + tipe dari frontend)
 //        diverifikasi ULANG di RPC simpan_foto_murid (security definer) sebelum
-//        url_foto ditulis — pemanggil harus admin ATAU murid pemilik NIS. Kunci
-//        service account Google Drive tidak pernah keluar dari server.
+//        url_foto ditulis — pemanggil harus admin ATAU murid pemilik NIS.
 //
-// FILENAME: {nis}_{TA}_{kelas}.jpg (disanitasi) — contoh: 12045_2026-2027_XII-TKJ-1.jpg
+// FILENAME: {nis}_{TA}_{kelas}.jpg — contoh: 12045_2026-2027_XII-TKJ-1.jpg
 //
 // Secret yang harus diset (supabase secrets set ...):
-//   DRIVE_SERVICE_ACCOUNT_JSON → isi JSON kunci service account ("client_email",
-//                                "private_key", "token_uri")
-//   DRIVE_MURID_FOLDER_ID      → ID folder Google Drive tujuan foto siswa
-//                                (bagikan folder ke email service account dgn role Editor)
+//   GAS_UPLOAD_URL   → URL Web App GAS (https://script.google.com/macros/s/.../exec)
+//   GAS_UPLOAD_TOKEN → token rahasia, HARUS sama dengan Script Property
+//                      UPLOAD_TOKEN di project Google Apps Script.
 //
 // Deploy:
 //   npx supabase functions deploy unggah-foto-murid --project-ref <PROJECT_REF>
+//
+// Kode Google Apps Script: lihat file Code.gs di folder yang sama.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
@@ -43,130 +48,6 @@ function json(obj: unknown, status = 200) {
 
 /** Batas ukuran foto: 3,5 MB (data:image base64 ≈ 4,6 juta karakter). */
 const BATAS_BASE64 = 4_700_000;
-
-// ============ Helper base64url (bisa diterima browser & Deno) ============
-function b64uEncode(bytes: Uint8Array): string {
-  let bin = "";
-  for (const b of bytes) bin += String.fromCharCode(b);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-// ============ Autentikasi Google Service Account (RS256, WebCrypto) ============
-async function imporKunciPrivat(pem: string): Promise<CryptoKey> {
-  const b64 = pem.replace(/-----[^-]+-----/g, "").replace(/\s+/g, "");
-  const der = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-  return crypto.subtle.importKey(
-    "pkcs8",
-    der,
-    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
-    false,
-    ["sign"],
-  );
-}
-
-async function buatJwtServiceAccount(svc: Record<string, string>): Promise<string> {
-  const header = b64uEncode(
-    new TextEncoder().encode(JSON.stringify({ alg: "RS256", typ: "JWT" })),
-  );
-  const sekarang = Math.floor(Date.now() / 1000);
-  const payload = b64uEncode(
-    new TextEncoder().encode(
-      JSON.stringify({
-        iss: svc.client_email,
-        scope: "https://www.googleapis.com/auth/drive.file",
-        aud: svc.token_uri,
-        iat: sekarang,
-        exp: sekarang + 3600,
-      }),
-    ),
-  );
-  const input = `${header}.${payload}`;
-  const kunci = await imporKunciPrivat(svc.private_key);
-  const sig = await crypto.subtle.sign(
-    "RSASSA-PKCS1-v1_5",
-    kunci,
-    new TextEncoder().encode(input),
-  );
-  return `${input}.${b64uEncode(new Uint8Array(sig))}`;
-}
-
-async function aksesTokenDrive(svc: Record<string, string>): Promise<string> {
-  const jwt = await buatJwtServiceAccount(svc);
-  const res = await fetch(svc.token_uri, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body:
-      `grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Ajwt-bearer&assertion=${encodeURIComponent(jwt)}`,
-  });
-  const r = await res.json();
-  if (!r.access_token) {
-    throw new Error(r.error_description || r.error || "Gagal mengambil token Drive.");
-  }
-  return r.access_token;
-}
-
-// ============ Google Drive: upload multipart + akses publik ============
-async function unggahKeDrive(
-  token: string,
-  folderId: string,
-  namaFile: string,
-  bytes: Uint8Array,
-): Promise<string> {
-  const boundary = `SISIPFoto${Date.now().toString(36)}`;
-  const meta = JSON.stringify({
-    name: namaFile,
-    parents: [folderId],
-    mimeType: "image/jpeg",
-  });
-  const te = new TextEncoder();
-  const parts: Uint8Array[] = [];
-  parts.push(te.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n`));
-  parts.push(te.encode(`--${boundary}\r\nContent-Type: image/jpeg\r\n\r\n`));
-  parts.push(bytes);
-  parts.push(te.encode(`\r\n--${boundary}--\r\n`));
-
-  const body = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
-  let offset = 0;
-  for (const p of parts) {
-    body.set(p, offset);
-    offset += p.length;
-  }
-
-  const res = await fetch(
-    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": `multipart/related; boundary=${boundary}`,
-      },
-      body,
-    },
-  );
-  const r = await res.json();
-  if (!r.id) {
-    throw new Error((r.error && (r.error.message || r.error.code)) || "Upload ke Google Drive gagal.");
-  }
-  return r.id;
-}
-
-async function bukaAksesPublik(token: string, fileId: string): Promise<void> {
-  const res = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ role: "reader", type: "anyone" }),
-    },
-  );
-  const r = await res.json();
-  if (r.error) throw new Error(r.error.message || "Gagal mengatur akses file Drive.");
-}
-
-/** URL thumbnail Drive (cepat & stabil untuk <img> dan cetak; butuh file ala 'anyone'). */
-function urlThumbnailDrive(fileId: string): string {
-  return `https://drive.google.com/thumbnail?id=${fileId}&sz=w1000`;
-}
 
 /** Sanitasi segmen nama file: karakter bahaya → '-', sisakan alfanumerik/-/_. */
 function sanitasiNama(s: string): string {
@@ -235,6 +116,40 @@ async function pemanggilDiizinkan(
   return { ok: true, tipe, nis_nip: nisP };
 }
 
+// ============ Upload via Google Apps Script Web App ============
+/** Kirim base64 ke GAS → dapatkan fileUrl Drive. GAS yang memegang folder tujuan,
+ *  penulisan file, dan pengaturan akses publik ("siapa saja dengan link → Pembaca"). */
+async function unggahViaGAS(
+  gasUrl: string,
+  gasToken: string,
+  namaFile: string,
+  mimeType: string,
+  b64: string,
+): Promise<{ fileUrl: string; fileId: string }> {
+  const res = await fetch(gasUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ filename: namaFile, mimeType, base64: b64, token: gasToken }),
+  });
+
+  const teks = await res.text();
+  let r: { status?: string; message?: string; fileUrl?: string; fileId?: string };
+  try {
+    r = JSON.parse(teks);
+  } catch (e) {
+    console.error("Respons GAS bukan JSON:", teks.slice(0, 500));
+    throw new Error("Respons Google Apps Script tidak terbaca.");
+  }
+  if (!r || r.status !== "success" || !r.fileUrl) {
+    throw new Error((r && r.message) || "Google Apps Script menolak unggahan.");
+  }
+  const url = String(r.fileUrl).trim();
+  if (!/^https:\/\/drive\.google\.com\//.test(url) && !/^https:\/\/lh[0-9]*\.googleusercontent\.com\//.test(url)) {
+    throw new Error("fileUrl dari Google Apps Script tidak valid.");
+  }
+  return { fileUrl: url, fileId: String(r.fileId || "") };
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
 
@@ -287,30 +202,24 @@ Deno.serve(async (req) => {
     if (b64.length > BATAS_BASE64) {
       return json({ status: "error", message: "Ukuran foto melebihi 3,5 MB." }, 400);
     }
-    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 
-    // 4. Secret Google Drive (harus sudah diset di Supabase)
-    const svcJson = Deno.env.get("DRIVE_SERVICE_ACCOUNT_JSON") || "";
-    const folderId = (Deno.env.get("DRIVE_MURID_FOLDER_ID") || "").trim();
-    if (!svcJson || !folderId) {
-      return json({ status: "error", message: "Google Drive belum dikonfigurasi admin." }, 500);
-    }
-    let svc: Record<string, string>;
-    try {
-      svc = JSON.parse(svcJson);
-    } catch (e) {
-      console.error("DRIVE_SERVICE_ACCOUNT_JSON bukan JSON valid:", e);
-      return json({ status: "error", message: "Konfigurasi Drive tidak valid." }, 500);
+    // 4. Secret Google Apps Script (harus sudah diset di Supabase)
+    const gasUrl = (Deno.env.get("https://script.google.com/macros/s/AKfycbzZQ28SvIaYlee8oTc5mbtqJnNVRvUT9vGDv-vWZqU7CrCeIX2fK2iGS14fJ4Wx4--1LA/exec") || "").trim();
+    const gasToken = (Deno.env.get("Smkn2banjar!Smkn2Banjar!") || "").trim();
+    if (!gasUrl || !gasToken) {
+      return json({ status: "error", message: "Upload Drive belum dikonfigurasi admin." }, 500);
     }
 
-    // 5. Upload ke Drive + akses "anyone with link" (reader)
-    const tokenDrive = await aksesTokenDrive(svc);
+    // 5. Upload ke Drive via GAS (nama file disanitasi; ekstensi mengikuti mimeType)
     const tahun = sanitasiNama(String(body.tahun ?? "").replace(/\//g, "-"));
     const kelas = sanitasiNama(String(body.kelas ?? ""));
-    const namaFile = `${sanitasiNama(nis)}_${tahun || "TA"}_${kelas || "kelas"}.jpg`;
-    const fileId = await unggahKeDrive(tokenDrive, folderId, namaFile, bytes);
-    await bukaAksesPublik(tokenDrive, fileId);
-    const urlFoto = urlThumbnailDrive(fileId);
+    const mimeType = String(foto.split(";", 1)[0].replace("data:", "") || "image/jpeg");
+    const ext =
+      mimeType === "image/png" ? "png" :
+      mimeType === "image/webp" ? "webp" :
+      mimeType === "image/gif" ? "gif" : "jpg";
+    const namaFile = `${sanitasiNama(nis)}_${tahun || "TA"}_${kelas || "kelas"}.${ext}`;
+    const { fileUrl: urlFoto, fileId } = await unggahViaGAS(gasUrl, gasToken, namaFile, mimeType, b64);
 
     // 6. Simpan URL ke akun.url_foto (RPC security definer = jaring pengaman otorisasi)
     const { data: rpcSave } = await admin.rpc("simpan_foto_murid", {
