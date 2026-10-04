@@ -1636,6 +1636,59 @@ async function renderAbsenMandiriMurid(container) {
 function jamDariWaktuDgn(w) { return String(w || '').split(',').slice(1).join(',').trim() || '-'; }
 
 /** Data Akun Murid (self-service): profil sendiri, edit data kontak/pribadi, reset password sendiri. */
+// ---- Profil murid: upload/hapus foto sendiri (Google Drive via Edge Function) ----
+function pilihFotoSaya() {
+  const user = (currentUser || {}).user || {};
+  const nis = String(user["NIS"] || '');
+  if (!nis) return showToast('error', 'NIS tidak ditemukan pada sesi.');
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => {
+    const f = (inp.files && inp.files[0]) || null;
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { showToast('error', 'Ukuran file maksimal 5 MB.'); return; }
+    const rd = new FileReader();
+    rd.onload = () => bukaCropperFoto(rd.result, async (hasil) => {
+      Swal.fire({ title: 'Mengunggah Foto...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+      const res = await unggahFotoMurid({
+        nis, nama: String(user["Nama Lengkap"] || user["Nama Guru"] || ''),
+        tahun: currentTahun, kelas: String(user["Tingkat/Kelas"] || ''), dataUrl: hasil, hapus: false
+      });
+      Swal.close();
+      if (res && res.status === 'success') {
+        showToast('success', 'Foto profil berhasil diperbarui.');
+        renderAkunSayaMurid(document.getElementById('main-content'));
+      } else {
+        Swal.fire({ icon: 'error', title: 'Gagal', text: (res && res.message) || 'Gagal mengunggah foto.', background: '#1e293b', color: '#fff' });
+      }
+    });
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+function hapusFotoSaya() {
+  const user = (currentUser || {}).user || {};
+  const nis = String(user["NIS"] || '');
+  if (!nis) return;
+  Swal.fire({
+    title: 'Hapus Foto Profil?', text: 'Foto siswa akan dihapus dari akun.', icon: 'warning',
+    showCancelButton: true, confirmButtonText: 'Ya, Hapus', confirmButtonColor: '#dc2626', cancelButtonText: 'Batal',
+    background: '#1e293b', color: '#fff'
+  }).then(async (r) => {
+    if (!r.isConfirmed) return;
+    Swal.fire({ title: 'Menghapus...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+    const res = await unggahFotoMurid({ nis, hapus: true });
+    Swal.close();
+    if (res && res.status === 'success') {
+      showToast('success', 'Foto profil dihapus.');
+      renderAkunSayaMurid(document.getElementById('main-content'));
+    } else {
+      Swal.fire({ icon: 'error', title: 'Gagal', text: (res && res.message) || 'Gagal menghapus foto.', background: '#1e293b', color: '#fff' });
+    }
+  });
+}
+
 async function renderAkunSayaMurid(container) {
   container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat Profil...</div>`;
   const user = (currentUser || {}).user || {};
@@ -1652,6 +1705,11 @@ async function renderAkunSayaMurid(container) {
       <input type="${tipe}" id="${id}" value="${escapeHtml(val || '')}"
         class="w-full mt-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white">
     </div>`;
+
+  const daftarAgama = [...new Set([
+    ...(masterDataCache || []).map(m => m["Agama"]).filter(Boolean),
+    'Islam', 'Kristen', 'Katolik', 'Hindu', 'Buddha', 'Konghucu'
+  ])];
 
   // [SUB-EKSKUL] Blok checklist sub-ekstrakurikuler per ekskul yang diikuti murid (self-service)
   const daftarEkskulMurid = String(prof.ekstrakurikuler || '').split(',').map(e => e.trim()).filter(Boolean);
@@ -1692,6 +1750,22 @@ async function renderAkunSayaMurid(container) {
         <h2 class="text-base font-extrabold text-white tracking-wider uppercase"><i class="fa-solid fa-id-card text-blue-400 mr-2"></i> Data Akun Murid</h2>
         <p class="text-[10px] text-slate-400">Kelola data diri Anda — data identitas hanya dapat diubah admin.</p>
       </div>
+      <div class="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col sm:flex-row items-center gap-4">
+        <div class="w-24 rounded-lg overflow-hidden border border-white/15 bg-slate-800 flex items-center justify-center shrink-0" style="height:128px;">
+          ${prof.url_foto
+            ? `<img src="${escapeHtml(prof.url_foto)}" alt="Foto" class="w-full h-full object-cover" onerror="this.outerHTML='<div class=&quot;w-full h-full flex items-center justify-center text-3xl font-bold text-slate-600&quot;>${escapeHtml((prof.nama_lengkap || ' ').trim().charAt(0).toUpperCase())}</div>'">`
+            : `<div class="w-full h-full flex items-center justify-center text-3xl font-bold text-slate-600">${escapeHtml((prof.nama_lengkap || ' ').trim().charAt(0).toUpperCase())}</div>`}
+        </div>
+        <div class="flex-1 text-center sm:text-left">
+          <div class="text-sm font-bold text-white">${ro(prof.nama_lengkap)}</div>
+          <div class="text-[10px] text-slate-400 mt-0.5">NIS ${ro(prof.nis_nip)} · ${ro(prof.tingkat_kelas)}</div>
+          <div class="flex flex-wrap gap-1.5 justify-center sm:justify-start mt-2">
+            <button onclick="pilihFotoSaya()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition"><i class="fa-solid fa-camera mr-1"></i>Pilih / Ganti Foto</button>
+            ${prof.url_foto ? `<button onclick="hapusFotoSaya()" class="bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition"><i class="fa-solid fa-trash mr-1"></i>Hapus</button>` : ''}
+          </div>
+          <p class="text-[9px] text-slate-500 mt-2">Foto tersimpan di Google Drive (folder "Foto Siswa") · potong 3×4 sebelum diunggah.</p>
+        </div>
+      </div>
       <div class="bg-white/5 border border-white/10 rounded-xl p-4 grid grid-cols-2 sm:grid-cols-3 gap-3 text-[11px]">
         <div><div class="text-slate-400 text-[9px] uppercase font-bold">NIS</div><div class="font-mono font-bold text-yellow-300">${ro(prof.nis_nip)}</div></div>
         <div><div class="text-slate-400 text-[9px] uppercase font-bold">NISN</div><div class="font-bold text-white">${ro(prof.nisn)}</div></div>
@@ -1699,6 +1773,7 @@ async function renderAkunSayaMurid(container) {
         <div><div class="text-slate-400 text-[9px] uppercase font-bold">Tingkat/Kelas</div><div class="font-bold text-white">${ro(prof.tingkat_kelas)}</div></div>
         <div><div class="text-slate-400 text-[9px] uppercase font-bold">Jabatan Kelas</div><div class="font-bold text-white">${ro(prof.jabatan)}</div></div>
         <div><div class="text-slate-400 text-[9px] uppercase font-bold">Ekstrakurikuler</div><div class="font-bold text-white">${ro(prof.ekstrakurikuler)}</div></div>
+        <div><div class="text-slate-400 text-[9px] uppercase font-bold">Jabatan Ekstrakurikuler</div><div class="font-bold text-white">${ro(prof.jabatan_ekskul)}</div></div>
       </div>
       <div class="bg-white/5 border border-white/10 rounded-xl p-4 space-y-3">
         <h3 class="text-[10px] font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-pen-to-square text-blue-400 mr-1"></i> Edit Data Diri</h3>
@@ -1715,13 +1790,25 @@ async function renderAkunSayaMurid(container) {
               <option value="P" ${prof.jenis_kelamin === 'P' ? 'selected' : ''}>Perempuan</option>
             </select>
           </div>
-          ${inp('pro-agama', 'Agama', prof.agama)}
+          <div>
+            <label class="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Agama</label>
+            <select id="pro-agama" class="w-full mt-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white">
+              <option value="">— Pilih —</option>
+              ${daftarAgama.map(a => `<option value="${escJs(a)}" ${prof.agama === a ? 'selected' : ''}>${escapeHtml(a)}</option>`).join('')}
+            </select>
+          </div>
           ${inp('pro-golongan_darah', 'Gol. Darah', prof.golongan_darah)}
           ${inp('pro-nama_ayah', 'Nama Ayah', prof.nama_ayah)}
           ${inp('pro-pekerjaan_ayah', 'Pekerjaan Ayah', prof.pekerjaan_ayah)}
           ${inp('pro-nama_ibu', 'Nama Ibu', prof.nama_ibu)}
           ${inp('pro-pekerjaan_ibu', 'Pekerjaan Ibu', prof.pekerjaan_ibu)}
           ${inp('pro-nama_wali', 'Nama Wali', prof.nama_wali)}
+          ${inp('pro-alamat-maps', 'Alamat Google Maps (tautan)', prof.alamat_maps)}
+          <div class="sm:col-span-2">
+            <label class="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Media Sosial <span class="text-[9px] font-normal normal-case text-slate-500">(Instagram, TikTok, Facebook, YouTube, dll.)</span></label>
+            <div id="medsos-saya-list" class="mt-1 space-y-1.5">${barisMedsosHtml(Array.isArray(prof.media_sosial) ? prof.media_sosial : [])}</div>
+            <button type="button" onclick="tambahBarisMedsos('medsos-saya-list')" class="mt-1.5 bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-plus mr-1"></i>Tambah Media Sosial</button>
+          </div>
         </div>
         <button onclick="simpanProfilMurid()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 rounded-lg transition text-sm"><i class="fa-solid fa-floppy-disk"></i> Simpan Perubahan</button>
       </div>
@@ -1768,6 +1855,8 @@ async function simpanProfilMurid() {
     email: ambil('pro-email'),
     no_telepon: ambil('pro-no_telepon'),
     alamat: ambil('pro-alamat'),
+    alamat_maps: ambil('pro-alamat-maps'),
+    media_sosial: kumpulkanMedsos('medsos-saya-list'),
     tgl_lahir: ambil('pro-tgl_lahir'),
     jenis_kelamin: ambil('pro-jenis_kelamin'),
     agama: ambil('pro-agama'),
@@ -8727,7 +8816,7 @@ let halamanAktifMurid = 1;
 // Kolom ringkas utk daftar tabel + filter + tombol aksi (payload ±60% lebih ringan dari select('*'))
 const KOLOM_LIST_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, jabatan, jabatan_ekskul, email, ekstrakurikuler, tahun_pelajaran, semester, riwayat_kelas';
 // Kolom penuh utk export Excel/PDF (fetch on-demand saat tombol export diklik)
-const KOLOM_EXPORT_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, tgl_lahir, agama, golongan_darah, ekstrakurikuler, jabatan, jabatan_ekskul, nama_ayah, pekerjaan_ayah, nama_ibu, pekerjaan_ibu, nama_wali, alamat, no_telepon, email, catatan_khusus, tahun_pelajaran, semester';
+const KOLOM_EXPORT_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, tgl_lahir, agama, golongan_darah, ekstrakurikuler, jabatan, jabatan_ekskul, nama_ayah, pekerjaan_ayah, nama_ibu, pekerjaan_ibu, nama_wali, alamat, no_telepon, email, catatan_khusus, tahun_pelajaran, semester, url_foto, alamat_maps, media_sosial';
 
 /** Kosongkan cache akun (murid) + cache dashboard — dipanggil setiap CRUD akun. */
 function invalidasiCacheAkun() {
@@ -8818,6 +8907,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${bisaImportMuridAktif() ? `<button onclick="openImportMurid()" class="h-8 bg-teal-600 hover:bg-teal-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Import Data Murid (Excel) — admin atau guru (wali kelas/pembina ekskul)"><i class="fa-solid fa-file-import"></i> <span class="hidden sm:inline">Import</span></button>` : ''}
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
+                            <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -8898,6 +8988,8 @@ async function exportExcelMurid() {
     "Pekerjaan Ibu": d.pekerjaan_ibu || "",
     "Nama Wali": d.nama_wali || "",
     "Alamat": d.alamat || "",
+    "Alamat Maps": d.alamat_maps || "",
+    "Media Sosial": medsosTeks(d.media_sosial),
     "No HP/WA": d.no_telepon || "",
     "Email": d.email || "",
     "Catatan Khusus": d.catatan_khusus || ""
@@ -8929,7 +9021,7 @@ async function exportPdfMurid() {
   const printWindow = window.open('', '_blank');
   if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak PDF.', background: '#1e293b', color: '#fff' });
 
-  const th = ["No","NIS","NISN","Nama Lengkap","Kelas","Wali Kelas","JK","Tgl Lahir","Agama","Goldar","Ekskul","Sub Ekskul","Jabatan","Jab. Ekskul","Ayah","Pk. Ayah","Ibu","Pk. Ibu","Wali Murid","Alamat","No HP/WA","Email","Catatan"];
+  const th = ["No","NIS","NISN","Nama Lengkap","Kelas","Wali Kelas","JK","Tgl Lahir","Agama","Goldar","Ekskul","Sub Ekskul","Jabatan","Jab. Ekskul","Ayah","Pk. Ayah","Ibu","Pk. Ibu","Wali Murid","Alamat","Alamat Maps","No HP/WA","Email","Catatan"];
   const esc = (v) => escapeHtml(v ?? '');
   const bodyRows = rows.map((d, i) => `<tr>
     <td>${i+1}</td>
@@ -8938,7 +9030,7 @@ async function exportPdfMurid() {
     <td>${esc((d.jenis_kelamin || '').charAt(0).toUpperCase())}</td><td>${esc(d.tgl_lahir ? String(d.tgl_lahir).split('T')[0] : '')}</td>
     <td>${esc(d.agama)}</td><td>${esc(d.golongan_darah)}</td><td>${esc(d.ekstrakurikuler)}</td><td>${esc(subLookup[String(d.nis_nip || '')] || '')}</td><td>${esc(d.jabatan)}</td><td>${esc(d.jabatan_ekskul)}</td>
     <td>${esc(d.nama_ayah)}</td><td>${esc(d.pekerjaan_ayah)}</td><td>${esc(d.nama_ibu)}</td><td>${esc(d.pekerjaan_ibu)}</td>
-    <td>${esc(d.nama_wali)}</td><td>${esc(d.alamat)}</td><td>${esc(d.no_telepon)}</td><td>${esc(d.email)}</td><td>${esc(d.catatan_khusus)}</td>
+    <td>${esc(d.nama_wali)}</td><td>${esc(d.alamat)}</td><td>${esc(d.alamat_maps)}</td><td>${esc(d.no_telepon)}</td><td>${esc(d.email)}</td><td>${esc(d.catatan_khusus)}</td>
   </tr>`).join('');
 
   printWindow.document.write(`
@@ -9308,6 +9400,10 @@ async function openFormAkunMurid(isNew, data = {}) {
     const waliV = data.nama_wali || data["Nama Wali"] || "";
     const alamatV = data.alamat || data["Alamat"] || "";
     const catatanV = data.catatan_khusus || data["Catatan Khusus"] || "";
+    const alamatMapsV = data.alamat_maps || data["Alamat Maps"] || "";
+    const medsosV = Array.isArray(data.media_sosial) ? data.media_sosial : [];
+    const fotoV = data.url_foto || "";
+    formFotoMurid = { dataUrl: null, hapus: false, asal: fotoV };
 
     const optKelas = listKelas.map(k => `<option value="${escJs(k)}" ${kelasV === k ? 'selected' : ''}>${k}</option>`).join('');
     const optTahun = listTahun.map(t => `<option value="${escJs(t)}" ${tahunV === t ? 'selected' : ''}>${t}</option>`).join('');
@@ -9369,6 +9465,18 @@ async function openFormAkunMurid(isNew, data = {}) {
             <div><label class="${lbl}">No HP Orang Tua</label><input id="f_wa_ortu" value="${escJs(waOrtuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             <div class="sm:col-span-2"><label class="${lbl}">Nama Lengkap *</label><input id="f_nama" value="${escJs(namaV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
 
+            ${sec('Foto Siswa')}
+            <div class="sm:col-span-2 flex flex-wrap items-center gap-3 bg-black/20 p-2 rounded border border-white/10">
+                <div id="foto-pratinjau-form" class="w-16 rounded-md overflow-hidden border border-white/20 bg-slate-800 flex items-center justify-center" style="height:80px;">${fotoPratinjauHtml(fotoV)}</div>
+                <div class="space-y-1.5 min-w-[200px] flex-1">
+                    <div class="flex flex-wrap gap-1.5">
+                        <button type="button" onclick="pilihFotoMuridForm()" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-camera mr-1"></i>Pilih / Ganti</button>
+                        <button type="button" onclick="hapusFotoMuridForm()" class="bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-trash mr-1"></i>Hapus</button>
+                    </div>
+                    <p class="text-[9px] text-slate-400">Pas foto 3×4 (rasio 3:4, hasil potong 900×1200). Foto tersimpan di Google Drive folder "Foto Siswa", nama file otomatis <b>NIS_TA_Kelas.jpg</b>.</p>
+                </div>
+            </div>
+
             ${sec('Tahun & Kelas')}
             <div><label class="${lbl}">ID Tahun Pelajaran</label>
                 <select id="f_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${optTahun}</select>
@@ -9411,6 +9519,17 @@ async function openFormAkunMurid(isNew, data = {}) {
             <div><label class="${lbl}">Pekerjaan Ibu</label><input id="f_pk_ibu" value="${escJs(pkIbuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             <div><label class="${lbl}">Nama Wali</label><input id="f_wali" value="${escJs(waliV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             <div><label class="${lbl}">Alamat</label><input id="f_alamat" value="${escJs(alamatV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+
+            ${sec('Media Sosial & Lokasi')}
+            <div class="sm:col-span-2"><label class="${lbl} mb-1 block">Alamat Google Maps <span class="font-normal text-slate-400">(tautan)</span></label>
+                <input id="f_alamat_maps" value="${escJs(alamatMapsV)}" placeholder="https://maps.app.goo.gl/..." class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500">
+                <p class="text-[9px] text-slate-400 mt-0.5">Tempel tautan Google Maps lokasi rumah. Dibuka di tab baru (iframe tidak dipasang karena kebijakan keamanan aplikasi).</p>
+            </div>
+            <div class="sm:col-span-2">
+                <label class="${lbl} mb-1 block">Media Sosial <span class="font-normal text-slate-400">(Instagram, TikTok, Facebook, YouTube, dll.)</span></label>
+                <div id="medsos-list-form" class="space-y-1.5">${barisMedsosHtml(medsosV)}</div>
+                <button type="button" onclick="tambahBarisMedsos('medsos-list-form')" class="mt-1.5 bg-slate-700 hover:bg-slate-600 text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-plus mr-1"></i>Tambah Media Sosial</button>
+            </div>
 
             ${sec('Jabatan & Ekstrakurikuler')}
             <div><label class="${lbl} mb-1 block">Jabatan Kelas</label>
@@ -9513,6 +9632,9 @@ async function openFormAkunMurid(isNew, data = {}) {
                 pekerjaan_ibu: document.getElementById('f_pk_ibu').value.trim(),
                 nama_wali: document.getElementById('f_wali').value.trim(),
                 alamat: document.getElementById('f_alamat').value.trim(),
+                alamat_maps: document.getElementById('f_alamat_maps').value.trim(),
+                media_sosial: kumpulkanMedsos('medsos-list-form'),
+                url_foto: formFotoMurid.hapus ? '' : (formFotoMurid.dataUrl ? 'SEDANG_DIUPLOAD' : (data.url_foto || '')),
                 catatan_khusus: document.getElementById('f_catatan').value.trim(),
                 password: passVal,
                 _subEkskul: subEkskulTerpilih
@@ -9885,13 +10007,303 @@ function cetakMutasiSiswa() {
     return res;
 }
 
-// ---- Import murid: tulis riwayat TA per baris (dual-write aman) ----
+// ==========================================
+// FOTO MURID (DRIVE) & MEDIA SOSIAL — helper UI + upload via Edge Function
+// ==========================================
+// State foto pada FORM tambah/edit akun (admin): dataUrl = hasil potong Cropper
+// yang belum di-upload; hapus = foto lama dihapus saat simpan.
+let formFotoMurid = { dataUrl: null, hapus: false, asal: '' };
+
+/** Kirim foto murid ke Edge Function 'unggah-foto-murid' → URL Drive disimpan ke akun.url_foto. */
+async function unggahFotoMurid({ nis, nama, tahun, kelas, dataUrl, hapus }) {
+  const u = (currentUser || {}).user || {};
+  const pemanggil = {
+    tipe: String((currentUser || {}).role || ''),
+    nisNip: String(u["NIS"] || u["NIP"] || u["ID Akun Guru"] || '')
+  };
+  // Token: utamakan sesi Supabase Auth (guru/admin), fallback token sesi aplikasi (murid lokal)
+  let token = getToken();
+  try {
+    const { data: sesi } = await supaClient.auth.getSession();
+    if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
+  } catch (e) { /* biarkan token aplikasi */ }
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/unggah-foto-murid`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+      'apikey': SUPABASE_ANON_KEY
+    },
+    body: JSON.stringify({ nis, nama, tahun, kelas, foto: dataUrl || undefined, hapus: !!hapus, pemanggil })
+  });
+  return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
+}
+
+// ---- Modal pemotongan foto (Cropper.js) ----
+let sisipCropper = { cropper: null, onDone: null };
+
+/** Bangun modal potong foto sekali; beri tahu bila Cropper.js tidak termuat. */
+function siapkanModalCropper() {
+  if (document.getElementById('sisip-cropper-backdrop')) return true;
+  if (typeof Cropper === 'undefined') {
+    Swal.fire({ icon: 'error', title: 'Komponen Foto', text: 'Library pemotong foto (Cropper.js) belum termuat. Periksa koneksi internet lalu muat ulang halaman.', background: '#1e293b', color: '#fff' });
+    return false;
+  }
+  const sty = document.createElement('style');
+  sty.textContent = [
+    '#sisip-cropper-backdrop{position:fixed;inset:0;background:rgba(2,6,23,.82);z-index:99999;display:flex;align-items:center;justify-content:center;padding:16px;}',
+    '#sisip-cropper-panel{width:100%;max-width:560px;background:#1e293b;border:1px solid rgba(255,255,255,.14);border-radius:16px;padding:16px;box-shadow:0 25px 50px -12px rgba(0,0,0,.6);}',
+    '#sisip-crop-box{background:#000;border-radius:10px;overflow:hidden;width:100%;min-height:220px;display:flex;align-items:center;justify-content:center;}',
+    '#sisip-crop-box img{max-width:100%;max-height:52vh;display:block;}',
+    '#sisip-crop-zoom{flex:1;accent-color:#3b82f6;min-width:120px;}'
+  ].join('\n');
+  document.head.appendChild(sty);
+  const ov = document.createElement('div');
+  ov.id = 'sisip-cropper-backdrop';
+  ov.innerHTML = `
+    <div id="sisip-cropper-panel">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-white font-bold text-sm"><i class="fa-solid fa-crop-simple text-emerald-400 mr-1"></i> Potong Foto — rasio 3×4</div>
+        <button type="button" onclick="tutupCropperFoto()" class="text-slate-400 hover:text-white px-2 py-1 text-base" title="Batal"><i class="fa-solid fa-xmark"></i></button>
+      </div>
+      <div id="sisip-crop-box"><img id="sisip-crop-img" alt="Foto sumber"></div>
+      <div class="flex items-center gap-2 mt-3 flex-wrap">
+        <button type="button" onclick="rotasiCropperFoto(-90)" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9 rounded-lg" title="Putar ke kiri"><i class="fa-solid fa-rotate-left"></i></button>
+        <button type="button" onclick="rotasiCropperFoto(90)" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9 rounded-lg" title="Putar ke kanan"><i class="fa-solid fa-rotate-right"></i></button>
+        <div class="flex-1 rounded-lg bg-slate-800 px-2 py-1" style="min-width:150px;display:flex;align-items:center;gap:8px;">
+          <i class="fa-solid fa-magnifying-glass-minus text-slate-400 text-[10px]"></i>
+          <input type="range" id="sisip-crop-zoom" min="0.2" max="3" step="0.01" value="1" oninput="aturZoomCropperFoto()">
+          <i class="fa-solid fa-magnifying-glass-plus text-slate-400 text-[10px]"></i>
+        </div>
+        <button type="button" onclick="terapkanCropperFoto()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-sm"><i class="fa-solid fa-check mr-1"></i> Gunakan</button>
+      </div>
+      <p class="text-[9px] text-slate-500 mt-2">Hasil potong disimpan 900×1200 px (3:4) — kualitas cukup untuk cetak lembar foto.</p>
+    </div>`;
+  document.body.appendChild(ov);
+  return true;
+}
+
+/** Buka modal potong foto. cb(dataURL) dipanggil setelah tombol "Gunakan". */
+function bukaCropperFoto(dataUrl, cb) {
+  if (!siapkanModalCropper()) return;
+  sisipCropper.onDone = cb;
+  const bd = document.getElementById('sisip-cropper-backdrop');
+  bd.style.display = 'flex';
+  const img = document.getElementById('sisip-crop-img');
+  img.onload = () => {
+    if (sisipCropper.cropper) { sisipCropper.cropper.destroy(); sisipCropper.cropper = null; }
+    sisipCropper.cropper = new Cropper(img, { aspectRatio: 3 / 4, viewMode: 1, autoCropArea: 0.85, dragMode: 'move', background: true });
+    const z = document.getElementById('sisip-crop-zoom');
+    if (z) z.value = 1;
+  };
+  img.src = dataUrl;
+}
+
+function tutupCropperFoto() {
+  const bd = document.getElementById('sisip-cropper-backdrop');
+  if (bd) bd.style.display = 'none';
+  if (sisipCropper.cropper) { sisipCropper.cropper.destroy(); sisipCropper.cropper = null; }
+  sisipCropper.onDone = null;
+}
+
+function aturZoomCropperFoto() {
+  const z = document.getElementById('sisip-crop-zoom');
+  if (sisipCropper.cropper && z) sisipCropper.cropper.zoomTo(parseFloat(z.value));
+}
+
+function rotasiCropperFoto(derajat) {
+  if (sisipCropper.cropper) sisipCropper.cropper.rotate(derajat);
+}
+
+function terapkanCropperFoto() {
+  const c = sisipCropper.cropper;
+  if (!c) return;
+  const canvas = c.getCroppedCanvas({ width: 900, height: 1200, imageSmoothingQuality: 'high' });
+  if (!canvas) return;
+  const hasil = canvas.toDataURL('image/jpeg', 0.9);
+  const cb = sisipCropper.onDone;
+  tutupCropperFoto();
+  if (cb) cb(hasil);
+}
+
+/** HTML pratinjau foto (dataURL/URL) atau placeholder untuk kotak kecil pada form. */
+function fotoPratinjauHtml(url) {
+  if (!url) return `<div class="w-full h-full flex items-center justify-center bg-slate-800"><i class="fa-solid fa-user text-slate-600 text-xl"></i></div>`;
+  return `<img src="${escapeHtml(url)}" alt="Foto" style="width:100%;height:100%;object-fit:cover;" class="w-full h-full">`;
+}
+
+// ---- Form akun murid (admin): pilih/hapus foto ----
+function pilihFotoMuridForm() {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*';
+  inp.onchange = () => {
+    const f = (inp.files && inp.files[0]) || null;
+    if (!f) return;
+    if (f.size > 5 * 1024 * 1024) { showToast('error', 'Ukuran file maksimal 5 MB.'); return; }
+    const rd = new FileReader();
+    rd.onload = () => bukaCropperFoto(rd.result, (hasil) => {
+      formFotoMurid.dataUrl = hasil;
+      formFotoMurid.hapus = false;
+      const el = document.getElementById('foto-pratinjau-form');
+      if (el) el.innerHTML = fotoPratinjauHtml(hasil);
+    });
+    rd.readAsDataURL(f);
+  };
+  inp.click();
+}
+
+function hapusFotoMuridForm() {
+  formFotoMurid.hapus = true;
+  formFotoMurid.dataUrl = null;
+  const el = document.getElementById('foto-pratinjau-form');
+  if (el) el.innerHTML = fotoPratinjauHtml('');
+}
+
+// ---- Media sosial: baris dinamis (label + url) — dipakai form admin & profil murid ----
+function barisMedsosHtml(rows) {
+  return (rows || []).map(m => barisMedsosSatu(String((m && m.label) || ''), String((m && m.url) || ''))).join('');
+}
+
+function barisMedsosSatu(label, url) {
+  return `<div class="baris-medsos flex gap-1.5 items-center">
+    <input type="text" placeholder="Label (mis. Instagram)" value="${escJs(label)}" style="min-width:90px;" class="med-label flex-1 bg-black/40 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none focus:border-blue-500">
+    <input type="url" placeholder="https://..." value="${escJs(url)}" style="flex:2 1 0;min-width:140px;" class="med-url bg-black/40 border border-white/20 rounded px-2 py-1 text-[10px] text-white outline-none focus:border-blue-500">
+    <button type="button" onclick="hapusBarisMedsos(this)" class="bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white w-6 h-6 rounded flex items-center justify-center" title="Hapus"><i class="fa-solid fa-xmark text-[10px]"></i></button>
+  </div>`;
+}
+
+function tambahBarisMedsos(kontainerId) {
+  const el = document.getElementById(kontainerId);
+  if (el) el.insertAdjacentHTML('beforeend', barisMedsosSatu('', ''));
+}
+
+function hapusBarisMedsos(btn) {
+  const baris = btn.closest('.baris-medsos');
+  if (baris) baris.remove();
+}
+
+/** Kumpulkan daftar media sosial dari input baris di kontainer. */
+function kumpulkanMedsos(kontainerId) {
+  const el = document.getElementById(kontainerId);
+  if (!el) return [];
+  return [...el.querySelectorAll('.baris-medsos')].map(r => ({
+    label: (r.querySelector('.med-label')?.value || '').trim(),
+    url: (r.querySelector('.med-url')?.value || '').trim()
+  })).filter(m => m.label || m.url);
+}
+
+/** Gabung media sosial jadi string singkat utk export/PDF. */
+function medsosTeks(medsosArr) {
+  return (medsosArr || []).filter(m => m && (m.label || m.url))
+    .map(m => `${m.label ? String(m.label) : 'Sosmed'}: ${String(m.url || '').replace(/^https?:\/\/(www\.)?/i, '')}`)
+    .join('; ');
+}
+
+/** Cetak lembar foto siswa (A4 portrait, 4 kolom × 6 baris per halaman) — ikut filter tabel aktif. */
+async function cetakFotoSiswa() {
+  Swal.fire({ title: 'Menyiapkan Lembar Foto...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+  let sumber;
+  try {
+    sumber = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
+  } catch (e) {
+    console.error('cetakFotoSiswa:', e);
+    sumber = cacheAkunMurid || [];
+  }
+  Swal.close();
+  const rows = muridTersaring(sumber);
+  if (rows.length === 0) return showToast('error', 'Tidak ada siswa pada filter aktif.');
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak lembar foto.', background: '#1e293b', color: '#fff' });
+
+  const esc = (v) => escapeHtml(v ?? '');
+  const logo = (barisIdentitasMaster()["URL LOGO 1"]) || (barisIdentitasMaster()["URL LOGO 2"]) || '';
+  const idn = barisIdentitasMaster();
+  const kartu = rows.map(d => {
+    const inisial = String(d.nama_lengkap || '').split(/\s+/).filter(Boolean).slice(0, 2).map(s => s.charAt(0)).join('').toUpperCase();
+    const kelas = kelasSiswaTahun(d) || d.tingkat_kelas || '';
+    return `<div class="kartu">
+      <div class="foto">
+        ${d.url_foto ? `<img src="${esc(d.url_foto)}" alt="${esc(d.nis_nip)}">` : `<div class="foto-kosong">${esc(inisial)}</div>`}
+      </div>
+      <div class="nis">${esc(d.nis_nip)}</div>
+      <div class="nama">${esc(d.nama_lengkap)}</div>
+      <div class="kelas">${esc(kelas)}</div>
+    </div>`;
+  }).join('');
+
+  printWindow.document.write(`
+    <html><head><title>Lembar Foto Siswa</title>
+    <style>
+      @page { size: A4 portrait; margin: 10mm; }
+      body { font-family: Arial, sans-serif; color: #000; background: #fff; margin: 0; }
+      .kop { display: flex; align-items: center; gap: 8px; border-bottom: 2px solid #000; padding-bottom: 6px; margin-bottom: 4px; }
+      .kop img { max-height: 64px; max-width: 90px; }
+      .kop .tengah { flex: 1; text-align: center; font-size: 10px; line-height: 1.35; }
+      .kop .tengah .nama-sekolah { font-size: 14px; font-weight: bold; text-transform: uppercase; }
+      h3 { text-align: center; font-size: 13px; margin: 6px 0 2px; }
+      p.sub { text-align: center; font-size: 9px; margin: 0 0 6px; }
+      .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 5mm 5mm; }
+      .kartu { border: 1.2px solid #000; padding: 3mm 2mm; text-align: center; break-inside: avoid; }
+      .foto { width: 34mm; height: 45.3mm; margin: 0 auto; border: 0.6px solid #666; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .foto img { width: 100%; height: 100%; object-fit: cover; }
+      .foto-kosong { font-size: 18px; font-weight: bold; color: #94a3b8; }
+      .nis { font-size: 9px; font-family: 'Courier New', monospace; font-weight: bold; margin-top: 2mm; }
+      .nama { font-size: 10px; font-weight: bold; margin-top: 0.6mm; }
+      .kelas { font-size: 9px; margin-top: 0.4mm; }
+      .kartu:has(.foto-kosong) .nis, .kartu:has(.foto-kosong) .nama { color: #64748b; }
+    </style></head><body>
+    <div class="kop">
+      ${logo ? `<div class="logo"><img src="${esc(logo)}"></div>` : '<div class="logo"></div>'}
+      <div class="tengah">
+        <div>${esc(idn["Ket. Nama Dinas"] || '')}</div>
+        <div>${esc(idn["Nama Dinas"] || '')}</div>
+        <div class="nama-sekolah">${esc(idn["Nama Sekolah"] || '')}</div>
+      </div>
+      <div class="logo"></div>
+    </div>
+    <h3>LEMBAR FOTO SISWA</h3>
+    <p class="sub">${esc(idn["Alamat Sekolah"] || '')} · Dicetak: ${new Date().toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' })} &mdash; Total: ${rows.length} siswa</p>
+    <div class="grid">${kartu}</div>
+    </body></html>
+  `);
+  printWindow.document.close();
+  let sudahPrint = false;
+  const cetakSekali = () => { if (sudahPrint) return; sudahPrint = true; printWindow.focus(); printWindow.print(); };
+  printWindow.onload = cetakSekali;
+  setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 1200);
+}
+
 /** Simpan tambah/edit murid via RPC (hash password ditangani server). */
 async function simpanAkunMurid(formData, isNew) {
   Swal.fire({ title: 'Menyimpan Data...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
 
   const p_data = { ...formData };
   delete p_data._subEkskul; // metadata sub-ekskul ditangani terpisah, bukan kolom RPC buat_akun_murid
+
+  // Foto baru (hasil potong Cropper) → upload ke Google Drive dulu, URL-nya baru disimpan.
+  if (p_data.url_foto === 'SEDANG_DIUPLOAD' && formFotoMurid.dataUrl) {
+    try {
+      const res = await unggahFotoMurid({
+        nis: String(p_data.nis || ''),
+        nama: String(p_data.nama_lengkap || ''),
+        tahun: String(p_data.tahun_pelajaran || ''),
+        kelas: String(p_data.tingkat_kelas || ''),
+        dataUrl: formFotoMurid.dataUrl,
+        hapus: false
+      });
+      if (!res || res.status !== 'success' || !res.url) {
+        throw new Error((res && res.message) || 'Upload foto gagal ke server.');
+      }
+      p_data.url_foto = res.url;
+      formFotoMurid.dataUrl = null;
+    } catch (eUp) {
+      console.error('Upload foto murid:', eUp);
+      Swal.fire({ icon: 'error', title: 'Gagal Upload Foto', text: eUp.message || 'Terjadi kesalahan saat mengunggah foto ke Google Drive.', background: '#1e293b', color: '#fff' });
+      return;
+    }
+  }
+
   if (!isNew && !p_data.password) delete p_data.password; // kosong = tidak diubah
 
   const { data, error } = await supaClient.rpc('buat_akun_murid', { p_data });
