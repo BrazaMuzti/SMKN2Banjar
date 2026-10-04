@@ -2,3 +2,9 @@ project_id = "administrasi-sekolah"
 
 [functions.buat-akun]
 verify_jwt = true
+
+; unggah-foto-murid: verify_jwt=false karena murid "lokal" (login NIS+password,
+; tanpa akun Supabase Auth) hanya punya token sesi aplikasi. Otorisasi ditangani
+; di dalam fungsi + RPC simpan_foto_murid (security definer).
+[functions.unggah-foto-murid]
+verify_jwt = false
