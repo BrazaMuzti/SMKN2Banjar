@@ -204,8 +204,8 @@ Deno.serve(async (req) => {
     }
 
     // 4. Secret Google Apps Script (harus sudah diset di Supabase)
-    const gasUrl = (Deno.env.get("https://script.google.com/macros/s/AKfycbzZQ28SvIaYlee8oTc5mbtqJnNVRvUT9vGDv-vWZqU7CrCeIX2fK2iGS14fJ4Wx4--1LA/exec") || "").trim();
-    const gasToken = (Deno.env.get("Smkn2banjar!Smkn2Banjar!") || "").trim();
+    const gasUrl = (Deno.env.get("GAS_UPLOAD_URL") || "").trim();
+    const gasToken = (Deno.env.get("GAS_UPLOAD_TOKEN") || "").trim();
     if (!gasUrl || !gasToken) {
       return json({ status: "error", message: "Upload Drive belum dikonfigurasi admin." }, 500);
     }
