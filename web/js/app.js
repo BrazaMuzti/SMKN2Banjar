@@ -10021,6 +10021,21 @@ async function unggahFotoMurid({ nis, nama, tahun, kelas, dataUrl, hapus }) {
     tipe: String((currentUser || {}).role || ''),
     nisNip: String(u["NIS"] || u["NIP"] || u["ID Akun Guru"] || '')
   };
+  // Sesi lama (login sebelum fix NIP admin) belum menyimpan identitas di sisip_user.
+  // Sewaktu-waktu ambil NIS/NIP sendiri dari tabel akun via email — best-effort, non-fatal.
+  if (!pemanggil.nisNip && (pemanggil.tipe === 'admin' || pemanggil.tipe === 'guru')) {
+    try {
+      const em = String(u["Email"] || '').trim();
+      if (em && supaClient) {
+        const { data: baris } = await supaClient
+          .from('akun')
+          .select('nis_nip')
+          .eq('email', em)
+          .maybeSingle();
+        if (baris && baris.nis_nip) pemanggil.nisNip = String(baris.nis_nip);
+      }
+    } catch (e) { /* biarkan kosong — Edge Function punya fallback email sendiri */ }
+  }
   // Token: utamakan sesi Supabase Auth (guru/admin), fallback token sesi aplikasi (murid lokal)
   let token = getToken();
   try {
