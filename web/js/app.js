@@ -2915,6 +2915,9 @@ function showModalEditAbsen(tanggal) {
   // Label "Agenda Guru / Jurnal Harian" dinamis: khusus Ekstrakurikuler memakai istilah ekskul
   const mapelRawJurnal = document.getElementById('select-mapel')?.value || "";
   const isEkskulJurnal = mapelRawJurnal.startsWith('Ekskul');
+  // [Kunci] Pengurus murid ekskul boleh ganti kunci/captcha pembina → panel kunci khusus (RPC security definer)
+  const ekskulKunciAktif = isEkskulJurnal ? (mapelRawJurnal.split('|')[1] || '') : '';
+  const muridPengurusKunci = currentUser.role === 'murid' && bolehGantiKunciAbsenEkskul(ekskulKunciAktif);
   const lblJurnalKD = isEkskulJurnal ? 'Materi / Bentuk Kegiatan' : 'Kompetensi Dasar';
   const lblJurnalMateri = isEkskulJurnal ? 'Target Capaian Pembelajaran' : 'Materi';
   const lblJurnalKBM = isEkskulJurnal ? 'Catatan / Evaluasi' : 'Kegiatan Belajar Mengajar';
@@ -2946,10 +2949,16 @@ function showModalEditAbsen(tanggal) {
   }).join('');
 
   let uiAdminGuru = '', btnToggleAdmin = '';
-  if (currentUser.role !== 'murid') {
-    const currentCaptcha = currentUser.user["Captcha"] || "1234", isBuka = currentUser.user["Kunci Absen"] === "BUKA";
+  if (currentUser.role !== 'murid' || muridPengurusKunci) {
+    // Panel kunci: admin/guru = kunci milik sendiri; murid pengurus ekskul = ganti kunci pembina (RPC security definer)
+    window.__kunciEkskulAktif = ekskulKunciAktif;
+    const kunciSaya = currentUser.role !== 'murid';
+    const guruKunci = (dataStatusKunciGuru || []).find(g => String(g.Ekskul || '').split(',').map(e => e.trim()).includes(ekskulKunciAktif));
+    const currentCaptcha = kunciSaya ? (currentUser.user["Captcha"] || "1234") : ((guruKunci && guruKunci["Captcha"]) || "");
+    const isBuka = kunciSaya ? currentUser.user["Kunci Absen"] === "BUKA" : !!(guruKunci && guruKunci["Kunci Absen"] === 'BUKA');
+    const labelKunci = kunciSaya ? 'Kunci Absen Siswa (Captcha)' : `Kunci Absen ${ekskulKunciAktif} (Captcha Pembina)`;
     btnToggleAdmin = `<button id="btn-toggle-kunci-panel" class="absolute top-4 left-4 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 text-slate-300 hover:text-white transition flex items-center justify-center z-10" title="Buka/Tutup Pengaturan Kunci Siswa"><i class="fa-solid fa-lock text-sm"></i></button>`;
-    uiAdminGuru = `<div id="panel-kunci-admin" class="hidden bg-blue-900/40 border border-blue-500/50 p-3 rounded-lg mb-4 text-left shadow-lg"><div class="flex justify-between items-center mb-2"><label class="text-[11px] font-bold text-blue-300"><i class="fa-solid fa-key"></i> Kunci Absen Siswa (Captcha)</label><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="toggle-kunci" class="sr-only peer" ${isBuka ? 'checked' : ''}><div class="w-9 h-5 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div></label></div><div class="flex gap-2"><input type="text" id="input-captcha" value="${currentCaptcha}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white font-mono uppercase tracking-widest outline-none focus:border-blue-400"><button onclick="updateKunciServer()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-[10px] font-bold whitespace-nowrap shadow-md">Simpan Kunci</button></div></div>`;
+    uiAdminGuru = `<div id="panel-kunci-admin" class="hidden bg-blue-900/40 border border-blue-500/50 p-3 rounded-lg mb-4 text-left shadow-lg"><div class="flex justify-between items-center mb-2"><label class="text-[11px] font-bold text-blue-300"><i class="fa-solid fa-key"></i> ${labelKunci}</label><label class="relative inline-flex items-center cursor-pointer"><input type="checkbox" id="toggle-kunci" class="sr-only peer" ${isBuka ? 'checked' : ''}><div class="w-9 h-5 bg-slate-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-blue-500"></div></label></div><div class="flex gap-2"><input type="text" id="input-captcha" value="${escapeHtml(currentCaptcha)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-xs text-white font-mono uppercase tracking-widest outline-none focus:border-blue-400"><button onclick="simpanKunciPanelAbsen()" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded text-[10px] font-bold whitespace-nowrap shadow-md">Simpan Kunci</button></div>${kunciSaya ? '' : `<p class="text-[9px] text-slate-400 mt-1.5"><i class="fa-solid fa-info-circle mr-1"></i>Pengurus ekskul — perubahan akan menimpa kunci absen pembina ${escapeHtml(ekskulKunciAktif)}.</p>`}</div>`;
   }
   
   Swal.fire({
@@ -3101,6 +3110,22 @@ async function simpanJurnalGuru(tanggal, jurnal) {
     Swal.fire({ icon: 'error', title: 'Jurnal Gagal', text: e.message || '', background: '#1e293b', color: '#fff' });
   }
 }
+
+/** Simpan kunci panel absen: admin/guru = update baris sendiri; murid pengurus ekskul = RPC ganti_kunci_absen_ekskul. */
+window.simpanKunciPanelAbsen = async function() {
+  const newCaptcha = String(document.getElementById('input-captcha').value || '').trim().toUpperCase();
+  const newKunci = document.getElementById('toggle-kunci').checked ? 'BUKA' : 'TUTUP';
+  if (!newCaptcha) return Swal.fire({toast:true, position:'top-end', icon:'error', title:'Captcha kosong!', showConfirmButton:false, timer:2000});
+  if (currentUser.role !== 'murid') return updateKunciServer();
+  const ekskul = window.__kunciEkskulAktif || '';
+  if (!ekskul) return Swal.fire({toast:true, position:'top-end', icon:'error', title:'Ekskul tidak dikenali.', showConfirmButton:false, timer:2000});
+  const ok = await gantiKunciAbsenEkskul(ekskul, newCaptcha, newKunci);
+  if (!ok) return;
+  // FIX BUG LOCALSTORAGE: respons server SEBELUM menyentuh state/sesi lokal (kolom captcha murid tidak berubah).
+  cacheDashboardKosongkan();
+  Swal.fire({toast:true, position:'top-end', icon:'success', title:'Kunci Diperbarui!', showConfirmButton:false, timer:2000, background: '#1e293b', color: '#fff'});
+  loadDataMuridDanAbsen();
+};
 
 async function updateKunciServer() {
   const newCaptcha = document.getElementById('input-captcha').value.trim(), newKunci = document.getElementById('toggle-kunci').checked ? 'BUKA' : 'TUTUP';
@@ -14743,6 +14768,43 @@ function apakahBendaharaEkskul(ekskul) {
   return /bendahara/i.test(String(jab[ekskul] || ''));
 }
 
+/** Boleh ganti "Kunci Absen Siswa (Captcha)" untuk satu ekskul:
+ *  admin & guru (pembina) selalu boleh; murid bila MENJABAT (pengurus) pada ekskul tsb. */
+function bolehGantiKunciAbsenEkskul(ekskul) {
+  const role = (currentUser || {}).role || '';
+  if (role === 'admin' || role === 'guru') return true;
+  if (role === 'murid') {
+    const jab = jabatanEkskulMapMurid();
+    return Boolean(ekskul && String(jab[ekskul] || '').trim());
+  }
+  return false;
+}
+
+/** Ganti kunci absen (captcha) suatu ekskul lewat RPC `ganti_kunci_absen_ekskul`
+ *  (security definer — menulis baris pembina). Admin: update baris milik sendiri. */
+async function gantiKunciAbsenEkskul(ekskul, captcha, kunci) {
+  if (!bolehGantiKunciAbsenEkskul(ekskul)) return showToast('error', 'Akses tidak diizinkan.');
+  const role = (currentUser || {}).role || '';
+  if (role === 'admin') {
+    const nip = String((currentUser || {}).nis_nip || (barisGuruSesi() || {}).nis_nip || '');
+    if (!nip) return showToast('error', 'Data akun admin tidak ditemukan.');
+    const { error: errUp } = await supaClient.from('akun')
+      .update({ captcha: String(captcha || '').trim().toUpperCase(), kunci_absen: kunci === 'BUKA' ? 'BUKA' : 'TUTUP' })
+      .eq('nis_nip', nip);
+    if (errUp) return showToast('error', 'Gagal memperbarui kunci: ' + (errUp.message || ''));
+    return true;
+  }
+  const { data: rpc, error } = await supaClient.rpc('ganti_kunci_absen_ekskul', {
+    p_pemanggil: String((currentUser || {}).nis_nip || (barisGuruSesi() || {}).nis_nip || ''),
+    p_ekskul: String(ekskul || ''),
+    p_captcha: String(captcha || ''),
+    p_kunci: String(kunci || '')
+  });
+  if (error) return showToast('error', 'Gagal mengganti kunci: ' + (error.message || ''));
+  if ((rpc || {}).status === 'error') return showToast('error', rpc.message || 'Gagal mengganti kunci.');
+  return true;
+}
+
 /**
  * Peran akses Kas Umum/Kas Anggota per ekskul:
  *  - admin/guru (pembina)        -> 'kelola' (baca, tulis, edit, hapus)
@@ -16281,16 +16343,37 @@ function buangEkskulSiswa(lama, ekskul) {
   return String(lama || '').split(',').map(e => e.trim()).filter(Boolean).filter(e => e !== ekskul).join(',');
 }
 
-/** Ubah keanggotaan satu siswa pada satu ekskul; return true bila ada perubahan. */
+/** Ubah keanggotaan satu siswa pada satu ekskul; return true bila ada perubahan.
+ *  [ADMIN/PEMBINA] Pakai RPC security definer `ubah_anggota_ekskul` bila tersedia,
+ *  sehingga sesi `authenticated` (admin & guru/pembina) ikut bisa menulis — hindari
+ *  error "permission denied for table akun". Fallback ke jalur SELECT+UPDATE lama. */
 async function terapkanKeanggotaanEkskul(nis, ekskul, tambah) {
+  if (!Array.isArray(nis)) nis = [nis]; // terima nis tunggal atau daftar
+  nis = nis.filter(Boolean);
+  if (!nis.length) return false;
+  const cmd = {
+    p_pemanggil: String((currentUser || {}).nis_nip || (barisGuruSesi() || {}).nis_nip || ''),
+    p_ekskul: String(ekskul || ''),
+    p_nis_list: nis,
+    p_tambah: !!tambah
+  };
+  try {
+    const { data: rpc, error } = await supaClient.rpc('ubah_anggota_ekskul', cmd);
+    if (!error) {
+      if ((rpc || {}).status === 'error') throw new Error(rpc.message || 'Gagal memperbarui anggota.');
+      return (rpc || {}).total > 0;
+    }
+    if (String(error.code || '').toUpperCase() !== 'PGRST202') throw error; // RPC tersedia tapi gagal → stop
+  } catch (e) { throw e; }
+  // RPC belum ada (PGRST202) → fallback lama
   const { data, error } = await supaClient.from('akun')
-    .select('ekstrakurikuler').eq('nis_nip', nis).eq('tipe', 'murid').maybeSingle();
+    .select('ekstrakurikuler').eq('nis_nip', nis[0]).eq('tipe', 'murid').maybeSingle();
   if (error) throw error;
   if (!data) return false;
   const baru = tambah ? gabungEkskulSiswa(data.ekstrakurikuler, ekskul) : buangEkskulSiswa(data.ekstrakurikuler, ekskul);
   if (baru === String(data.ekstrakurikuler || '')) return false;
   const { error: errUp } = await supaClient.from('akun')
-    .update({ ekstrakurikuler: baru }).eq('nis_nip', nis).eq('tipe', 'murid');
+    .update({ ekstrakurikuler: baru }).eq('nis_nip', nis[0]).eq('tipe', 'murid');
   if (errUp) throw errUp;
   return true;
 }
@@ -16408,16 +16491,22 @@ async function formTambahAnggotaEkskul() {
   }).then(async (res) => {
     if (!res.isConfirmed) return;
     const { nisList = [], subMap = {} } = res.value || {};
-    if (nisList.length === 0) return showToast('info', 'Tidak ada siswa yang dipilih.');
+    // Anti duplikat: hanya tambahkan yang belum menjadi anggota aktif.
+    const terpilih = [...new Set(nisList)].filter(n =>
+      !anggotaSaatIni.some(a => String(a.nis_nip) === String(n))
+    );
+    if (terpilih.length === 0) return showToast('info', 'Tidak ada siswa baru yang dipilih.');
     let sukses = 0, gagal = 0, pesanErr = '';
     Swal.fire({ title: 'Menyimpan anggota...', didOpen: () => Swal.showLoading(), allowOutsideClick: false, showConfirmButton: false, background: '#1e293b', color: '#fff' });
-    for (const nis of nisList) {
-      try { if (await terapkanKeanggotaanEkskul(nis, aktif, true)) sukses++; }
-      catch (e) { gagal++; pesanErr = e.message || ''; }
+    // Batch ke-1: pemanggilan tunggal RPC untuk seluruh NIS baru.
+    try {
+      const ok = await terapkanKeanggotaanEkskul(terpilih, aktif, true);
+      if (ok) sukses += terpilih.length; else gagal++;
     }
+    catch (e) { gagal += terpilih.length; pesanErr = e.message || ''; }
     // [REQ 1] Simpan penandaan Sub hanya untuk siswa yang dipilih
     const petaDipilih = {};
-    nisList.forEach(n => { if (subMap[n] !== undefined) petaDipilih[n] = subMap[n]; });
+    terpilih.forEach(n => { if (subMap[n] !== undefined) petaDipilih[n] = subMap[n]; });
     await setSubAnggotaMassal(aktif, petaDipilih);
     Swal.close();
     if (gagal > 0) showToast('error', `${sukses} anggota ditambahkan, ${gagal} gagal: ${pesanErr}`);
@@ -16535,10 +16624,12 @@ async function formHapusAnggotaEkskul() {
     if (terpilih.length === 0) return showToast('info', 'Tidak ada anggota yang dipilih.');
     let sukses = 0, gagal = 0, pesanErr = '';
     Swal.fire({ title: 'Menghapus anggota...', didOpen: () => Swal.showLoading(), showConfirmButton: false, background: '#1e293b', color: '#fff' });
-    for (const nis of terpilih) {
-      try { if (await terapkanKeanggotaanEkskul(nis, aktif, false)) sukses++; }
-      catch (e) { gagal++; pesanErr = e.message || ''; }
+    // Batch: satu pemanggilan RPC untuk seluruh NIS terpilih.
+    try {
+      const ok = await terapkanKeanggotaanEkskul(terpilih, aktif, false);
+      if (ok) sukses += terpilih.length; else gagal++;
     }
+    catch (e) { gagal += terpilih.length; pesanErr = e.message || ''; }
     Swal.close();
     if (gagal > 0) showToast('error', `${sukses} dihapus, ${gagal} gagal: ${pesanErr}`);
     else showToast('success', `${sukses} anggota dihapus sementara dari ${aktif}`);
