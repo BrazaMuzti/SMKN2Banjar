@@ -410,7 +410,7 @@ let userName = namaDenganGelar(
                       <div class="text-[10px] font-bold text-white leading-tight truncate max-w-[120px] sm:max-w-[150px]">${userName}</div>
                       <div class="text-[8px] text-pink-400 font-semibold uppercase tracking-wider">${userRole}</div>
                    </div>
-                   <div class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-tr from-blue-500 to-indigo-500 rounded-full flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-md border border-white/20 shrink-0">
+                   <div id="header-avatar-box" data-init="${userInit}" class="w-7 h-7 sm:w-8 sm:h-8 bg-gradient-to-tr from-blue-500 to-indigo-500 rounded-full flex items-center justify-center text-white font-bold text-xs sm:text-sm shadow-md border border-white/20 shrink-0">
                       ${userInit}
                    </div>
                </button>
@@ -418,6 +418,9 @@ let userName = namaDenganGelar(
         </div>
       `;
   }
+
+  // [FOTO PROFIL] Upgrade avatar header ke foto profil bila akun punya url_foto.
+  muatFotoAvatarHeader(); // fire-and-forget — header tampil cepat dengan inisial, lalu di-upgrade
 
   startRealtimeClock(); // Mulai jalankan jam real-time
 
@@ -511,7 +514,7 @@ async function bukaProfilAkun() {
   // admin tanpa NIP pada sesi → coba lookup lewat email
   let prof = null;
   try {
-    const kolom = 'nis_nip, nama_lengkap, gelar_depan, gelar_belakang, email, tingkat_kelas, jabatan, wali_kelas, mapel, ekstrakurikuler, penugasan, no_telepon, jenis_kelamin, agama, nisn, tipe';
+    const kolom = 'nis_nip, nama_lengkap, gelar_depan, gelar_belakang, email, tingkat_kelas, jabatan, wali_kelas, mapel, ekstrakurikuler, penugasan, no_telepon, jenis_kelamin, agama, nisn, tipe, url_foto';
     const emailSesi = sesi["Email"] || '';
     if (idUser && !/\s/.test(idUser)) {
       const { data, error } = await supaClient.from('akun').select(kolom).eq('nis_nip', idUser).maybeSingle();
@@ -530,6 +533,7 @@ async function bukaProfilAkun() {
     (prof && prof.gelar_belakang) || sesi["Gelar Belakang"] || ''
   );
   const init = namaBergelar.charAt(0).toUpperCase();
+  const fotoUrl = String((prof && prof.url_foto) || '');
   const isMurid = role === 'murid';
   const jabatan = (prof && prof.jabatan) || sesi["Jabatan"] || sesi["Jabatan Kelas"] || '';
   const kelas = (prof && prof.tingkat_kelas) || sesi["Tingkat/Kelas"] || '';
@@ -573,10 +577,17 @@ async function bukaProfilAkun() {
     title: `<div class="text-lg font-bold">Profil Akun</div>`,
     html: `
       <div class="flex flex-col items-center -mt-1 mb-3">
-        <div class="w-16 h-16 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg border-2 border-white/20 mb-2">${init}</div>
+        ${fotoUrl
+          ? `<img src="${escapeHtml(fotoUrl)}" alt="Foto Profil" class="w-16 h-16 rounded-full object-cover shadow-lg border-2 border-white/20 mb-2" onerror="this.outerHTML='<div class=&quot;w-16 h-16 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg border-2 border-white/20 mb-2&quot;>${init}</div>'">`
+          : `<div class="w-16 h-16 rounded-full bg-gradient-to-tr from-blue-500 to-indigo-500 flex items-center justify-center text-white text-2xl font-extrabold shadow-lg border-2 border-white/20 mb-2">${init}</div>`}
         <div class="text-sm font-extrabold text-white">${namaBergelar}</div>
         <div class="text-[9px] font-bold text-pink-400 uppercase tracking-wider">${escapeHtml(roleLabel)}</div>
         ${kelas ? `<div class="text-[10px] text-slate-400 mt-0.5">${isMurid ? 'Siswa' : 'Wali'} Kelas ${escapeHtml(kelas)}</div>` : ''}
+        ${isMurid ? `
+        <div class="flex items-center justify-center gap-2 mt-1.5">
+          <button type="button" onclick="Swal.close(); pilihFotoSaya(() => { muatFotoAvatarHeader(); bukaProfilAkun(); })" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded-md text-[10px] font-bold transition"><i class="fa-solid fa-camera mr-1"></i> Ganti Foto</button>
+          ${fotoUrl ? `<button type="button" onclick="Swal.close(); hapusFotoSaya(() => { muatFotoAvatarHeader(); bukaProfilAkun(); })" class="bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white px-2.5 py-1 rounded-md text-[10px] font-bold transition"><i class="fa-solid fa-trash mr-1"></i> Hapus</button>` : ''}
+        </div>` : ''}
       </div>
       <div class="text-left bg-black/30 border border-white/10 rounded-lg px-3 py-2 mb-3 max-h-[40vh] overflow-y-auto custom-scrollbar">${isiTabel}</div>
       <div class="flex items-center justify-center gap-1.5 text-[9px] text-slate-400">
@@ -588,6 +599,34 @@ async function bukaProfilAkun() {
     confirmButtonText: '<i class="fa-solid fa-right-from-bracket"></i> Keluar (Logout)',
     cancelButtonText: 'Tutup', confirmButtonColor: '#ef4444'
   }).then(res => { if (res.isConfirmed) logout(); });
+}
+
+/** [FOTO PROFIL] Muat url_foto pengguna lalu pasang pada avatar header (fallback inisial). */
+async function muatFotoAvatarHeader() {
+  try {
+    const user = (currentUser || {}).user || {};
+    const ident = String(user["NIS"] || user["NIP"] || user["ID Akun Guru"] || '');
+    let baris = null;
+    if (ident && !/\s/.test(ident)) {
+      const { data } = await supaClient.from('akun').select('url_foto').eq('nis_nip', ident).maybeSingle();
+      if (data) baris = data;
+    }
+    if (!baris) {
+      const em = String(user["Email"] || '').trim();
+      if (em) {
+        const { data } = await supaClient.from('akun').select('url_foto').eq('email', em).maybeSingle();
+        if (data) baris = data;
+      }
+    }
+    const box = document.getElementById('header-avatar-box');
+    if (!box) return;
+    const init = String(box.getAttribute('data-init') || '');
+    if (!baris || !baris.url_foto) {
+      box.innerHTML = init ? escapeHtml(init) : '';
+      return;
+    }
+    box.innerHTML = `<img src="${escapeHtml(baris.url_foto)}" alt="Foto Profil" class="w-full h-full rounded-full object-cover" onerror="this.remove()">`;
+  } catch (e) { /* gagal memuat foto → avatar tetap inisial; non-fatal */ }
 }
 
 /** Popup Tentang Aplikasi: pengembang, kontak & donasi (data dari INFO_APLIKASI). */
@@ -1637,10 +1676,13 @@ function jamDariWaktuDgn(w) { return String(w || '').split(',').slice(1).join(',
 
 /** Data Akun Murid (self-service): profil sendiri, edit data kontak/pribadi, reset password sendiri. */
 // ---- Profil murid: upload/hapus foto sendiri (Google Drive via Edge Function) ----
-function pilihFotoSaya() {
+function pilihFotoSaya(setelahSukses) {
   const user = (currentUser || {}).user || {};
   const nis = String(user["NIS"] || '');
   if (!nis) return showToast('error', 'NIS tidak ditemukan pada sesi.');
+  const lanjut = (typeof setelahSukses === 'function')
+    ? setelahSukses
+    : () => renderAkunSayaMurid(document.getElementById('main-content'));
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*';
   inp.onchange = () => {
@@ -1657,7 +1699,7 @@ function pilihFotoSaya() {
       Swal.close();
       if (res && res.status === 'success') {
         showToast('success', 'Foto profil berhasil diperbarui.');
-        renderAkunSayaMurid(document.getElementById('main-content'));
+        lanjut();
       } else {
         Swal.fire({ icon: 'error', title: 'Gagal', text: (res && res.message) || 'Gagal mengunggah foto.', background: '#1e293b', color: '#fff' });
       }
@@ -1667,10 +1709,13 @@ function pilihFotoSaya() {
   inp.click();
 }
 
-function hapusFotoSaya() {
+function hapusFotoSaya(setelahSukses) {
   const user = (currentUser || {}).user || {};
   const nis = String(user["NIS"] || '');
   if (!nis) return;
+  const lanjut = (typeof setelahSukses === 'function')
+    ? setelahSukses
+    : () => renderAkunSayaMurid(document.getElementById('main-content'));
   Swal.fire({
     title: 'Hapus Foto Profil?', text: 'Foto siswa akan dihapus dari akun.', icon: 'warning',
     showCancelButton: true, confirmButtonText: 'Ya, Hapus', confirmButtonColor: '#dc2626', cancelButtonText: 'Batal',
@@ -1682,7 +1727,7 @@ function hapusFotoSaya() {
     Swal.close();
     if (res && res.status === 'success') {
       showToast('success', 'Foto profil dihapus.');
-      renderAkunSayaMurid(document.getElementById('main-content'));
+      lanjut();
     } else {
       Swal.fire({ icon: 'error', title: 'Gagal', text: (res && res.message) || 'Gagal menghapus foto.', background: '#1e293b', color: '#fff' });
     }
