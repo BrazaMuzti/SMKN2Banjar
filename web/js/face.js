@@ -669,6 +669,104 @@
   }
 
   // ==================================================================
+  // 8b. PEMINDAIAN WAJAH UNTUK ABSEN MANDIRI (verifikasi selfie)
+  // ==================================================================
+  /**
+   * Verifikasi identitas murid pada Absen Mandiri: cocokkan wajah kamera depan
+   * dengan descriptor milik NIS itu sendiri (single-label matcher, ambang
+   * JARAK_COCOK = 0.5). Semua diproses di browser — gambar tidak dikirim.
+   * Setelah cocok, kamera dihentikan & onHasil dipanggil.
+   * @param {string} nis  — NIS murid yang sedang absen
+   * @param {string} nama — nama murid (untuk pesan pada layar)
+   * @param {Object} cfg  — { wrap: HTMLElement, onHasil: fn(nis) }
+   */
+  async function pindaiWajahMandiri(nis, nama, cfg) {
+    berhentiPindaiWajah();
+    const wrap = cfg && cfg.wrap;
+    const onHasil = cfg && cfg.onHasil;
+    if (!wrap) { fxToast('error', 'Wadah pemindaian tidak ditemukan.'); return false; }
+
+    try {
+      await pastikanModels();
+      const fa = window.faceapi;
+      const nisS = String(nis || '');
+      if (!nisS) throw new Error('NIS pemanggil kosong.');
+
+      // Ambil descriptor milik murid ini sendiri (wajah_status aktif)
+      const rows = await fxAmbilSemua(
+        fxSupabase().from('akun').select('nis_nip, wajah_descriptor')
+          .eq('tipe', 'murid').eq('nis_nip', nisS).eq('wajah_status', 'aktif').not('wajah_descriptor', 'is', null)
+      );
+      const row = (rows || [])[0];
+      if (!row || !Array.isArray(row.wajah_descriptor) || row.wajah_descriptor.length !== 128) {
+        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-[10px] p-2 mb-2 text-center">Wajah ${fxEscape(nama || nisS)} belum terdaftar/aktif.<br><span class="text-amber-100/70">Daftarkan di menu Manajemen Akun Murid → Registrasi Wajah.</span></div>`;
+        return false;
+      }
+
+      const matcher = buatMatcherDariPeta({ [nisS]: { descriptor: row.wajah_descriptor } });
+      if (!matcher) {
+        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-[10px] p-2 mb-2 text-center">Data wajah tidak valid.</div>`;
+        return false;
+      }
+
+      wrap.innerHTML = `
+        <div class="relative rounded-lg overflow-hidden border border-cyan-500 bg-black">
+          <video id="wajah-mandiri-video" autoplay playsinline muted class="w-full h-40 object-cover"></video>
+          <canvas id="wajah-mandiri-overlay" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+          <div id="wajah-mandiri-live-status" class="absolute top-1.5 left-1.5 right-1.5 text-center text-[10px] font-bold text-white drop-shadow-lg bg-black/40 rounded px-2 py-0.5">Menyiapkan kamera...</div>
+          <button id="btn-wajah-mandiri-stop" class="absolute bottom-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow">Berhenti</button>
+        </div>`;
+
+      const video = document.getElementById('wajah-mandiri-video');
+      const overlay = document.getElementById('wajah-mandiri-overlay');
+      const statusEl = document.getElementById('wajah-mandiri-live-status');
+      const btnStop = document.getElementById('btn-wajah-mandiri-stop');
+
+      let stream;
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false
+        });
+      } catch (e) {
+        wrap.innerHTML = `<div class="rounded border border-red-500/50 bg-red-900/30 text-red-200 text-[10px] p-2 mb-2 text-center">Kamera tidak dapat diakses: ${fxEscape(e && e.message ? e.message : e)}</div>`;
+        return false;
+      }
+      video.srcObject = stream;
+      await video.play();
+      scanAktif = { hentikan: false, stream };
+
+      const setStatus = (teks, warna) => {
+        statusEl.innerHTML = teks;
+        statusEl.className = 'absolute top-1.5 left-1.5 right-1.5 text-center text-[10px] font-bold drop-shadow-lg bg-black/40 rounded px-2 py-0.5 ' + (warna || 'text-white');
+      };
+      setStatus('<i class="fa-solid fa-video mr-1"></i>Hadapkan wajah ke kamera.');
+
+      btnStop.addEventListener('click', () => berhentiPindaiWajah());
+
+      await loopDeteksiPindai({
+        wrap, video, overlay, matcher,
+        peta: { [nisS]: { descriptor: row.wajah_descriptor } },
+        cooldown: {}, terdeteksi: {}, setStatus, nisList: [nisS],
+        onMatch: (nisCocok) => {
+          if (String(nisCocok) !== nisS) return false; // hanya identitas sendiri
+          if (typeof onHasil === 'function') {
+            try { onHasil(nisCocok); } catch (e) { console.error('onHasil pindaiWajahMandiri:', e); }
+          }
+          berhentiPindaiWajah(); // cukup sekali cocok — hentikan kamera
+          return false;
+        }
+      });
+      return true;
+    } catch (e) {
+      console.error('pindaiWajahMandiri:', e);
+      wrap.innerHTML = `<div class="rounded border border-red-500/50 bg-red-900/30 text-red-200 text-[10px] p-2 mb-2 text-center">${fxEscape(e && e.message ? e.message : e)}</div>`;
+      berhentiPindaiWajah();
+      return false;
+    }
+  }
+
+  // ==================================================================
   // 9. EKSPOR API PUBLIK
   // ==================================================================
   window.FaceWajah = {
@@ -678,6 +776,7 @@
     hapusDataWajah,
     mulaiPindaiWajahAbsen,
     berhentiPindaiWajah,
+    pindaiWajahMandiri,
     urlFotoUntukCanvas
   };
 })();

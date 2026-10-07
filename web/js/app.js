@@ -1247,6 +1247,8 @@ function startRealtimeClock() {
 // ==========================================
 
 
+let wajahMandiriCocok = false; // true setelah face scan (opsional) berhasil memverifikasi identitas
+
 async function submitAbsenMandiri() {
   const mapelRaw = document.getElementById('murid-mapel').value.split('|');
   const captcha = document.getElementById('murid-captcha').value.trim();
@@ -1260,15 +1262,57 @@ async function submitAbsenMandiri() {
 
   try {
     const smtMandiri = ['Juli','Agustus','September','Oktober','November','Desember'].includes(currentBulan) ? 'Ganjil' : 'Genap';
-    const res = await apiCall('absen_mandiri', { tahun: currentTahun, semester: smtMandiri, bulan: currentBulan, tanggal: new Date().getDate(), kelas: currentUser.user["Tingkat/Kelas"], jenis: mapelRaw[0], mapel: mapelRaw[1], nis: currentUser.user["NIS"], nama: currentUser.user["Nama Lengkap"], captcha: captcha, gps: gpsLokasi });
+    const res = await apiCall('absen_mandiri', { tahun: currentTahun, semester: smtMandiri, bulan: currentBulan, tanggal: new Date().getDate(), kelas: currentUser.user["Tingkat/Kelas"], jenis: mapelRaw[0], mapel: mapelRaw[1], nis: currentUser.user["NIS"], nama: currentUser.user["Nama Lengkap"], captcha: captcha, gps: gpsLokasi, wajahCocok: wajahMandiriCocok });
     
     if(res.status === 'success') {
       Swal.fire({ icon: 'success', title: 'Berhasil Absen!', html: `Kehadiran tercatat.<br><span class="text-xs text-slate-400">Lokasi: ${gpsLokasi}</span>`, background: '#1e293b', color: '#fff' });
       cacheDashboardKosongkan(); // data absen berubah → sesi cache dashboard usang
       document.getElementById('murid-captcha').value = '';
+      wajahMandiriCocok = false;
+      const stMandiri = document.getElementById('wajah-mandiri-status');
+      if (stMandiri) { stMandiri.innerHTML = ''; stMandiri.className = 'text-[10px] text-slate-500 flex-1'; }
+      const wrapMandiri = document.getElementById('wajah-mandiri-wrap');
+      if (wrapMandiri) { wrapMandiri.classList.add('hidden'); wrapMandiri.innerHTML = ''; }
     } else Swal.fire({ icon: 'error', title: 'Ditolak', text: res.message || 'Absen ditolak.', background: '#1e293b', color: '#fff' });
   } catch (e) { Swal.fire({ icon: 'error', title: 'Error Jaringan', text: e.message, background: '#1e293b', color: '#fff' }); }
   finally { btn.innerHTML = `<i class="fa-solid fa-check-circle"></i> Saya Hadir Hari Ini`; btn.disabled = false; }
+}
+
+/** Verifikasi wajah OPSIONAL pada Absen Mandiri: mencocokkan wajah murid
+ *  dengan descriptor terdaftar miliknya (face.js → pindaiWajahMandiri).
+ *  Berhasil → flag wajahMandiriCocok di-set & ditulis ke kolom wajah_cocok.
+ *  Gagal/tidak tersedia → absen tetap bisa jalan (tanpa penanda wajah). */
+async function pindaiWajahMandiriSaya() {
+  const btn = document.getElementById('btn-pindai-wajah-mandiri');
+  const st = document.getElementById('wajah-mandiri-status');
+  const wrap = document.getElementById('wajah-mandiri-wrap');
+  const user = ((typeof currentUser !== 'undefined' && currentUser) || {}).user || {};
+  const nis = String(user['NIS'] || '');
+  const nama = String(user['Nama Lengkap'] || '');
+  if (typeof window.FaceWajah === 'undefined' || typeof window.FaceWajah.pindaiWajahMandiri !== 'function') {
+    if (st) st.innerHTML = '<span class="text-red-400">Fitur wajah tidak tersedia (face.js belum dimuat).</span>';
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i>Menyiapkan kamera...'; }
+  if (wrap) wrap.classList.remove('hidden');
+  try {
+    await window.FaceWajah.pindaiWajahMandiri(String(nis), nama, {
+      wrap,
+      onHasil: () => {
+        wajahMandiriCocok = true;
+        if (st) st.innerHTML = `<span class="text-green-400 font-bold"><i class="fa-solid fa-circle-check mr-1"></i>Wajah terverifikasi — ${escapeHtml(nama)}</span>`;
+        if (btn) btn.innerHTML = '<i class="fa-solid fa-face-grin-beam mr-1"></i> Terverifikasi';
+      }
+    });
+  } catch (e) {
+    console.error('pindaiWajahMandiriSaya:', e);
+    if (st) st.innerHTML = '<span class="text-red-400">' + escapeHtml((e && e.message) || e) + '</span>';
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      if (!wajahMandiriCocok) btn.innerHTML = '<i class="fa-solid fa-face-smile mr-1"></i> Pindai Wajah Saya';
+    }
+  }
 }
 
 // ==========================================
@@ -1574,6 +1618,7 @@ function cetakKartuQrMurid() {
 async function renderAbsenMandiriMurid(container) {
   container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat Sesi Absen...</div>`;
   const user = (currentUser || {}).user || {};
+  wajahMandiriCocok = false; // verifikasi wajah di-reset setiap panel dibuka
   const kelas = user["Tingkat/Kelas"] || '';
   const ekskulSaya = String(user["Ekstrakurikuler"] || '').split(',').map(e => e.trim()).filter(Boolean);
 
@@ -1652,6 +1697,17 @@ async function renderAbsenMandiriMurid(container) {
           <label class="text-[10px] font-bold text-slate-300 uppercase tracking-wider">Kode Captcha dari Guru <span class="text-red-400">*</span></label>
           <input type="text" id="murid-captcha" placeholder="Ketik kode dari guru pengampu" autocomplete="off"
             class="w-full mt-1 bg-slate-800 border border-white/10 rounded-lg px-3 py-2 text-sm text-white uppercase tracking-widest font-mono">
+        </div>
+        <div>
+          <label class="text-[10px] font-bold text-slate-300 uppercase tracking-wider"><i class="fa-solid fa-id-card mr-1"></i> Pindai Wajah <span class="text-slate-500 normal-case font-normal">(opsional — penguat identitas)</span></label>
+          <div class="mt-1 flex items-center gap-2">
+            <button type="button" id="btn-pindai-wajah-mandiri" onclick="pindaiWajahMandiriSaya()"
+              class="bg-cyan-600/30 hover:bg-cyan-600 text-cyan-300 hover:text-white px-3 py-2 rounded-lg text-[11px] font-bold transition whitespace-nowrap">
+              <i class="fa-solid fa-face-smile mr-1"></i> Pindai Wajah Saya
+            </button>
+            <div id="wajah-mandiri-status" class="text-[10px] text-slate-500 flex-1"></div>
+          </div>
+          <div id="wajah-mandiri-wrap" class="hidden mt-2"></div>
         </div>
         <button id="btn-absen-mandiri" onclick="submitAbsenMandiri()" ${opsiAktif.length === 0 ? 'disabled' : ''}
           class="w-full bg-green-600 hover:bg-green-700 disabled:bg-slate-600 disabled:cursor-not-allowed text-white font-bold py-3 rounded-lg transition text-sm">

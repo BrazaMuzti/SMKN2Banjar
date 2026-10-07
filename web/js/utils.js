@@ -339,13 +339,47 @@ async function apiCall(action, data = {}) {
     }
 
     if (action === 'absen_mandiri') {
-      // Validasi captcha terhadap sesi yang dibuka guru pengampu (mapel/ekskul)
-      const arrBulanAm = ["Januari","Februari","Maret","April","Mei","Juni","Juli","Agustus","September","Oktober","November","Desember"];
-      const idxAm = arrBulanAm.indexOf(data.bulan);
-      const partsAm = String(data.tahun || '').split('/');
-      const tahunAm = (idxAm >= 6) ? partsAm[0] : (partsAm[1] || partsAm[0]);
-      const tglAm = `${tahunAm}-${String(idxAm + 1).padStart(2, '0')}-${String(data.tanggal).padStart(2, '0')}`;
+      // ==== JALUR UTAMA (baru): RPC `absen_mandiri` (security definer) ====
+      // Tanggal & validasi captcha diverifikasi di server → tidak bergantung
+      // state browser (currentTahun/currentBulan yang bisa basi) maupun hak
+      // tulis anon pada tabel absensi. Bila RPC belum dibuat di DB (PGRST202)
+      // → otomatis jatuh ke fallback lama di bawah.
+      const tglKini = new Date();
+      const tanggalIso = `${tglKini.getFullYear()}-${String(tglKini.getMonth() + 1).padStart(2, '0')}-${String(tglKini.getDate()).padStart(2, '0')}`;
+      const payloadRpc = {
+        p_nis: String(data.nis || ''),
+        p_nama: data.nama || '',
+        p_kelas: data.kelas || '',
+        p_tahun: data.tahun || '',
+        p_bulan: data.bulan || '',
+        p_mapel: data.mapel || '',
+        p_captcha: String(data.captcha || '').trim(),
+        p_gps: data.gps || '',
+        p_wajah_cocok: !!data.wajahCocok,
+        p_tanggal: tanggalIso
+      };
+      let rpcHasil;
+      try {
+        rpcHasil = await supaClient.rpc('absen_mandiri', payloadRpc);
+      } catch (rpcErr) {
+        rpcHasil = { error: rpcErr };
+      }
+      const rpcErr = rpcHasil && rpcHasil.error;
+      if (rpcErr) {
+        const kodeRpc = String((rpcErr && rpcErr.code) || '').toUpperCase();
+        if (kodeRpc !== 'PGRST202') {
+          // RPC terpasang tapi menolak absensi → jangan tiru "berhasil"
+          return { status: 'error', message: (rpcErr && rpcErr.message) || 'Absen ditolak server.' };
+        }
+        console.warn('absen_mandiri: RPC belum ada di DB — memakai fallback klien.', rpcErr);
+      } else {
+        const hasilRpc = (rpcHasil && rpcHasil.data) || {};
+        if (hasilRpc.status === 'success') return { status: 'success', data: hasilRpc };
+        return { status: 'error', message: hasilRpc.message || 'Absen ditolak server.' };
+      }
 
+      // ---- Fallback lama (RPC `absen_mandiri` belum dibuat di database) ----
+      // Validasi captcha terhadap sesi yang dibuka guru pengampu (mapel/ekskul)
       const { data: guruRows, error: gErr } = await supaClient
         .from('akun')
         .select('captcha, kunci_absen')
@@ -358,7 +392,7 @@ async function apiCall(action, data = {}) {
       const { error } = await supaClient.from('absensi').upsert({
         nis: String(data.nis || ''),
         nama: data.nama || '',
-        tanggal: tglAm,
+        tanggal: tanggalIso, // tanggal REAL hari ini (bukan turunan bulan/tahun yang bisa basi)
         status: 'H',
         keterangan: '',
         mapel: data.mapel || '',
@@ -367,8 +401,11 @@ async function apiCall(action, data = {}) {
         tahun: data.tahun || '',
         semester: data.semester || '',
         bulan: data.bulan || '',
-        metode: 'Absen Mandiri (GPS)',
+        metode: data.wajahCocok ? 'Absen Mandiri (Wajah+GPS)' : 'Absen Mandiri (GPS)',
         gps: data.gps || ''
+        // CATATAN: wajah_cocok sengaja TIDAK dikirim di jalur fallback —
+        // kolom ini baru ada setelah migrasi upgrade_20261014c, dan fallback
+        // justru dipakai saat RPC/migrasi belum ada (DB lama).
       }, { onConflict: 'nis,tanggal,mapel' });
       if (error) throw error;
       return { status: 'success' };
