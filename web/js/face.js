@@ -795,6 +795,8 @@
     hapusDataWajah,
     ambilStatusWajah,
     htmlBadgeWajah,
+    renderRegistrasiWajah,
+    muatUlangPetaWajah,
     mulaiPindaiWajahAbsen,
     berhentiPindaiWajah,
     pindaiWajahMandiri,
