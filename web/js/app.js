@@ -9016,7 +9016,7 @@ let cacheAkunMuridSesiAda = false;   // true setelah 1x fetch sukses per sesi
 let ukuranHalamanMurid = 50;         // default ukuran halaman (25/50/75/100)
 let halamanAktifMurid = 1;
 // Kolom ringkas utk daftar tabel + filter + tombol aksi (payload ±60% lebih ringan dari select('*'))
-const KOLOM_LIST_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, jabatan, jabatan_ekskul, email, ekstrakurikuler, tahun_pelajaran, semester, riwayat_kelas';
+const KOLOM_LIST_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, jabatan, jabatan_ekskul, email, ekstrakurikuler, tahun_pelajaran, semester, riwayat_kelas, url_foto';
 // Kolom penuh utk export Excel/PDF (fetch on-demand saat tombol export diklik)
 const KOLOM_EXPORT_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, tgl_lahir, agama, golongan_darah, ekstrakurikuler, jabatan, jabatan_ekskul, nama_ayah, pekerjaan_ayah, nama_ibu, pekerjaan_ibu, nama_wali, alamat, no_telepon, email, catatan_khusus, tahun_pelajaran, semester, url_foto, alamat_maps, media_sosial';
 
@@ -9114,11 +9114,7 @@ async function renderManajemenMurid(container, paksa = false) {
                         </div>
                     </div>
                 </div>
-                <!-- Tab: Daftar Murid / Registrasi Wajah -->
-                <div class="bg-slate-900/90 border-b border-white/10 flex gap-1 px-2 pt-1.5">
-                    <button id="tab-btn-daftar" onclick="gantiTabMurid('daftar')" class="px-3 py-1.5 rounded-t-lg text-[10px] font-bold flex items-center gap-1 transition bg-cyan-600 text-white shadow-sm" title="Tabel data akun murid"><i class="fa-solid fa-table-list"></i> Daftar Murid</button>
-                    <button id="tab-btn-wajah" onclick="gantiTabMurid('wajah')" class="px-3 py-1.5 rounded-t-lg text-[10px] font-bold flex items-center gap-1 transition bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 border border-transparent" title="Pendaftaran data wajah untuk absensi face scan"><i class="fa-solid fa-face-viewfinder text-cyan-400"></i> Registrasi Wajah</button>
-                </div>
+                <!-- Data Akun Murid: satu tabel — status wajah & tombol registrasi ada di tiap baris -->
                 <div id="tab-panel-daftar" class="flex-1 overflow-auto custom-scrollbar bg-[#0f172a]">
                     <table class="w-full text-left whitespace-nowrap">
                         <thead class="sticky top-0 bg-slate-900 z-10 text-[10px] uppercase text-slate-400 shadow-md">
@@ -9131,13 +9127,13 @@ async function renderManajemenMurid(container, paksa = false) {
                                 <th class="px-4 py-3 border-b border-white/10">Tahun Pelajaran</th>
                                 <th class="px-4 py-3 border-b border-white/10">Sub Ekskul</th>
                                 <th class="px-4 py-3 border-b border-white/10">Email Login</th>
+                                <th class="px-4 py-3 border-b border-white/10 text-center">Status Wajah</th>
                                 <th class="px-4 py-3 border-b border-white/10 text-center">Aksi</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-murid" class="text-xs text-slate-200"></tbody>
                     </table>
                 </div>
-                <div id="tab-panel-wajah" class="hidden flex-1 overflow-auto custom-scrollbar bg-[#0f172a]"></div>
                 <div id="pag-murid" class="bg-slate-800/80 border-t border-white/10 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-300"></div>
             </div>
         `;
@@ -9266,8 +9262,14 @@ async function exportPdfMurid() {
   setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 800);
 }
 
-function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}) {
-    if (!data || data.length === 0) return `<tr><td colspan="9" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
+/** Ambil status wajah satu baris dari peta { nis: 'aktif'|'nonaktif' } (default 'belum'). */
+function statusWajahBaris(petaWajah, nis) {
+    const st = petaWajah && petaWajah[String(nis)];
+    return st === 'aktif' || st === 'nonaktif' ? st : 'belum';
+}
+
+function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
+    if (!data || data.length === 0) return `<tr><td colspan="10" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
 
 
     return data.map((d, i) => {
@@ -9281,6 +9283,14 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}) {
         let ekskulData = (d.ekstrakurikuler || d.Ekstrakurikuler || d.ekskul || "").replace(/"/g, '&quot;');
         let tahunData = d.tahun_pelajaran || d["ID Tahun Pelajaran"] || "";
         let subEkskulData = subLookup[String(nis)] || '';
+        const stWajah = statusWajahBaris(petaWajah, nis);
+        const wajahAktif = stWajah === 'aktif';
+        const badgeWajah = window.FaceWajah && typeof window.FaceWajah.htmlBadgeWajah === 'function'
+            ? window.FaceWajah.htmlBadgeWajah(stWajah)
+            : '<span class="text-[9px] text-slate-500 uppercase tracking-wider">-</span>';
+        const tombolWajah = window.FaceWajah && typeof window.FaceWajah.kelolaWajah === 'function'
+            ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="w-7 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-400'} hover:text-white rounded transition mr-1" title="${wajahAktif ? 'Kelola data wajah' : 'Registrasi data wajah'}"><i class="fa-solid fa-face-viewfinder"></i></button>`
+            : '';
 
         return `
             <tr class="hover:bg-white/5 border-b border-white/5 transition row-murid" data-ekskul="${ekskulData}" data-tahun="${escapeHtml(tahunData)}">
@@ -9295,8 +9305,10 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}) {
                 <td class="px-4 py-3 text-[10px] text-slate-400 search-target">${escapeHtml(tahunData || '-')}</td>
                 <td class="px-4 py-3 text-[10px] text-slate-400">${subEkskulData ? escapeHtml(subEkskulData) : '<span class="italic text-slate-600">-</span>'}</td>
                 <td class="px-4 py-3"><div class="text-[10px] text-slate-400"><i class="fa-solid fa-envelope"></i> ${email}</div></td>
+                <td class="px-4 py-3 text-center">${badgeWajah}</td>
 
                 <td class="px-4 py-3 text-center whitespace-nowrap">
+                    ${tombolWajah}
                     <button onclick="editAkunMurid('${escJs(d.id || '')}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>
                     <button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>
                     <button onclick="deleteAkunMurid('${escJs(nis)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>
@@ -9374,7 +9386,13 @@ async function renderTabelMuridTerfilter() {
     const halaman = cocok.slice(mulai, mulai + ukuranHalamanMurid);
 
     const subLookup = await muridSubEkskulLookup(halaman);
-    tbody.innerHTML = generateTbodyMurid(halaman, mulai, subLookup);
+    let petaWajah = {};
+    if (window.FaceWajah && typeof window.FaceWajah.ambilStatusWajah === 'function' && halaman.length) {
+        try {
+            petaWajah = await window.FaceWajah.ambilStatusWajah(halaman.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean));
+        } catch (e) { console.error('Gagal ambil status wajah:', e); }
+    }
+    tbody.innerHTML = generateTbodyMurid(halaman, mulai, subLookup, petaWajah);
 
 
     const pag = document.getElementById('pag-murid');
@@ -9406,24 +9424,7 @@ function filterTabelMurid() {
     renderTabelMuridTerfilter();
 }
 
-/** Ganti tab halaman Manajemen Akun Murid: 'daftar' | 'wajah'. */
-function gantiTabMurid(tab) {
-    const pDaftar = document.getElementById('tab-panel-daftar');
-    const pWajah = document.getElementById('tab-panel-wajah');
-    const bDaftar = document.getElementById('tab-btn-daftar');
-    const bWajah = document.getElementById('tab-btn-wajah');
-    if (!pDaftar || !pWajah || !bDaftar || !bWajah) return;
-    const isWajah = tab === 'wajah';
-    const aktif = 'px-3 py-1.5 rounded-t-lg text-[10px] font-bold flex items-center gap-1 transition bg-cyan-600 text-white shadow-sm';
-    const nonaktif = 'px-3 py-1.5 rounded-t-lg text-[10px] font-bold flex items-center gap-1 transition bg-slate-800/80 text-slate-400 hover:text-white hover:bg-slate-700 border border-transparent';
-    pDaftar.classList.toggle('hidden', isWajah);
-    pWajah.classList.toggle('hidden', !isWajah);
-    bDaftar.className = isWajah ? nonaktif : aktif;
-    bWajah.className = isWajah ? aktif : nonaktif;
-    if (isWajah && window.FaceWajah && typeof window.FaceWajah.renderRegistrasiWajah === 'function') {
-        window.FaceWajah.renderRegistrasiWajah();
-    }
-}
+
 
 /** Buka form edit akun murid dengan data PENUH (fetch 1 baris by id; fallback cache tipis).
  *  Cache daftar memakai kolom ringkas (KOLOM_LIST_MURID) sehingga banyak kolom profil

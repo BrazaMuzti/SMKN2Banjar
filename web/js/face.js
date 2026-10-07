@@ -202,6 +202,19 @@
     return w.status === 'aktif' ? 'aktif' : 'nonaktif';
   }
 
+  /** Status wajah untuk sekumpulan NIS ({ nis: 'aktif'|'nonaktif'|'belum' }) — dipakai kolom "Status Wajah" pada tabel Daftar Murid. */
+  async function ambilStatusWajah(nisList) {
+    const peta = petaWajahCache || await muatPetaWajah();
+    const hasil = {};
+    (nisList || []).forEach(nis => { hasil[String(nis)] = statusMurid(peta, nis); });
+    return hasil;
+  }
+
+  /** HTML badge status wajah utk disisipkan di tabel (dari BADGE_STATUS). */
+  function htmlBadgeWajah(status) {
+    return BADGE_STATUS[status] || BADGE_STATUS.belum;
+  }
+
   // ==================================================================
   // 6. TAB "REGISTRASI WAJAH" (halaman Manajemen Akun Murid)
   // ==================================================================
@@ -350,7 +363,7 @@
     const kelas = murid.tingkat_kelas || '';
 
     Swal.fire({
-      title: `<div class="text-sm font-bold mt-1"><i class="fa-solid fa-face-viewfinder text-cyan-400 mr-2"></i>Data Wajah</div>`,
+      title: `<div class="text-sm font-bold mt-1"><i class="fa-solid fa-face-viewfinder text-cyan-400 mr-2"></i>Foto Siswa</div>`,
       html: `
         <div class="flex items-start gap-3 justify-between mb-2">
           <div class="text-left flex-1">
@@ -362,7 +375,7 @@
         </div>
         <div class="flex justify-center items-center gap-1.5 bg-black/60 p-1 rounded-lg mb-2">
           <button id="btn-wajah-foto" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition"><i class="fa-solid fa-image mr-1"></i>Pindai dari Foto</button>
-          <button id="btn-wajah-kamera" class="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition"><i class="fa-solid fa-camera mr-1"></i>Kamera</button>
+          <button id="btn-wajah-kamera" class="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition"><i class="fa-solid fa-camera mr-1"></i>Pindai dari Kamera</button>
         </div>
         <div id="wajah-camera-area" class="hidden relative rounded-lg overflow-hidden border border-cyan-500 bg-black mb-2">
           <video id="wajah-video" autoplay playsinline muted class="w-full h-52 object-cover"></video>
@@ -461,7 +474,7 @@
         if (petaWajahCache) petaWajahCache[String(nis)] = { descriptor: descriptorSementara, status: 'aktif' };
         fxToast('success', 'Wajah ' + nama + ' tersimpan.');
         Swal.close();
-        renderRegistrasiWajah();
+        refreshDaftarWajahTable();
       } catch (e) {
         console.error(e);
         setHasil(fxEscape(e.message || e), 'text-red-300');
@@ -476,7 +489,7 @@
         if (petaWajahCache && petaWajahCache[String(nis)]) petaWajahCache[String(nis)].status = 'nonaktif';
         fxToast('success', 'Wajah ' + nama + ' dinonaktifkan.');
         Swal.close();
-        renderRegistrasiWajah();
+        refreshDaftarWajahTable();
       } catch (e) {
         console.error(e);
         setHasil(fxEscape(e.message || e), 'text-red-300');
@@ -498,10 +511,18 @@
       await simpanWajahKeDb(nis, null, '');
       if (petaWajahCache) delete petaWajahCache[String(nis)];
       fxToast('success', 'Data wajah dihapus.');
-      renderRegistrasiWajah();
+      refreshDaftarWajahTable();
     } catch (e) {
       console.error(e);
       fxToast('error', e.message || 'Gagal menghapus data wajah.');
+    }
+  }
+
+  /** Segarkan tampilan wajah: panel lama (no-op setelah panel dihapus) + tabel Daftar Murid. */
+  function refreshDaftarWajahTable() {
+    renderRegistrasiWajah();
+    if (typeof renderTabelMuridTerfilter === 'function') {
+      try { renderTabelMuridTerfilter(); } catch (e) { console.error('refresh Daftar Murid:', e); }
     }
   }
 
@@ -548,7 +569,7 @@
 
       const matcher = buatMatcherDariPeta(peta);
       if (!matcher) {
-        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-xs p-3 mb-3 text-center"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Belum ada siswa di kelas ini yang terdaftar wajah.<br><span class="text-amber-100/70">Daftarkan dulu di menu <b>Manajemen Akun Murid → Registrasi Wajah</b>.</span></div>`;
+        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-xs p-3 mb-3 text-center"><i class="fa-solid fa-triangle-exclamation mr-1"></i>Belum ada siswa di kelas ini yang terdaftar wajah.<br><span class="text-amber-100/70">Daftarkan lewat tombol <b>Registrasi</b> pada baris murid di menu <b>Data Akun Murid</b>.</span></div>`;
         return;
       }
 
@@ -770,10 +791,10 @@
   // 9. EKSPOR API PUBLIK
   // ==================================================================
   window.FaceWajah = {
-    renderRegistrasiWajah,
-    muatUlangPetaWajah,
     kelolaWajah,
     hapusDataWajah,
+    ambilStatusWajah,
+    htmlBadgeWajah,
     mulaiPindaiWajahAbsen,
     berhentiPindaiWajah,
     pindaiWajahMandiri,
