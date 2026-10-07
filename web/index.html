@@ -6,7 +6,7 @@
   <title>SISIP - Sistem Informasi Sekolah Indonesia Pintar</title>
   <meta name="description" content="SISIP adalah aplikasi administrasi sekolah internal untuk absensi, penilaian, jadwal, dan laporan akademik. Bukan aplikasi publik/komersial.">
   <meta name="robots" content="noindex, nofollow">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https:; base-uri 'self'; form-action 'self'; object-src 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://cdn.jsdelivr.net https://unpkg.com 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; font-src 'self' https://cdnjs.cloudflare.com data:; img-src 'self' data: https:; connect-src 'self' https://*.supabase.co https:; base-uri 'self'; form-action 'self'; object-src 'none'; frame-src 'self' https://maps.google.com https://www.google.com">
   <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
   <link rel="manifest" href="manifest.json">
   <link rel="stylesheet" href="css/style.css">
@@ -17,7 +17,10 @@
   </style>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js" integrity="sha256-hZaWX+kY5lZgChtWjToWj1wNPSKmAIhrtvRKZVXbAec=" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="js/utils.js?v=20260930h"></script>
-  <script src="js/app.js?v=20261012a" defer></script>
+  <script src="js/app.js?v=20261014a" defer></script>
+  <!-- Pengenalan wajah (face-api.js) — library & model lokal (vendor/ + models/) -->
+  <script src="vendor/face-api.min.js?v=20261014a" defer></script>
+  <script src="js/face.js?v=20261014a" defer></script>
   <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11" integrity="sha384-nLoOnA/BDh8A/jxqtckg4DumuCGOBYUnNJLZdQz/zfYNp3wcjGSoWTAzgko06G/2" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://unpkg.com/html5-qrcode" type="text/javascript" integrity="sha384-c9d8RFSL+u3exBOJ4Yp3HUJXS4znl9f+z66d1y54ig+ea249SpqR+w1wyvXz/lk+" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js" integrity="sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
