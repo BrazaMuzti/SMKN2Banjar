@@ -356,7 +356,10 @@ async function apiCall(action, data = {}) {
         p_captcha: String(data.captcha || '').trim(),
         p_gps: data.gps || '',
         p_wajah_cocok: !!data.wajahCocok,
-        p_tanggal: tanggalIso
+        p_tanggal: tanggalIso, // diabaikan server (tanggal selalu WIB) — dikirim demi kompatibilitas
+        // p_jenis ('Mapel'/'Ekskul') menentukan BUCKET kelas yang ditulis server:
+        // Mapel → kelas efektif TA (riwayat_kelas), Ekskul → 'Semua Kelas'.
+        p_jenis: String(data.jenis || '').toUpperCase() === 'EKSKUL' ? 'Ekskul' : 'Mapel'
       };
       let rpcHasil;
       try {
@@ -397,7 +400,8 @@ async function apiCall(action, data = {}) {
         keterangan: '',
         mapel: data.mapel || '',
         ekskul: data.mapel || '',
-        kelas: data.kelas || '',
+        // Bucket kelas: Ekskul WAJIB 'Semua Kelas' (filter rekap guru ekskul memakai .eq('kelas','Semua Kelas'))
+        kelas: (String(data.jenis || '').toUpperCase() === 'EKSKUL') ? 'Semua Kelas' : (data.kelas || ''),
         tahun: data.tahun || '',
         semester: data.semester || '',
         bulan: data.bulan || '',

@@ -1265,7 +1265,15 @@ async function submitAbsenMandiri() {
     const res = await apiCall('absen_mandiri', { tahun: currentTahun, semester: smtMandiri, bulan: currentBulan, tanggal: new Date().getDate(), kelas: currentUser.user["Tingkat/Kelas"], jenis: mapelRaw[0], mapel: mapelRaw[1], nis: currentUser.user["NIS"], nama: currentUser.user["Nama Lengkap"], captcha: captcha, gps: gpsLokasi, wajahCocok: wajahMandiriCocok });
     
     if(res.status === 'success') {
-      Swal.fire({ icon: 'success', title: 'Berhasil Absen!', html: `Kehadiran tercatat.<br><span class="text-xs text-slate-400">Lokasi: ${gpsLokasi}</span>`, background: '#1e293b', color: '#fff' });
+      // Info bucket (Mapel/Ekskul • kelas • bulan • tahun) dikembalikan server agar
+      // murid langsung tahu barisnya tercatat di rekap guru pengampu yang mana.
+      const rbMandiri = (res.data && typeof res.data === 'object') ? res.data : {};
+      const labelJenisMandiri = String(rbMandiri.jenis || '').toUpperCase() === 'EKSKUL' ? 'Ekskul' : (rbMandiri.jenis ? 'Mapel' : '');
+      const metaMandiri = [labelJenisMandiri, rbMandiri.kelas, rbMandiri.bulan, rbMandiri.tahun].filter(Boolean).join(' • ');
+      const detailMandiri = metaMandiri
+        ? `Kehadiran tercatat di <b>${metaMandiri}</b>.<br><span class="text-xs text-slate-400">Lokasi: ${gpsLokasi}</span>`
+        : `Kehadiran tercatat.<br><span class="text-xs text-slate-400">Lokasi: ${gpsLokasi}</span>`;
+      Swal.fire({ icon: 'success', title: 'Berhasil Absen!', html: detailMandiri, background: '#1e293b', color: '#fff' });
       cacheDashboardKosongkan(); // data absen berubah → sesi cache dashboard usang
       document.getElementById('murid-captcha').value = '';
       wajahMandiriCocok = false;
