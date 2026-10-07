@@ -5065,7 +5065,14 @@ async function loadDataNilai(paksa = false) {
     if (rawDataNilai.length === 0 && listMuridKelas.length > 0) {
       Swal.fire({ title: 'Database Belum Tersedia', text: 'Data untuk Semester ini belum ada. Klik "Simpan Semua" untuk otomatis menginisiasi kolom nilai ke dalam Database.', icon: 'info', background: '#1e293b', color: '#fff', confirmButtonText: 'Baik, Mengerti' });
     }
-  } catch (e) { tableEl.innerHTML = `<tr><td class="p-6 text-center text-red-400">Gagal memuat data. Periksa koneksi internet Anda.</td></tr>`; }
+  } catch (e) {
+    // [FIX 2026-10-14] Jangan sembunyikan error asli DB (mis. 42501 permission denied):
+    // log ke console + tampilkan pesan nyata sebagai teks kecil agar mudah didiagnosis.
+    console.error('Gagal memuat data nilai:', e?.message || e);
+    const pesanRalat = (e && (e.message || e.details || e.hint))
+      ? `<br><span class="text-[11px] text-red-300/80">${escapeHtml(String(e.message || e.details || e.hint))}</span>` : '';
+    tableEl.innerHTML = `<tr><td class="p-6 text-center text-red-400">Gagal memuat data. Periksa koneksi internet Anda.${pesanRalat}</td></tr>`;
+  }
 
   // Simpan snapshot ke cache sesi (setelah fetch berhasil)
   cacheNilaiSesi[keyCacheNilai] = { rawDataNilai, configNilaiAktif, cacheNilaiPasangan, cacheTemanSejawat };
