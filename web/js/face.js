@@ -405,9 +405,9 @@
           <button id="btn-wajah-foto" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition" title="Gunakan foto siswa yang tersimpan di akun"><i class="fa-solid fa-image mr-1"></i>Gunakan Foto</button>
           <button id="btn-wajah-kamera" class="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition" title="Pindai langsung dari kamera"><i class="fa-solid fa-camera mr-1"></i>Gunakan Kamera</button>
         </div>
-        <div id="wajah-camera-area" class="hidden relative rounded-lg overflow-hidden border border-cyan-500 bg-black mb-2">
+        <div id="wajah-camera-area" class="hidden relative rounded-lg overflow-hidden border border-cyan-500 bg-black mb-2" style="display:none">
           <video id="wajah-video" autoplay playsinline muted class="w-full h-52 object-cover"></video>
-          <button id="btn-wajah-tangkap" class="absolute bottom-2 right-2 bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-1.5 rounded-lg text-[10px] font-bold shadow-lg">Deteksi dari Kamera</button>
+          <button id="btn-wajah-tangkap" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-2.5 rounded-lg text-[11px] font-bold transition" title="Deteksi wajah dari frame kamera"><i class="fa-solid fa-camera mr-1"></i>Deteksi dari Kamera</button>
         </div>
         <div id="wajah-hasil" class="text-center text-[11px] min-h-[16px] mb-2 text-slate-300">${st === 'aktif' ? '<i class="fa-solid fa-circle-check text-green-400 mr-1"></i>Sudah terdaftar — menyimpan ulang akan menimpa wajah lama.' : 'Pilih sumber wajah (foto siswa atau kamera).'}</div>
         <div class="flex gap-2">
@@ -503,6 +503,7 @@
           try {
             await mulaiKameraKe(videoEl);
             areaKam.classList.remove('hidden');
+            areaKam.style.display = 'block';
             btnKam.disabled = true;
             setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
           } catch (e) {
