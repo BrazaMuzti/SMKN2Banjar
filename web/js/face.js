@@ -368,21 +368,22 @@
     return { descriptor: Array.from(d.descriptor), skor: d.score };
   }
 
+  /** Muat model face-api dengan batas waktu — modal tetap terbuka meski model lambat/gagal. */
+  function pastikanModelsTepatWaktu(ms = 12000) {
+    const pesanTimeout = 'Memuat model wajah terlalu lama (lebih dari ' + Math.round(ms / 1000) + ' detik). Periksa koneksi dan pastikan folder "models" tersaji oleh server, lalu muat ulang halaman dan coba lagi.';
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error(pesanTimeout)), ms));
+    return Promise.race([pastikanModels(), timeout]);
+  }
+
   async function kelolaWajah(nis) {
     const murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
       ? cacheAkunMurid.find(m => String(m.nis_nip) === String(nis))
       : null;
     if (!murid) { fxToast('error', 'Data murid tidak ditemukan.'); return; }
 
-    // Pastikan model face-api sudah siap sebelum modal dibuka — deteksi foto/kamera
-    // (hasilDeteksiKuat → deteksiSatuWajah) akan sia-sia gagal bila model belum dimuat.
-    try {
-      await pastikanModels();
-    } catch (e) {
-      fxToast('error', e && e.message ? e.message : 'Gagal memuat model wajah.');
-      return;
-    }
-
+    // Modal dibuka SEKETIKA (tanpa await di depan) — klik tombol tabel selalu diberi respons.
+    // Model face-api dimuat di dalam modal (didOpen) supaya tombol "Gunakan Foto"/"Gunakan Kamera"
+    // siap dipakai begitu model siap, tanpa menahan pembukaan modal.
     let descriptorSementara = null;      // hasil deteksi terakhir (array 128)
     let skorSementara = 0;
     const st = statusMurid(petaWajahCache, nis);
@@ -417,114 +418,158 @@
       background: '#1e293b', color: '#fff', width: '440px',
       showConfirmButton: false, showCancelButton: true,
       cancelButtonText: 'Tutup',
+      didOpen: async (popup) => {
+        const cari = (id) => popup.querySelector('#' + id);
+        const pratinjau = cari('wajah-preview');
+        const hasilEl  = cari('wajah-hasil');
+        const btnFoto  = cari('btn-wajah-foto');
+        const btnKam   = cari('btn-wajah-kamera');
+        const areaKam  = cari('wajah-camera-area');
+        const videoEl  = cari('wajah-video');
+        const btnTangkap = cari('btn-wajah-tangkap');
+        const btnSimpan  = cari('btn-wajah-simpan');
+        const btnNonaktif = cari('btn-wajah-nonaktif');
+        // Guard: elemen modal yang hilang TIDAK boleh terjadi senyap.
+        ['wajah-preview','wajah-hasil','btn-wajah-foto','btn-wajah-kamera',
+         'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan'].forEach((id) => {
+          if (!cari(id)) console.error('[FaceWajah] Elemen #' + id + ' tidak ditemukan di dalam modal.');
+        });
+
+        const setHasil = (teks, warna) => {
+          if (!hasilEl) return;
+          hasilEl.innerHTML = teks;
+          hasilEl.className = 'text-center text-[11px] min-h-[16px] mb-2 ' + (warna || 'text-slate-300');
+        };
+        const aktifkanSimpan = () => {
+          if (!btnSimpan) return;
+          btnSimpan.disabled = !descriptorSementara;
+          btnSimpan.innerHTML = descriptorSementara
+            ? '<i class="fa-solid fa-floppy-disk mr-1"></i>Simpan Wajah (skor ' + skorSementara.toFixed(2) + ')'
+            : '<i class="fa-solid fa-floppy-disk mr-1"></i>Simpan Data Wajah';
+        };
+
+        // Foto siswa: tampilkan fallback "Tanpa foto" bila akun tidak punya url_foto.
+        if (pratinjau) {
+          if (!murid.url_foto) {
+            pratinjau.outerHTML = '<span id="wajah-preview" class="w-24 h-28 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-slate-500 text-xs"><i class="fa-solid fa-user-slash text-xl mb-1"></i><br>Tanpa foto</span>';
+          } else {
+            pratinjau.src = urlFotoUntukCanvas(murid.url_foto);
+          }
+        }
+
+        // ===== Muat model DI DALAM modal — tidak lagi memblokir pembukaannya. =====
+        if (btnFoto) btnFoto.disabled = true;
+        if (btnKam) btnKam.disabled = true;
+        setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Menyiapkan model wajah…');
+        try {
+          await pastikanModelsTepatWaktu(12000);
+          if (btnFoto) btnFoto.disabled = false;
+          if (btnKam) btnKam.disabled = false;
+          setHasil(st === 'aktif'
+            ? '<i class="fa-solid fa-circle-check text-green-400 mr-1"></i>Sudah terdaftar — menyimpan ulang akan menimpa wajah lama.'
+            : 'Pilih sumber wajah (foto siswa atau kamera).');
+        } catch (e) {
+          console.error(e);
+          setHasil(fxEscape(e.message || e), 'text-red-300');
+          return;
+        }
+
+        // ===== Tombol "Gunakan Foto" — deteksi dari foto siswa (Drive) =====
+        if (btnFoto) btnFoto.addEventListener('click', async () => {
+          if (!murid.url_foto) {
+            setHasil('<i class="fa-solid fa-triangle-exclamation text-amber-300 mr-1"></i>Murid belum punya foto profil. Gunakan <b>Gunakan Kamera</b> untuk memindai langsung.', 'text-amber-300');
+            return;
+          }
+          try {
+            const img = await muatGambarDariUrl(murid.url_foto);
+            pratinjau.src = img.src;
+            setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Mendeteksi wajah pada foto...');
+            const hasil = await hasilDeteksiKuat(img, 'foto');
+            descriptorSementara = hasil.descriptor; skorSementara = hasil.skor;
+            setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
+            aktifkanSimpan();
+          } catch (e) {
+            console.error(e);
+            setHasil(fxEscape(e.message || e), 'text-red-300');
+          }
+        });
+
+        // ===== Tombol "Gunakan Kamera" — cek secure context dulu =====
+        if (btnKam) btnKam.addEventListener('click', async () => {
+          if (!window.isSecureContext) {
+            setHasil('<i class="fa-solid fa-triangle-exclamation text-amber-300 mr-1"></i>Kamera hanya berfungsi di HTTPS atau localhost. Halaman ini dibuka lewat HTTP — gunakan <b>Gunakan Foto</b>, atau buka aplikasi lewat https:// / localhost.', 'text-amber-300');
+            return;
+          }
+          try {
+            await mulaiKameraKe(videoEl);
+            areaKam.classList.remove('hidden');
+            btnKam.disabled = true;
+            setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
+          } catch (e) {
+            console.error(e);
+            setHasil(fxEscape(e.message || e), 'text-red-300');
+          }
+        });
+
+        if (btnTangkap) btnTangkap.addEventListener('click', async () => {
+          if (!videoEl.srcObject) { setHasil('Nyalakan kamera dulu.', 'text-amber-300'); return; }
+          setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Mendeteksi wajah dari kamera...');
+          try {
+            const hasil = await hasilDeteksiKuat(videoEl, 'kamera');
+            descriptorSementara = hasil.descriptor; skorSementara = hasil.skor;
+            const canvas = document.createElement('canvas');
+            canvas.width = videoEl.videoWidth || 640; canvas.height = videoEl.videoHeight || 480;
+            canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+            const snap = cari('wajah-preview');
+            if (snap) {
+              if (snap.tagName !== 'IMG') snap.outerHTML = '<img id="wajah-preview" class="w-24 h-28 rounded-lg object-cover bg-slate-700 border border-white/10" alt="Foto siswa">';
+              const imgSnap = cari('wajah-preview');
+              if (imgSnap) imgSnap.src = canvas.toDataURL('image/jpeg', 0.85);
+            }
+            setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi dari kamera (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
+            aktifkanSimpan();
+          } catch (e) {
+            console.error(e);
+            setHasil(fxEscape(e.message || e), 'text-red-300');
+          }
+        });
+
+        if (btnSimpan) btnSimpan.addEventListener('click', async () => {
+          if (!descriptorSementara) return;
+          btnSimpan.disabled = true;
+          btnSimpan.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Menyimpan...';
+          try {
+            await simpanWajahKeDb(nis, descriptorSementara, 'aktif');
+            if (petaWajahCache) petaWajahCache[String(nis)] = { descriptor: descriptorSementara, status: 'aktif' };
+            fxToast('success', 'Wajah ' + nama + ' tersimpan.');
+            Swal.close();
+            beriTahuWajahTersimpan(nis, 'aktif');
+            refreshDaftarWajahTable();
+          } catch (e) {
+            console.error(e);
+            setHasil(fxEscape(e.message || e), 'text-red-300');
+            aktifkanSimpan();
+          }
+        });
+
+        if (btnNonaktif) btnNonaktif.addEventListener('click', async () => {
+          btnNonaktif.disabled = true;
+          try {
+            await simpanWajahKeDb(nis, null, 'nonaktif');
+            if (petaWajahCache && petaWajahCache[String(nis)]) petaWajahCache[String(nis)].status = 'nonaktif';
+            fxToast('success', 'Wajah ' + nama + ' dinonaktifkan.');
+            Swal.close();
+            beriTahuWajahTersimpan(nis, 'nonaktif');
+            refreshDaftarWajahTable();
+          } catch (e) {
+            console.error(e);
+            setHasil(fxEscape(e.message || e), 'text-red-300');
+            btnNonaktif.disabled = false;
+          }
+        });
+      },
       willClose: () => hentikanKamera()
     }).catch(() => {}).finally(hentikanKamera);
-
-    const pratinjau = document.getElementById('wajah-preview');
-    if (!murid.url_foto) {
-      pratinjau.outerHTML = '<span id="wajah-preview" class="w-24 h-28 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-slate-500 text-xs"><i class="fa-solid fa-user-slash text-xl mb-1"></i><br>Tanpa foto</span>';
-    } else {
-      pratinjau.src = urlFotoUntukCanvas(murid.url_foto);
-    }
-
-    const hasilEl = document.getElementById('wajah-hasil');
-    const btnFoto = document.getElementById('btn-wajah-foto');
-    const btnKam  = document.getElementById('btn-wajah-kamera');
-    const areaKam = document.getElementById('wajah-camera-area');
-    const videoEl = document.getElementById('wajah-video');
-    const btnTangkap = document.getElementById('btn-wajah-tangkap');
-    const btnSimpan = document.getElementById('btn-wajah-simpan');
-    const btnNonaktif = document.getElementById('btn-wajah-nonaktif');
-
-    const setHasil = (teks, warna) => {
-      hasilEl.innerHTML = teks;
-      hasilEl.className = 'text-center text-[11px] min-h-[16px] mb-2 ' + (warna || 'text-slate-300');
-    };
-    const aktifkanSimpan = () => {
-      btnSimpan.disabled = !descriptorSementara;
-      btnSimpan.innerHTML = descriptorSementara
-        ? '<i class="fa-solid fa-floppy-disk mr-1"></i>Simpan Wajah (skor ' + skorSementara.toFixed(2) + ')'
-        : '<i class="fa-solid fa-floppy-disk mr-1"></i>Simpan Data Wajah';
-    };
-
-    btnFoto.addEventListener('click', async () => {
-      try {
-        const img = await muatGambarDariUrl(murid.url_foto);
-        pratinjau.src = img.src;
-        setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Mendeteksi wajah pada foto...');
-        const hasil = await hasilDeteksiKuat(img, 'foto');
-        descriptorSementara = hasil.descriptor; skorSementara = hasil.skor;
-        setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
-        aktifkanSimpan();
-      } catch (e) {
-        console.error(e);
-        setHasil(fxEscape(e.message || e), 'text-red-300');
-      }
-    });
-
-    btnKam.addEventListener('click', async () => {
-      try {
-        await mulaiKameraKe(videoEl);
-        areaKam.classList.remove('hidden');
-        btnKam.disabled = true;
-        setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
-      } catch (e) {
-        console.error(e);
-        setHasil(fxEscape(e.message || e), 'text-red-300');
-      }
-    });
-
-    btnTangkap.addEventListener('click', async () => {
-      if (!videoEl.srcObject) { setHasil('Nyalakan kamera dulu.', 'text-amber-300'); return; }
-      setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Mendeteksi wajah dari kamera...');
-      try {
-        const hasil = await hasilDeteksiKuat(videoEl, 'kamera');
-        descriptorSementara = hasil.descriptor; skorSementara = hasil.skor;
-        const canvas = document.createElement('canvas');
-        canvas.width = videoEl.videoWidth || 640; canvas.height = videoEl.videoHeight || 480;
-        canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
-        pratinjau.src = canvas.toDataURL('image/jpeg', 0.85);
-        setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi dari kamera (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
-        aktifkanSimpan();
-      } catch (e) {
-        console.error(e);
-        setHasil(fxEscape(e.message || e), 'text-red-300');
-      }
-    });
-
-    btnSimpan.addEventListener('click', async () => {
-      if (!descriptorSementara) return;
-      btnSimpan.disabled = true;
-      btnSimpan.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Menyimpan...';
-      try {
-        await simpanWajahKeDb(nis, descriptorSementara, 'aktif');
-        if (petaWajahCache) petaWajahCache[String(nis)] = { descriptor: descriptorSementara, status: 'aktif' };
-        fxToast('success', 'Wajah ' + nama + ' tersimpan.');
-        Swal.close();
-        beriTahuWajahTersimpan(nis, 'aktif');
-        refreshDaftarWajahTable();
-      } catch (e) {
-        console.error(e);
-        setHasil(fxEscape(e.message || e), 'text-red-300');
-        aktifkanSimpan();
-      }
-    });
-
-    if (btnNonaktif) btnNonaktif.addEventListener('click', async () => {
-      btnNonaktif.disabled = true;
-      try {
-        await simpanWajahKeDb(nis, null, 'nonaktif');
-        if (petaWajahCache && petaWajahCache[String(nis)]) petaWajahCache[String(nis)].status = 'nonaktif';
-        fxToast('success', 'Wajah ' + nama + ' dinonaktifkan.');
-        Swal.close();
-        beriTahuWajahTersimpan(nis, 'nonaktif');
-        refreshDaftarWajahTable();
-      } catch (e) {
-        console.error(e);
-        setHasil(fxEscape(e.message || e), 'text-red-300');
-        btnNonaktif.disabled = false;
-      }
-    });
   }
 
   /** Hapus seluruh data wajah murid (konfirmasi dulu). Dipanggil dari tombol Hapus. */
