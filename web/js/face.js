@@ -215,6 +215,24 @@
     return BADGE_STATUS[status] || BADGE_STATUS.belum;
   }
 
+  /** Ikon status registrasi wajah (compact): check aktif / pause nonaktif / cross belum — dengan tooltip. */
+  const IKON_STATUS_WAJAH = {
+    aktif: '<span class="status-wajah-aktif inline-flex items-center justify-center w-6 h-6 rounded-full bg-green-500/15 text-green-400" title="Wajah terdaftar &amp; aktif — dipakai untuk absen wajah"><i class="fa-solid fa-check text-[11px]"></i></span>',
+    nonaktif: '<span class="status-wajah-nonaktif inline-flex items-center justify-center w-6 h-6 rounded-full bg-amber-500/15 text-amber-400" title="Wajah terdaftar tapi dinonaktifkan — absen wajah dilewati"><i class="fa-solid fa-pause text-[11px]"></i></span>',
+    belum: '<span class="status-wajah-belum inline-flex items-center justify-center w-6 h-6 rounded-full bg-white/5 text-slate-500" title="Belum terdaftar wajah"><i class="fa-solid fa-xmark text-[11px]"></i></span>'
+  };
+
+  /** Ikon status wajah utk kolom status di tabel murid (fallback ke "belum" bila status tak dikenal). */
+  function ikonStatusWajah(status) {
+    return IKON_STATUS_WAJAH[status] || IKON_STATUS_WAJAH.belum;
+  }
+
+  /** Beri tahu app.js bahwa data wajah suatu murid berubah — utk segarkan kolom status tanpa reload halaman. */
+  function beriTahuWajahTersimpan(nis, status) {
+    if (typeof window.FaceWajahOnTersimpan !== 'function') return;
+    try { window.FaceWajahOnTersimpan(String(nis), status); } catch (e) { console.error('FaceWajahOnTersimpan:', e); }
+  }
+
   // ==================================================================
   // 6. TAB "REGISTRASI WAJAH" (halaman Manajemen Akun Murid)
   // ==================================================================
@@ -350,11 +368,20 @@
     return { descriptor: Array.from(d.descriptor), skor: d.score };
   }
 
-  function kelolaWajah(nis) {
+  async function kelolaWajah(nis) {
     const murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
       ? cacheAkunMurid.find(m => String(m.nis_nip) === String(nis))
       : null;
     if (!murid) { fxToast('error', 'Data murid tidak ditemukan.'); return; }
+
+    // Pastikan model face-api sudah siap sebelum modal dibuka — deteksi foto/kamera
+    // (hasilDeteksiKuat → deteksiSatuWajah) akan sia-sia gagal bila model belum dimuat.
+    try {
+      await pastikanModels();
+    } catch (e) {
+      fxToast('error', e && e.message ? e.message : 'Gagal memuat model wajah.');
+      return;
+    }
 
     let descriptorSementara = null;      // hasil deteksi terakhir (array 128)
     let skorSementara = 0;
@@ -474,6 +501,7 @@
         if (petaWajahCache) petaWajahCache[String(nis)] = { descriptor: descriptorSementara, status: 'aktif' };
         fxToast('success', 'Wajah ' + nama + ' tersimpan.');
         Swal.close();
+        beriTahuWajahTersimpan(nis, 'aktif');
         refreshDaftarWajahTable();
       } catch (e) {
         console.error(e);
@@ -489,6 +517,7 @@
         if (petaWajahCache && petaWajahCache[String(nis)]) petaWajahCache[String(nis)].status = 'nonaktif';
         fxToast('success', 'Wajah ' + nama + ' dinonaktifkan.');
         Swal.close();
+        beriTahuWajahTersimpan(nis, 'nonaktif');
         refreshDaftarWajahTable();
       } catch (e) {
         console.error(e);
@@ -511,6 +540,7 @@
       await simpanWajahKeDb(nis, null, '');
       if (petaWajahCache) delete petaWajahCache[String(nis)];
       fxToast('success', 'Data wajah dihapus.');
+      beriTahuWajahTersimpan(nis, 'belum');
       refreshDaftarWajahTable();
     } catch (e) {
       console.error(e);
@@ -793,8 +823,10 @@
   window.FaceWajah = {
     kelolaWajah,
     hapusDataWajah,
+    muatPetaWajah,
     ambilStatusWajah,
     htmlBadgeWajah,
+    ikonStatusWajah,
     renderRegistrasiWajah,
     muatUlangPetaWajah,
     mulaiPindaiWajahAbsen,

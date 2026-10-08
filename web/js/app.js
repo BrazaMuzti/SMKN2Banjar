@@ -9285,15 +9285,17 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
         let subEkskulData = subLookup[String(nis)] || '';
         const stWajah = statusWajahBaris(petaWajah, nis);
         const wajahAktif = stWajah === 'aktif';
-        const badgeWajah = window.FaceWajah && typeof window.FaceWajah.htmlBadgeWajah === 'function'
-            ? window.FaceWajah.htmlBadgeWajah(stWajah)
-            : '<span class="text-[9px] text-slate-500 uppercase tracking-wider">-</span>';
+        const badgeWajah = window.FaceWajah && typeof window.FaceWajah.ikonStatusWajah === 'function'
+            ? window.FaceWajah.ikonStatusWajah(stWajah)
+            : (window.FaceWajah && typeof window.FaceWajah.htmlBadgeWajah === 'function'
+                ? window.FaceWajah.htmlBadgeWajah(stWajah)
+                : '<span class="text-[9px] text-slate-500 uppercase tracking-wider">-</span>');
         const tombolWajah = window.FaceWajah && typeof window.FaceWajah.kelolaWajah === 'function'
             ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="w-7 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-400'} hover:text-white rounded transition mr-1" title="${wajahAktif ? 'Kelola data wajah' : 'Registrasi data wajah'}"><i class="fa-solid fa-face-viewfinder"></i></button>`
             : '';
 
         return `
-            <tr class="hover:bg-white/5 border-b border-white/5 transition row-murid" data-ekskul="${ekskulData}" data-tahun="${escapeHtml(tahunData)}">
+            <tr class="hover:bg-white/5 border-b border-white/5 transition row-murid" data-nis="${escapeHtml(String(nis))}" data-ekskul="${ekskulData}" data-tahun="${escapeHtml(tahunData)}">
                 <td class="px-4 py-3 text-center">${mulaiNo + i + 1}</td>
                 <td class="px-4 py-3 font-mono text-blue-300 search-target">${nis}</td>
                 <td class="px-4 py-3 font-mono text-slate-300 search-target">${nisn}</td>
@@ -9305,7 +9307,7 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
                 <td class="px-4 py-3 text-[10px] text-slate-400 search-target">${escapeHtml(tahunData || '-')}</td>
                 <td class="px-4 py-3 text-[10px] text-slate-400">${subEkskulData ? escapeHtml(subEkskulData) : '<span class="italic text-slate-600">-</span>'}</td>
                 <td class="px-4 py-3"><div class="text-[10px] text-slate-400"><i class="fa-solid fa-envelope"></i> ${email}</div></td>
-                <td class="px-4 py-3 text-center">${badgeWajah}</td>
+                <td class="px-4 py-3 text-center sel-status-wajah" title="Status registrasi wajah">${badgeWajah}</td>
 
                 <td class="px-4 py-3 text-center whitespace-nowrap">
                     ${tombolWajah}
@@ -9423,6 +9425,24 @@ function filterTabelMurid() {
     halamanAktifMurid = 1;
     renderTabelMuridTerfilter();
 }
+
+/** Hook dipanggil face.js setiap data wajah murid berubah (simpan / nonaktif / hapus).
+ *  Perbarui sel "Status Wajah" baris terkait di tempat — tanpa render ulang seluruh tabel. */
+window.FaceWajahOnTersimpan = (nis, status) => {
+    try {
+        const aman = (typeof CSS !== 'undefined' && typeof CSS.escape === 'function')
+            ? CSS.escape(String(nis)) : String(nis).replace(/"/g, '');
+        const baris = document.querySelector(`#tbody-murid tr[data-nis="${aman}"]`);
+        const sel = baris && baris.querySelector('.sel-status-wajah');
+        const ikon = window.FaceWajah && typeof window.FaceWajah.ikonStatusWajah === 'function'
+            ? window.FaceWajah.ikonStatusWajah(status) : '';
+        if (sel && ikon) { sel.innerHTML = ikon; return; }
+        renderTabelMuridTerfilter(); // fallback: baris tak terlihat (beda halaman/filter)
+    } catch (e) {
+        console.error('FaceWajahOnTersimpan:', e);
+        try { renderTabelMuridTerfilter(); } catch (e2) { /* abaikan */ }
+    }
+};
 
 
 
@@ -9602,6 +9622,12 @@ async function openFormAkunMurid(isNew, data = {}) {
     // Riwayat kelas & status per TA (working copy form) + dual-write tingkat_kelas
     formRiwayatSiswaData = JSON.parse(JSON.stringify(data.riwayat_kelas || data.RiwayatKelas || {}));
     formRiwayatSiswaTahun = currentTahun;
+
+    // Hangatkan peta status wajah (dipakai kolom "Status Wajah") supaya ikon langsung segar
+    // saat tabel dirender ulang setelah form ini ditutup/disimpan (tanpa jeda fetch DB).
+    if (window.FaceWajah && typeof window.FaceWajah.muatPetaWajah === 'function') {
+        window.FaceWajah.muatPetaWajah().catch(() => {});
+    }
 
     // Nilai existing (snake_case dulu, fallback gaya Sheets)
     const nisV = data.nis_nip || data.NIS || data.nis || "";
