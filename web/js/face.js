@@ -161,13 +161,17 @@
    * <img> di pratinjau ikut membawa cookie → foto bisa tampil namun fetch ditolak):
    *   1. lh3 w1200  (yang dipakai pratinjau; CORS-aman)
    *   2. lh3 s0      (ukuran asli, sering tersaji lebih longgar)
-   *   3. drive.usercontent.google.com ...&export=download (endpoint unduhan anonim)
-   *   4. URL mentah yang tersimpan (mis. drive.google.com/thumbnail?id=...&sz=w1000 —
+   *   3. ambil-foto-drive (edge function supabase dengan service account Google —
+   *      SATU-SATUNYA jalur yang bisa menembus blokir berbagi anonim organisasi,
+   *      karena SA tampil sebagai identitas Google yang sah, bukan browser anonim)
+   *   4. drive.usercontent.google.com ...&export=download (endpoint unduhan anonim)
+   *   5. URL mentah yang tersimpan (mis. drive.google.com/thumbnail?id=...&sz=w1000 —
    *      endpoint yang memang untuk penampil tanpa login)
    * Decode yang gagal TIDAK menghentikan loop: kandidat berikut tetap dicoba (satu
    * endpoint sering membalas halaman HTML sahaja padahal yang lain menyajikan gambarnya).
    * Penyebab kegagalan dibedakan: HTTP / bukan-gambar (file tak publik / diblokir server)
-   * vs jaringan (fetch reject).
+   * vs jaringan (fetch reject). Pesan error dari proxy (mis. "file di-lock organisasi")
+   * ikut dipertahankan untuk menjelaskan kepada admin.
    */
   async function muatGambarDariUrl(url) {
     const sumber = String(url || '').trim();
@@ -177,6 +181,12 @@
     if (id) {
       kandidat.push('https://lh3.googleusercontent.com/d/' + id + '=w1200');
       kandidat.push('https://lh3.googleusercontent.com/d/' + id + '=s0');
+      // Proxy via service account — jalur andalan saat kebijakan organisasi memblokir
+      // berbagi anonim (lihat komentar fungsi). Dipanggil fetch apa adanya; bila fungsi
+      // belum di-deploy, fetch balas 404/HTML dan loop melanjutkan ke kandidat lain.
+      if (typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL) {
+        kandidat.push(String(SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/ambil-foto-drive?fileId=' + encodeURIComponent(id));
+      }
       kandidat.push('https://drive.usercontent.google.com/download?id=' + id + '&export=download');
     }
     // URL mentah yang disimpan di DB (thumbnail anonim) — ukuran kecil, jadi cadangan terakhir.
@@ -186,8 +196,10 @@
 
     let httpStatus = 0;
     let gagalDecode = 0;
+    let pesanProxy = ''; // pesan error server dari edge function (jalur service account)
     for (const t of kandidat) {
       if (!t) continue;
+      const viaProxy = t.indexOf('/ambil-foto-drive?') !== -1;
       let resp;
       try {
         resp = await fetch(t, { mode: 'cors', referrerPolicy: 'no-referrer' });
@@ -195,7 +207,15 @@
         console.warn('muatGambarDariUrl fetch (' + t + '):', e);
         continue; // coba kandidat berikutnya
       }
-      if (!resp.ok) { httpStatus = resp.status; continue; }
+      if (!resp.ok) {
+        httpStatus = resp.status;
+        // Error dari proxy bermakna (mis. "file di-lock kebijakan organisasi") →
+        // tangkap untuk pesan akhir yang menjelaskan daripada menyalahkan berbagi.
+        if (viaProxy) {
+          try { const j = await resp.json(); if (j && j.message) pesanProxy = String(j.message); } catch (e) { /* bukan JSON */ }
+        }
+        continue;
+      }
       let blob;
       try {
         blob = await resp.blob();
@@ -216,17 +236,20 @@
       }
     }
 
-    const pesanShare = 'Kemungkinan file tidak di-share publik atau tak lagi tersedia. Bukalah Google Drive → file foto → “Bagikan” → “Siapa saja yang memiliki tautan”, lalu coba lagi.';
+    const pesanShare = 'Kemungkinan file tidak di-share publik, tak lagi tersedia, atau kebijakan organisasi Google menonaktifkan berbagi tanpa login. Solusi cepat: gunakan tombol Kamera untuk memindai wajah langsung (tidak butuh akses foto).';
+    if (pesanProxy) {
+      throw new Error('Foto siswa gagal dimuat melalui semua jalur. ' + pesanProxy);
+    }
     if (httpStatus === 403 || httpStatus === 404 || httpStatus === 410) {
       throw new Error('Foto tidak dapat diunduh (HTTP ' + httpStatus + '). ' + pesanShare);
     }
     if (gagalDecode) {
-      throw new Error('Foto tidak dapat dibaca — server mengirim halaman/bukan gambar, padahal pratinjau bisa tampil lewat cookie login. ' + pesanShare);
+      throw new Error('Foto tidak dapat dibaca — server mengirim halaman/bukan gambar padahal pratinjau tampil lewat cookie login (berbagi anonim kemungkinan diblokir kebijakan organisasi). ' + pesanShare);
     }
     if (httpStatus) {
       throw new Error('Foto tidak dapat diunduh (HTTP ' + httpStatus + '). Coba lagi beberapa saat; bila tetap gagal, periksa izin berbagi file di Google Drive.');
     }
-    throw new Error('Foto tidak dapat diunduh — koneksi/izin jaringan terganggu. Pastikan internet stabil dan file telah di-share “Siapa saja yang memiliki tautan”, atau gunakan tombol Kamera.');
+    throw new Error('Foto tidak dapat diunduh — koneksi/izin jaringan terganggu. ' + pesanShare);
   }
 
   // ------------------------------------------------------------------
@@ -474,7 +497,9 @@
 
   /**
    * Loop deteksi RINGAN untuk kamera depan (modal Registrasi Wajah).
-   * inputSize 160 ≈ 4× lebih cepat dari 320; descriptor tetap setara karena
+   * inputSize 160 + TANPA FaceRecognitionNet per frame (net terberat) → indikator
+   * hijau segar dalam 1–3 dtk di perangkat lemah. Descriptor dihitung sekali saat
+   * klik dari deteksi+landmarks tersimpan (extractFaces), hasil tetap setara karena
    * FaceRecognitionNet membaca crop wajah ~150×150 dari kotak deteksi.
    * Status berubah begitu wajah terlihat. Tombol "Deteksi dari Kamera" MENUNGGU
    * hasil loop ini (jangan meluncurkan deteksi kedua yang bersaing di GPU/CPU).
@@ -495,10 +520,13 @@
       terakhir = now;
       if (videoEl.readyState < 2) { await new Promise(r => setTimeout(r, 200)); continue; }
       try {
-        const d = await fa.detectSingleFace(videoEl, opts).withFaceLandmarks(true).withFaceDescriptor();
+        // Loop TIDAK menghitung descriptor (FaceRecognitionNet = bagian terberat).
+        // Cukup deteksi + landmarks → indikator hijau muncul 1–3 dtk di perangkat
+        // lemah. Descriptor dihitung SEKALI saat klik, dari box yang sudah ada.
+        const d = await fa.detectSingleFace(videoEl, opts).withFaceLandmarks(true);
         if (token !== deteksiLoopToken) break;
         if (d) {
-          hasilDeteksiLive = { descriptor: Array.from(d.descriptor), skor: d.score, waktu: Date.now() };
+          hasilDeteksiLive = { deteksi: d.detection, landmarks: d.landmarks, skor: d.score, waktu: Date.now() };
           if (!pernahTerdeteksi) {
             pernahTerdeteksi = true;
             if (!bisuStatusLoop && typeof setHasil === 'function') setHasil('<i class="fa-solid fa-face-smile text-green-400 mr-1"></i>Wajah terdeteksi — klik <b>Deteksi dari Kamera</b> untuk mengambil.', 'text-green-300');
@@ -745,20 +773,35 @@
           let hasil = null;
           let pakaiLoop = false;   // true → hasil dari loop ringan (loop terus berjalan)
           try {
-            // 1) Tunggu hasil SEGAR dari loop ringan (≤ 4 dtk). Wajah sudah terlihat →
-            //    klik hampir instan, TANPA deteksi kedua yang bersaing di GPU/CPU (ini
-            //    dulu yang membuat "pemindaian terlalu lama" di perangkat lambat).
+            // 1) Tunggu hasil SEGAR dari loop ringan (≤ 4 dtk). Loop kini deteksi-penuh
+            //    tanpa FaceRecognitionNet → segar dalam 1–3 dtk bahkan di perangkat lambat.
+            //    Descriptor dihitung SEKALI saat klik, MEREKAPLIKASI jalur internal
+            //    `.withFaceDescriptor()`: landmarks.align → extractFaces → FaceRecognitionNet.
+            const faWindow = window.faceapi;
             const batasTunggu = Date.now() + 4000;
             while (Date.now() < batasTunggu) {
-              if (hasilDeteksiLive && (Date.now() - hasilDeteksiLive.waktu) < 2500) {
-                hasil = { descriptor: hasilDeteksiLive.descriptor, skor: hasilDeteksiLive.skor };
-                pakaiLoop = true;
-                break;
+              const segar = hasilDeteksiLive && (Date.now() - hasilDeteksiLive.waktu) < 3500;
+              if (segar && faWindow && hasilDeteksiLive.landmarks) {
+                try {
+                  const aligned = hasilDeteksiLive.landmarks.align(null, { useDlibAlignment: true });
+                  if (aligned) {
+                    const crop = await faWindow.extractFaces(videoEl, [aligned]);
+                    if (crop && crop.length) {
+                      const d128 = await faWindow.nets.faceRecognitionNet.computeFaceDescriptor(crop[0]);
+                      hasil = { descriptor: Array.from(d128), skor: hasilDeteksiLive.skor };
+                      pakaiLoop = true;
+                      break;
+                    }
+                  }
+                } catch (e) {
+                  console.warn('btnTangkap descriptor:', e); // box usang → jatuh ke one-shot
+                }
               }
-              await new Promise(r => setTimeout(r, 100));
+              await new Promise(r => setTimeout(r, 90));
             }
-            // 2) Loop tak memberi hasil (mis. wajah belum terlihat): hentikan loop dulu
-            //    (anti tumpukan deteksi) lalu satu deteksi dengan pengaman PANJANG (25 dtk)
+            // 2) Loop tak memberi hasil segar (mis. wajah baru muncul): hentikan loop dulu
+            //    (anti tumpukan deteksi) lalu satu deteksi — kini inputSize 160 (setara
+            //    loop, jauh lebih cepat dari 224) — dengan pengaman PANJANG (25 dtk)
             //    + status penghitung — perangkat lambat tidak lagi dicap "terlalu lama".
             if (!hasil) {
               if (!kameraBerjalan || !videoEl.srcObject) return; // modal/kamera sudah ditutup
@@ -770,7 +813,7 @@
               }, 3000);
               try {
                 const d = await Promise.race([
-                  deteksiSatuWajah(videoEl, { inputSize: 224, scoreThreshold: 0.2 }),
+                  deteksiSatuWajah(videoEl, { inputSize: 160, scoreThreshold: 0.2 }),
                   new Promise((_, rej) => setTimeout(() => rej(new Error('Pemindaian terlalu lama. Perangkat ini tampaknya lambat — hadapkan wajah lurus & tenang ke kamera, cukupi cahaya dari depan, lalu klik lagi.')), 25000))
                 ]);
                 if (d) hasil = { descriptor: Array.from(d.descriptor), skor: d.score };
