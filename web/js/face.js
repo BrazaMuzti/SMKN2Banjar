@@ -63,6 +63,18 @@
     return data || [];
   }
 
+  /** Deteksi error fetch yang gagal di LEVEL JARINGAN (bukan HTTP status).
+   *  Contoh: Firefox "NetworkError when attempting to fetch resource.",
+   *  Chrome "Failed to fetch", supabase "fetch failed", dsb.
+   *  Mengenali pola ini → kembalikan pesan pengganti yang mudah dipahami;
+   *  selain itu kembalikan null agar pemanggil memakai pesan aslinya. */
+  function perjelasErrorJaringan(e, pesanPengganti) {
+    const m = String((e && e.message) || e || '');
+    const n = (e && e.name) || '';
+    const indikasiJaringan = /networkerror|failed to fetch|fetch failed|load failed|net::err_|aborterror/i.test(m) || /networkerror|aborterror/i.test(n);
+    return indikasiJaringan ? pesanPengganti : null;
+  }
+
   // ------------------------------------------------------------------
   // 2. Pemuatan model (lokal, sekali pakai)
   // ------------------------------------------------------------------
@@ -73,10 +85,22 @@
     }
     if (modelsPromise) return modelsPromise;
     const fa = window.faceapi;
-    modelsPromise = (async () => {
+    const muatSekali = async () => {
       await fa.nets.tinyFaceDetector.loadFromUri(MODELS_DIR);
       await fa.nets.faceLandmark68Net.loadFromUri(MODELS_DIR);
       await fa.nets.faceRecognitionNet.loadFromUri(MODELS_DIR);
+    };
+    modelsPromise = (async () => {
+      try {
+        await muatSekali();
+      } catch (ePertama) {
+        // Unduhan .bin besar (terutama face_recognition_model.bin ±6,4 MB) mudah
+        // terputus di jaringan lambat/bergoyang → jeda sejenak lalu coba sekali
+        // lagi sebelum benar-benar menyerah.
+        console.warn('Muat model wajah gagal pertama kali, mencoba ulang:', (ePertama && ePertama.message) || ePertama);
+        await new Promise(r => setTimeout(r, 900));
+        await muatSekali();
+      }
       modelsLoaded = true;
     })();
     try {
@@ -108,7 +132,13 @@
   async function muatGambarDariUrl(url) {
     const target = urlFotoUntukCanvas(url);
     if (!target) throw new Error('Murid belum punya foto. Gunakan kamera.');
-    const resp = await fetch(target, { mode: 'cors', referrerPolicy: 'no-referrer' });
+    let resp;
+    try {
+      resp = await fetch(target, { mode: 'cors', referrerPolicy: 'no-referrer' });
+    } catch (e) {
+      console.warn('muatGambarDariUrl fetch:', e);
+      throw new Error('Foto tidak dapat diunduh — koneksi/izin jaringan terganggu. Pastikan internet stabil, atau gunakan tombol Kamera.');
+    }
     if (!resp.ok) throw new Error('Foto tidak dapat diunduh (HTTP ' + resp.status + ').');
     const blob = await resp.blob();
     if (!blob || !blob.size) throw new Error('File foto kosong.');
@@ -686,21 +716,37 @@
     if (!wrap) { fxToast('error', 'Wadah pemindaian tidak ditemukan.'); return; }
 
     try {
-      await pastikanModels();
+      // Tahap 1 — model pengenalan wajah (unduh models/*.bin dari server aplikasi).
+      try {
+        await pastikanModels();
+      } catch (e) {
+        const ganti = perjelasErrorJaringan(e,
+          'Gagal mengunduh model pengenalan wajah (koneksi/unduhan terputus). Muat ulang halaman lalu coba lagi — pastikan internet stabil dan folder "models" tersedia di server.');
+        if (ganti) throw new Error(ganti);
+        throw e;
+      }
+
       const fa = window.faceapi;
       const nisList = [...new Set((listMurid || []).map(m => String(m.nis)).filter(Boolean))];
 
-      // Ambil descriptor murid kelas ini dari database
+      // Tahap 2 — ambil descriptor wajah siswa dari database (REST ke Supabase).
       let peta = {};
       if (nisList.length) {
-        const query = fxSupabase().from('akun').select('nis_nip, wajah_descriptor, wajah_status')
-          .eq('tipe', 'murid').in('nis_nip', nisList).not('wajah_descriptor', 'is', null);
-        const rows = await fxAmbilSemua(query);
-        (rows || []).forEach(r => {
-          if (r.wajah_status === 'aktif' && Array.isArray(r.wajah_descriptor) && r.wajah_descriptor.length === 128) {
-            peta[String(r.nis_nip)] = { descriptor: r.wajah_descriptor };
-          }
-        });
+        try {
+          const query = fxSupabase().from('akun').select('nis_nip, wajah_descriptor, wajah_status')
+            .eq('tipe', 'murid').in('nis_nip', nisList).not('wajah_descriptor', 'is', null);
+          const rows = await fxAmbilSemua(query);
+          (rows || []).forEach(r => {
+            if (r.wajah_status === 'aktif' && Array.isArray(r.wajah_descriptor) && r.wajah_descriptor.length === 128) {
+              peta[String(r.nis_nip)] = { descriptor: r.wajah_descriptor };
+            }
+          });
+        } catch (e) {
+          const ganti = perjelasErrorJaringan(e,
+            'Gagal mengambil data wajah siswa dari server (koneksi ke database bermasalah). Periksa koneksi internet Anda, lalu coba lagi.');
+          if (ganti) throw new Error(ganti);
+          throw e;
+        }
       }
 
       const matcher = buatMatcherDariPeta(peta);
