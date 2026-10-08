@@ -36,6 +36,7 @@
   let scanAktif = null;             // state pindai live (dihentikan total sebelum mulai ulang)
   let deteksiLoopToken = 0;         // membatalkan loop deteksi ringan kamera modal (naikkan utk berhenti)
   let hasilDeteksiLive = null;      // { descriptor:[128], skor, waktu } — descriptor terbaru loop ringan
+  let bisuStatusLoop = false;       // bungkam pesan loop setelah wajah diambil (hindari menimpa pesan sukses)
 
   // ------------------------------------------------------------------
   // 1. Helper kecil (fallback bila globals app.js belum tersedia)
@@ -155,8 +156,18 @@
 
   /**
    * Muat URL foto menjadi HTMLImageElement siap deteksi (blob via fetch → objectURL).
-   * Mencoba beberapa kandidat URL (lh3 ukuran w1200 → s0 → URL asli) dan membedakan
-   * penyebab kegagalan: HTTP (file tak publik / diblokir server) vs jaringan (fetch reject).
+   * Mencoba beberapa kandidat URL agar tahan terhadap perbedaan perilaku Google terhadap
+   * permintaan anonim (fetch lintas origin TIDAK membawa cookie login Google, sedangkan
+   * <img> di pratinjau ikut membawa cookie → foto bisa tampil namun fetch ditolak):
+   *   1. lh3 w1200  (yang dipakai pratinjau; CORS-aman)
+   *   2. lh3 s0      (ukuran asli, sering tersaji lebih longgar)
+   *   3. drive.usercontent.google.com ...&export=download (endpoint unduhan anonim)
+   *   4. URL mentah yang tersimpan (mis. drive.google.com/thumbnail?id=...&sz=w1000 —
+   *      endpoint yang memang untuk penampil tanpa login)
+   * Decode yang gagal TIDAK menghentikan loop: kandidat berikut tetap dicoba (satu
+   * endpoint sering membalas halaman HTML sahaja padahal yang lain menyajikan gambarnya).
+   * Penyebab kegagalan dibedakan: HTTP / bukan-gambar (file tak publik / diblokir server)
+   * vs jaringan (fetch reject).
    */
   async function muatGambarDariUrl(url) {
     const sumber = String(url || '').trim();
@@ -166,11 +177,15 @@
     if (id) {
       kandidat.push('https://lh3.googleusercontent.com/d/' + id + '=w1200');
       kandidat.push('https://lh3.googleusercontent.com/d/' + id + '=s0');
+      kandidat.push('https://drive.usercontent.google.com/download?id=' + id + '&export=download');
     }
+    // URL mentah yang disimpan di DB (thumbnail anonim) — ukuran kecil, jadi cadangan terakhir.
+    if (id && /^https?:\/\//i.test(sumber) && kandidat.indexOf(sumber) === -1) kandidat.push(sumber);
     const utama = urlFotoUntukCanvas(sumber);
     if (utama && kandidat.indexOf(utama) === -1) kandidat.push(utama);
 
     let httpStatus = 0;
+    let gagalDecode = 0;
     for (const t of kandidat) {
       if (!t) continue;
       let resp;
@@ -186,19 +201,32 @@
         blob = await resp.blob();
       } catch (e) { continue; }
       if (!blob || !blob.size) continue;
-      const img = new Image();
-      img.src = URL.createObjectURL(blob);
-      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error('File foto tidak valid.')); });
-      return img;
+      // Halaman HTML / JSON (mis. "buat akun" atau halaman verifikasi) bukan gambar —
+      // tandai dan lanjut ke kandidat berikutnya (BUKAN throw).
+      if (blob.type && !/^image\//i.test(blob.type)) { gagalDecode++; continue; }
+      try {
+        const img = new Image();
+        img.src = URL.createObjectURL(blob);
+        await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
+        return img;
+      } catch (e) {
+        console.warn('muatGambarDariUrl decode (' + t + '):', e && e.message ? e.message : e);
+        gagalDecode++;
+        continue; // jangan putus di kandidat pertama — kandidat lain mungkin tersaji
+      }
     }
 
+    const pesanShare = 'Kemungkinan file tidak di-share publik atau tak lagi tersedia. Bukalah Google Drive → file foto → “Bagikan” → “Siapa saja yang memiliki tautan”, lalu coba lagi.';
     if (httpStatus === 403 || httpStatus === 404 || httpStatus === 410) {
-      throw new Error('Foto tidak dapat diunduh (HTTP ' + httpStatus + '). Kemungkinan file tidak di-share atau tidak lagi tersedia. Bukalah Google Drive → file foto → \u201cBagikan\u201d → \u201cSiapa saja yang memiliki tautan\u201d, lalu coba lagi.');
+      throw new Error('Foto tidak dapat diunduh (HTTP ' + httpStatus + '). ' + pesanShare);
+    }
+    if (gagalDecode) {
+      throw new Error('Foto tidak dapat dibaca — server mengirim halaman/bukan gambar, padahal pratinjau bisa tampil lewat cookie login. ' + pesanShare);
     }
     if (httpStatus) {
       throw new Error('Foto tidak dapat diunduh (HTTP ' + httpStatus + '). Coba lagi beberapa saat; bila tetap gagal, periksa izin berbagi file di Google Drive.');
     }
-    throw new Error('Foto tidak dapat diunduh — koneksi/izin jaringan terganggu. Pastikan internet stabil dan file telah di-share \u201cSiapa saja yang memiliki tautan\u201d, atau gunakan tombol Kamera.');
+    throw new Error('Foto tidak dapat diunduh — koneksi/izin jaringan terganggu. Pastikan internet stabil dan file telah di-share “Siapa saja yang memiliki tautan”, atau gunakan tombol Kamera.');
   }
 
   // ------------------------------------------------------------------
@@ -440,6 +468,7 @@
     }
     deteksiLoopToken++;     // hentikan loop deteksi ringan kamera modal
     hasilDeteksiLive = null;
+    bisuStatusLoop = false; // modal berikutnya menampilkan pesan loop kembali
     kameraBerjalan = null;
   }
 
@@ -447,8 +476,10 @@
    * Loop deteksi RINGAN untuk kamera depan (modal Registrasi Wajah).
    * inputSize 160 ≈ 4× lebih cepat dari 320; descriptor tetap setara karena
    * FaceRecognitionNet membaca crop wajah ~150×150 dari kotak deteksi.
-   * Status berubah begitu wajah terlihat — tidak ada lagi status diam
-   * "Mendeteksi wajah..." yang berlama-lama.
+   * Status berubah begitu wajah terlihat. Tombol "Deteksi dari Kamera" MENUNGGU
+   * hasil loop ini (jangan meluncurkan deteksi kedua yang bersaing di GPU/CPU).
+   * Setelah wajah diambil, pesan loop dibungkam (bisuStatusLoop) agar tidak menimpa
+   * pesan sukses; loop tetap berjalan supaya klik berikutnya instan.
    */
   async function loopDeteksiKameraLive(videoEl, setHasil) {
     const fa = window.faceapi;
@@ -470,13 +501,16 @@
           hasilDeteksiLive = { descriptor: Array.from(d.descriptor), skor: d.score, waktu: Date.now() };
           if (!pernahTerdeteksi) {
             pernahTerdeteksi = true;
-            if (typeof setHasil === 'function') setHasil('<i class="fa-solid fa-face-smile text-green-400 mr-1"></i>Wajah terdeteksi — klik <b>Deteksi dari Kamera</b> untuk mengambil.', 'text-green-300');
+            if (!bisuStatusLoop && typeof setHasil === 'function') setHasil('<i class="fa-solid fa-face-smile text-green-400 mr-1"></i>Wajah terdeteksi — klik <b>Deteksi dari Kamera</b> untuk mengambil.', 'text-green-300');
           }
         } else if (pernahTerdeteksi) {
           pernahTerdeteksi = false;
-          if (typeof setHasil === 'function') setHasil('<i class="fa-solid fa-video mr-1"></i>Wajah sempat terdeteksi — arahkan wajah kembali ke kamera bila indikator hilang.', 'text-amber-200');
+          if (!bisuStatusLoop && typeof setHasil === 'function') setHasil('<i class="fa-solid fa-video mr-1"></i>Wajah sempat terdeteksi — arahkan wajah kembali ke kamera bila indikator hilang.', 'text-amber-200');
         }
       } catch (e) { /* frame gagal diproses → lanjut ke frame berikutnya */ }
+      // Jeda singkat tetap diberikan walau deteksi lebih lambat dari interval: UI bernapas
+      // dan beban inferensi tidak menumpuk saat perangkat lambat.
+      await new Promise(r => setTimeout(r, 60));
     }
   }
 
@@ -624,7 +658,13 @@
           if (!murid.url_foto) {
             pratinjau.outerHTML = '<span id="wajah-preview" class="w-24 h-28 rounded-lg bg-slate-800 border border-white/10 flex items-center justify-center text-slate-500 text-xs"><i class="fa-solid fa-user-slash text-xl mb-1"></i><br>Tanpa foto</span>';
           } else {
+            // Tampilkan via lh3 (ramah CORS). Bila peramban admin tidak login Google, lh3
+            // bisa menolak → fallback ke URL mentah yang tersimpan (drive.google.com/thumbnail
+            // memang dirancang untuk penampil anonim).
             pratinjau.src = urlFotoUntukCanvas(murid.url_foto);
+            pratinjau.addEventListener('error', function fallbackFotoPratinjau() {
+              if (this.src !== murid.url_foto && murid.url_foto) this.src = murid.url_foto;
+            }, { once: true });
           }
         }
 
@@ -690,6 +730,7 @@
               }
               loopDeteksiKameraLive(videoEl, setHasil); // mulai ulang loop ringan utk kamera baru
             });
+            bisuStatusLoop = false;              // sesi kamera baru → status loop "bicara" lagi
             loopDeteksiKameraLive(videoEl, setHasil); // deteksi ringan berjalan langsung — status memberi tahu saat wajah terlihat
             setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — atur posisi wajah. Indikator hijau muncul begitu wajah terdeteksi, lalu klik <b>Deteksi dari Kamera</b>.');
           } catch (e) {
@@ -700,20 +741,42 @@
 
         if (btnTangkap) btnTangkap.addEventListener('click', async () => {
           if (!videoEl.srcObject) { setHasil('Nyalakan kamera dulu.', 'text-amber-300'); return; }
-          setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Memindai wajah...');
+          setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Memindai wajah…');
           let hasil = null;
+          let pakaiLoop = false;   // true → hasil dari loop ringan (loop terus berjalan)
           try {
-            // 1) Pakai descriptor terbaru dari loop ringan bila masih segar (< 1,5 dtk) → respons instan.
-            const segar = hasilDeteksiLive && (Date.now() - hasilDeteksiLive.waktu) < 1500;
-            if (segar) {
-              hasil = { descriptor: hasilDeteksiLive.descriptor, skor: hasilDeteksiLive.skor };
-            } else {
-              // 2) Scan sekali cepat (inputSize 160); pengaman 8 dtk supaya tak pernah menggantung.
-              const d = await Promise.race([
-                deteksiSatuWajah(videoEl, { inputSize: 160, scoreThreshold: 0.2 }),
-                new Promise((_, rej) => setTimeout(() => rej(new Error('Pemindaian terlalu lama. Hadapkan wajah lurus ke kamera, cukupi cahaya dari depan, lalu klik lagi.')), 8000))
-              ]);
-              if (d) hasil = { descriptor: Array.from(d.descriptor), skor: d.score };
+            // 1) Tunggu hasil SEGAR dari loop ringan (≤ 4 dtk). Wajah sudah terlihat →
+            //    klik hampir instan, TANPA deteksi kedua yang bersaing di GPU/CPU (ini
+            //    dulu yang membuat "pemindaian terlalu lama" di perangkat lambat).
+            const batasTunggu = Date.now() + 4000;
+            while (Date.now() < batasTunggu) {
+              if (hasilDeteksiLive && (Date.now() - hasilDeteksiLive.waktu) < 2500) {
+                hasil = { descriptor: hasilDeteksiLive.descriptor, skor: hasilDeteksiLive.skor };
+                pakaiLoop = true;
+                break;
+              }
+              await new Promise(r => setTimeout(r, 100));
+            }
+            // 2) Loop tak memberi hasil (mis. wajah belum terlihat): hentikan loop dulu
+            //    (anti tumpukan deteksi) lalu satu deteksi dengan pengaman PANJANG (25 dtk)
+            //    + status penghitung — perangkat lambat tidak lagi dicap "terlalu lama".
+            if (!hasil) {
+              if (!kameraBerjalan || !videoEl.srcObject) return; // modal/kamera sudah ditutup
+              deteksiLoopToken++;                                // hentikan loop ringan sementara
+              const mulai = Date.now();
+              const progres = setInterval(() => {
+                const dtk = Math.round((Date.now() - mulai) / 1000);
+                setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Memindai wajah… (' + dtk + ' dtk). Pastikan wajah lurus & tenang di area kamera.', 'text-slate-300');
+              }, 3000);
+              try {
+                const d = await Promise.race([
+                  deteksiSatuWajah(videoEl, { inputSize: 224, scoreThreshold: 0.2 }),
+                  new Promise((_, rej) => setTimeout(() => rej(new Error('Pemindaian terlalu lama. Perangkat ini tampaknya lambat — hadapkan wajah lurus & tenang ke kamera, cukupi cahaya dari depan, lalu klik lagi.')), 25000))
+                ]);
+                if (d) hasil = { descriptor: Array.from(d.descriptor), skor: d.score };
+              } finally {
+                clearInterval(progres);
+              }
             }
           } catch (e) {
             console.warn('btnTangkap:', e);
@@ -722,14 +785,18 @@
           }
           if (!hasil) {
             setHasil('<i class="fa-solid fa-face-meh text-amber-300 mr-1"></i>Tidak ada wajah terdeteksi. Hadapkan wajah lurus ke kamera dengan cahaya cukup (posisi ±40–80 cm), lalu klik lagi.', 'text-amber-300');
+            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil); // hidupkan indikator otomatis lagi
             return;
           }
           if (hasil.skor < SKOR_MIN_FOTO) {
             setHasil('Wajah terdeteksi tapi kurang jelas (skor ' + hasil.skor.toFixed(2) + '). Mendekatlah sedikit / tambah cahaya, lalu klik lagi.', 'text-amber-300');
+            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil);
             return;
           }
-          deteksiLoopToken++;     // hentikan loop ringan selama foto diambil → hemat CPU
-          hasilDeteksiLive = null; // klik berikutnya harus scan ulang (bukan data basi)
+          // Loop TETAP berjalan & hasilDeteksiLive sengaja tidak dikosongkan →
+          // klik berikutnya kembali instan. Status loop dibungkam supaya tidak
+          // menimpa pesan sukses di bawah.
+          bisuStatusLoop = true;
           descriptorSementara = hasil.descriptor; skorSementara = hasil.skor;
           const canvas = document.createElement('canvas');
           canvas.width = videoEl.videoWidth || 640; canvas.height = videoEl.videoHeight || 480;
@@ -740,6 +807,9 @@
             const imgSnap = cari('wajah-preview');
             if (imgSnap) imgSnap.src = canvas.toDataURL('image/jpeg', 0.85);
           }
+          // Bila jalur one-shot (loop sempat dihentikan), nyalakan ulang supaya klik
+          // berikutnya terlayani cepat oleh hasil loop (status loop tetap dibungkam).
+          if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil);
           setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi dari kamera (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
           aktifkanSimpan();
         });
