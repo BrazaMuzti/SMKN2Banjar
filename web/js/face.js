@@ -335,15 +335,15 @@
   const SKOR_MIN_FOTO = 0.5; // skor deteksi minimal utk mengambil wajah dari foto
   let kameraBerjalan = null; // { stream, video } aktif saat ini
 
-  async function mulaiKameraKe(videoEl) {
+  async function mulaiKameraKe(videoEl, deviceId) {
     hentikanKamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Kamera tidak tersedia di peramban ini (butuh HTTPS atau localhost).');
     }
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
-      audio: false
-    });
+    const videoCfg = deviceId
+      ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
+      : { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+    const stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio: false });
     videoEl.srcObject = stream;
     videoEl.setAttribute('playsinline', 'true');
     await videoEl.play();
@@ -355,7 +355,49 @@
     if (kameraBerjalan && kameraBerjalan.stream) {
       kameraBerjalan.stream.getTracks().forEach(t => t.stop());
     }
+
     kameraBerjalan = null;
+  }
+
+  /** deviceId kamera yang sedang benar-benar dipakai (dari track stream aktif). */
+  function kameraAktifDeviceId() {
+    if (kameraBerjalan && kameraBerjalan.stream) {
+      const track = kameraBerjalan.stream.getVideoTracks()[0];
+      if (track && typeof track.getSettings === 'function') return track.getSettings().deviceId || '';
+    }
+    return '';
+  }
+
+  /** Isi dropdown pilihan kamera & pasang listener ganti kamera (sekali per modal). */
+  async function isiDaftarKamera(selectEl, onGanti) {
+    if (!selectEl || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+    if (selectEl.dataset.terisi === '1') return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = (devices || []).filter(d => d.kind === 'videoinput');
+      if (!videoDevices.length) return;
+      const aktifId = kameraAktifDeviceId();
+      const pilihanLama = selectEl.value || '';
+      selectEl.innerHTML = '';
+      videoDevices.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label && d.label.trim() ? d.label.trim() : ('Kamera ' + (i + 1));
+        if (aktifId && d.deviceId === aktifId) opt.selected = true;
+        selectEl.appendChild(opt);
+      });
+      if (!aktifId) selectEl.value = pilihanLama || (videoDevices[0] ? videoDevices[0].deviceId : '');
+      selectEl.dataset.terisi = '1';
+      if (selectEl.dataset.dipasang !== '1') {
+        selectEl.dataset.dipasang = '1';
+        selectEl.addEventListener('change', () => {
+          const id = selectEl.value || '';
+          if (id && id !== kameraAktifDeviceId() && typeof onGanti === 'function') onGanti(id);
+        });
+      }
+    } catch (e) {
+      console.error('isiDaftarKamera:', e);
+    }
   }
 
   /** Rekam descriptor dari elemen (img/video) → { descriptor, skor } / throw. */
@@ -406,6 +448,10 @@
           <button id="btn-wajah-kamera" class="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition" title="Pindai langsung dari kamera"><i class="fa-solid fa-camera mr-1"></i>Gunakan Kamera</button>
         </div>
         <div id="wajah-camera-area" class="hidden relative rounded-lg overflow-hidden border border-cyan-500 bg-black mb-2" style="display:none">
+          <div class="flex items-center gap-2 bg-slate-900/80 px-2 py-1.5">
+            <span class="text-[9px] uppercase tracking-wider text-slate-400 shrink-0"><i class="fa-solid fa-camera-rotate mr-1"></i>Kamera</span>
+            <select id="camera-select" class="bg-slate-800 border border-white/10 text-white text-[10px] rounded px-1.5 py-1 flex-1 min-w-0 focus:outline-none focus:border-cyan-500" title="Pilih kamera"><option value="">Kamera bawaan</option></select>
+          </div>
           <video id="wajah-video" autoplay playsinline muted class="w-full h-52 object-cover"></video>
           <button id="btn-wajah-tangkap" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-2.5 rounded-lg text-[11px] font-bold transition" title="Deteksi wajah dari frame kamera"><i class="fa-solid fa-camera mr-1"></i>Deteksi dari Kamera</button>
         </div>
@@ -429,6 +475,7 @@
         const btnTangkap = cari('btn-wajah-tangkap');
         const btnSimpan  = cari('btn-wajah-simpan');
         const btnNonaktif = cari('btn-wajah-nonaktif');
+        const kameraPilih = cari('camera-select');
         // Guard: elemen modal yang hilang TIDAK boleh terjadi senyap.
         ['wajah-preview','wajah-hasil','btn-wajah-foto','btn-wajah-kamera',
          'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan'].forEach((id) => {
@@ -505,7 +552,20 @@
             areaKam.classList.remove('hidden');
             areaKam.style.display = 'block';
             btnKam.disabled = true;
-            setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
+            // Isi daftar kamera setelah izin diberikan (label baru muncul saat itu),
+            // lalu pasang listener ganti kamera → mulai ulang stream dengan device baru.
+            await isiDaftarKamera(kameraPilih, async (deviceId) => {
+              try {
+                await mulaiKameraKe(videoEl, deviceId);
+                setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera diganti. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
+              } catch (e) {
+                console.error(e);
+                setHasil(fxEscape(e.message || e), 'text-red-300');
+                const aktifId = kameraAktifDeviceId();
+                if (kameraPilih && aktifId) kameraPilih.value = aktifId;
+              }
+            });
+            setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — pilih kamera lain di menu bila perlu, atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
           } catch (e) {
             console.error(e);
             setHasil(fxEscape(e.message || e), 'text-red-300');
