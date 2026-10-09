@@ -271,8 +271,16 @@
       // tandai dan lanjut ke kandidat berikutnya (BUKAN throw).
       if (blob.type && !/^image\//i.test(blob.type)) { gagalDecode++; continue; }
       try {
+        // blob: diblokir CSP (img-src di index.html tidak memuat blob:); data: diizinkan.
+        // Decode lewat FileReader agar foto tetap tampil & pixel-nya bisa dibaca canvas.
+        const dataUrl = await new Promise((res, rej) => {
+          const fr = new FileReader();
+          fr.onload = () => res(fr.result);
+          fr.onerror = () => rej(fr.error || new Error('FileReader gagal membaca blob'));
+          fr.readAsDataURL(blob);
+        });
         const img = new Image();
-        img.src = URL.createObjectURL(blob);
+        img.src = dataUrl;
         await new Promise((res, rej) => { img.onload = res; img.onerror = rej; });
         return img;
       } catch (e) {
@@ -674,7 +682,7 @@
           gagalStreak = 0;
           pesanGagalDitampilkan = false;
           if (ctxOverlay) gambarScanKamera(ctxOverlay, d, oW, oH, videoEl);
-          hasilDeteksiLive = { deteksi: d.detection, landmarks: d.landmarks, skor: d.score, waktu: Date.now() };
+          hasilDeteksiLive = { deteksi: d.detection, landmarks: d.landmarks, skor: d.detection.score, waktu: Date.now() };
           if (!pernahTerdeteksi) {
             pernahTerdeteksi = true;
             if (!bisuStatusLoop && typeof setHasil === 'function') setHasil('<i class="fa-solid fa-face-smile text-green-400 mr-1"></i>Wajah terdeteksi — klik <b>Deteksi dari Kamera</b> untuk mengambil.', 'text-green-300');
@@ -749,10 +757,14 @@
   async function hasilDeteksiKuat(el, label) {
     const d = await deteksiSatuWajah(el, { inputSize: 320, scoreThreshold: 0.2 });
     if (!d) throw new Error('Tidak ada wajah terdeteksi pada ' + label + '. Coba posisi wajah menghadap kamera & pencahayaan cukup.');
-    if (d.score < SKOR_MIN_FOTO) {
-      throw new Error('Wajah terdeteksi tapi kurang jelas (skor ' + d.score.toFixed(2) + '). Gunakan foto lebih terang/tajam.');
+    // face-api menyimpan skor di detection.score — TIDAK ada d.score di tingkat atas.
+    // Guard "kurang jelas" ini baru bekerja lewat detection.score (d.score undefined
+    // dulu membuatnya selalu lolos & mematikan jalur kamera/foto).
+    const skor = (d.detection && d.detection.score != null) ? d.detection.score : 0;
+    if (skor < SKOR_MIN_FOTO) {
+      throw new Error('Wajah terdeteksi tapi kurang jelas (skor ' + skor.toFixed(2) + '). Gunakan foto lebih terang/tajam.');
     }
-    return { descriptor: Array.from(d.descriptor), skor: d.score };
+    return { descriptor: Array.from(d.descriptor), skor };
   }
 
   /** Muat model face-api dengan batas waktu — modal tetap terbuka meski model lambat/gagal. */
@@ -992,7 +1004,7 @@
                   deteksiSatuWajah(videoEl, { inputSize: 160, scoreThreshold: 0.2 }),
                   new Promise((_, rej) => setTimeout(() => rej(new Error('Pemindaian terlalu lama. Perangkat ini tampaknya lambat — hadapkan wajah lurus & tenang ke kamera, cukupi cahaya dari depan, lalu klik lagi.')), 25000))
                 ]);
-                if (d) hasil = { descriptor: Array.from(d.descriptor), skor: d.score };
+                if (d) hasil = { descriptor: Array.from(d.descriptor), skor: d.detection.score };
               } finally {
                 clearInterval(progres);
               }
@@ -1004,12 +1016,12 @@
           }
           if (!hasil) {
             setHasil('<i class="fa-solid fa-face-meh text-amber-300 mr-1"></i>Tidak ada wajah terdeteksi. Hadapkan wajah lurus ke kamera dengan cahaya cukup (posisi ±40–80 cm), lalu klik lagi.', 'text-amber-300');
-            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil); // hidupkan indikator otomatis lagi
+            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil, overlayEl); // hidupkan indikator otomatis lagi
             return;
           }
           if (hasil.skor < SKOR_MIN_FOTO) {
             setHasil('Wajah terdeteksi tapi kurang jelas (skor ' + hasil.skor.toFixed(2) + '). Mendekatlah sedikit / tambah cahaya, lalu klik lagi.', 'text-amber-300');
-            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil);
+            if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil, overlayEl);
             return;
           }
           // Loop TETAP berjalan & hasilDeteksiLive sengaja tidak dikosongkan →
@@ -1028,7 +1040,7 @@
           }
           // Bila jalur one-shot (loop sempat dihentikan), nyalakan ulang supaya klik
           // berikutnya terlayani cepat oleh hasil loop (status loop tetap dibungkam).
-          if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil);
+          if (!pakaiLoop) loopDeteksiKameraLive(videoEl, setHasil, overlayEl);
           setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>Wajah terdeteksi dari kamera (skor ' + hasil.skor.toFixed(2) + '). Klik <b>Simpan Data Wajah</b>.', 'text-green-300');
           aktifkanSimpan();
         });
