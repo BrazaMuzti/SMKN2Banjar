@@ -2,8 +2,9 @@
  * face.js — Pengenalan Wajah (face-api.js) untuk SISIP
  * ---------------------------------------------------------------------
  * Fitur:
- *   1. Tab "Registrasi Wajah" di halaman Manajemen Akun Murid:
- *        - daftar murid + status wajah (Aktif / Nonaktif / Belum)
+ *   1. Registrasi wajah per murid di Manajemen Akun Murid:
+ *        - kolom Status Wajah (Aktif / Nonaktif / Belum) + tombol
+ *          kelolaWajah di tiap baris daftar siswa
  *        - ekstraksi descriptor dari foto Drive (via lh3 CORS-safe)
  *          ATAU langsung dari kamera, lalu simpan via RPC
  *          `simpan_wajah_murid` (security definer).
@@ -33,8 +34,8 @@
 
   let modelsLoaded = false;
   let modelsPromise = null;
-  let modelsRinganPromise = null;   // promise muat model RINGAN (modal registrasi): detektor + landmarks saja
-  let petaWajahCache = null;        // { nis: { descriptor:[128], status } } — cache tab registrasi
+  let modelsRinganPromise = null;   // promise muat model RINGAN (modal kelolaWajah): detektor + landmarks saja
+  let petaWajahCache = null;        // { nis: { descriptor:[128], status } } — cache status wajah
   let scanAktif = null;             // state pindai live (dihentikan total sebelum mulai ulang)
   let deteksiLoopToken = 0;         // membatalkan loop deteksi ringan kamera modal (naikkan utk berhenti)
   let hasilDeteksiLive = null;      // { descriptor:[128], skor, waktu } — descriptor terbaru loop ringan
@@ -138,7 +139,7 @@
   }
 
   /**
-   * Muat model RINGAN untuk modal Registrasi Wajah: hanya tiny face detector +
+   * Muat model RINGAN untuk modal kelolaWajah: hanya tiny face detector +
    * landmark 68 titik (±550 KB). Cukup untuk loop indikator & kotak scan kamera.
    * FaceRecognitionNet (±6,4 MB) sengaja TIDAK dimuat di sini — dipanggil
    * on-demand lewat pastikanNetRecok() tepat sebelum descriptor dihitung, sehingga
@@ -448,6 +449,13 @@
     return hasil;
   }
 
+  /** Badge status wajah penuh (dipakai `htmlBadgeWajah` & header modal `kelolaWajah`). */
+  const BADGE_STATUS = {
+    aktif:  '<span class="px-2 py-0.5 rounded-full bg-green-500/20 text-green-300 border border-green-500/40 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-check mr-1"></i>Aktif</span>',
+    nonaktif: '<span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-pause mr-1"></i>Nonaktif</span>',
+    belum:  '<span class="px-2 py-0.5 rounded-full bg-slate-600/30 text-slate-400 border border-white/10 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-user-plus mr-1"></i>Belum</span>'
+  };
+
   /** HTML badge status wajah utk disisipkan di tabel (dari BADGE_STATUS). */
   function htmlBadgeWajah(status) {
     return BADGE_STATUS[status] || BADGE_STATUS.belum;
@@ -472,103 +480,7 @@
   }
 
   // ==================================================================
-  // 6. TAB "REGISTRASI WAJAH" (halaman Manajemen Akun Murid)
-  // ==================================================================
-  const BADGE_STATUS = {
-    aktif:  '<span class="px-2 py-0.5 rounded-full bg-green-500/20 text-green-300 border border-green-500/40 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-check mr-1"></i>Aktif</span>',
-    nonaktif: '<span class="px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-pause mr-1"></i>Nonaktif</span>',
-    belum:  '<span class="px-2 py-0.5 rounded-full bg-slate-600/30 text-slate-400 border border-white/10 text-[9px] font-bold uppercase tracking-wider"><i class="fa-solid fa-user-plus mr-1"></i>Belum</span>'
-  };
-
-  function barisMuridWajah(m, i) {
-    const nis = String(m.nis_nip || '');
-    const st = statusMurid(petaWajahCache, nis);
-    const mini = m.url_foto
-      ? `<img src="${fxEscape(urlFotoUntukCanvas(m.url_foto))}" alt="" class="w-7 h-7 rounded object-cover mr-2 inline-block align-middle bg-slate-700" loading="lazy" onerror="this.style.visibility='hidden'">`
-      : '<span class="w-7 h-7 rounded mr-2 inline-flex items-center justify-center bg-slate-700 text-slate-500 text-[9px] align-middle"><i class="fa-solid fa-user"></i></span>';
-    const tombolHapus = st !== 'belum'
-      ? `<button onclick="if(window.FaceWajah)window.FaceWajah.hapusDataWajah('${nis.replace(/'/g, "\\'")}','${fxEscape(m.nama_lengkap || '')}')" class="px-2 py-1 rounded bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white text-[9px] font-bold transition" title="Hapus data wajah">Hapus</button>`
-      : '';
-    return `<tr class="hover:bg-white/5 border-b border-white/5">
-        <td class="px-3 py-2 text-center text-slate-500">${i + 1}</td>
-        <td class="px-3 py-2 font-mono text-slate-300">${nis}</td>
-        <td class="px-3 py-2 text-slate-100">${mini}${fxEscape(m.nama_lengkap || '')}</td>
-        <td class="px-3 py-2 text-center text-slate-400">${fxEscape(m.tingkat_kelas || '-')}</td>
-        <td class="px-3 py-2 text-center">${BADGE_STATUS[st] || BADGE_STATUS.belum}</td>
-        <td class="px-3 py-2 text-center">
-          <button onclick="if(window.FaceWajah)window.FaceWajah.kelolaWajah('${nis.replace(/'/g, "\\'")}')" class="px-2 py-1 rounded bg-cyan-600/30 hover:bg-cyan-600 text-cyan-300 hover:text-white text-[9px] font-bold transition" title="Registrasi/kelola data wajah">${st === 'aktif' ? 'Kelola' : 'Registrasi'}</button>
-          ${tombolHapus}
-        </td>
-      </tr>`;
-  }
-
-  async function renderRegistrasiWajah() {
-    const panel = document.getElementById('tab-panel-wajah');
-    if (!panel) return;
-    panel.innerHTML = `<div class="p-4 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-xl mb-2"></i><br>Menyiapkan data wajah...</div>`;
-    try {
-      await pastikanModels();
-      const fa = fxSupabase();
-      const [daftar, peta] = await Promise.all([
-        fxAmbilSemua(fa.from('akun').select('nis_nip, nama_lengkap, tingkat_kelas, url_foto').eq('tipe', 'murid')),
-        muatPetaWajah()
-      ]);
-      petaWajahCache = peta;
-      const kelasList = [...new Set((daftar || []).map(m => m.tingkat_kelas).filter(Boolean))]
-        .sort((a, b) => String(a).localeCompare(String(b), 'id'));
-      const selKelas = document.getElementById('wajah-filter-kelas');
-      const kelasTerpilih = selKelas ? selKelas.value : 'ALL';
-      const terfilter = (daftar || []).filter(m => kelasTerpilih === 'ALL' || String(m.tingkat_kelas) === String(kelasTerpilih));
-
-      panel.innerHTML = `
-        <div class="p-3 flex flex-col gap-3 h-full">
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="flex-1 min-w-[180px]">
-              <label class="text-[10px] uppercase tracking-wider text-slate-400 font-bold block mb-1"><i class="fa-solid fa-id-card mr-1"></i> Pendaftaran Wajah Siswa</label>
-              <div class="flex flex-wrap items-center gap-2">
-                <select id="wajah-filter-kelas" onchange="if(window.FaceWajah)window.FaceWajah.renderRegistrasiWajah()" class="h-8 bg-slate-700 border border-white/20 rounded-lg px-2 text-[10px] sm:text-[11px] text-white outline-none focus:border-cyan-400 cursor-pointer">
-                  <option value="ALL">Semua Kelas</option>
-                  ${kelasList.map(k => `<option value="${fxEscape(k)}" ${String(k) === String(kelasTerpilih) ? 'selected' : ''}>${fxEscape(k)}</option>`).join('')}
-                </select>
-                <button onclick="if(window.FaceWajah)window.FaceWajah.muatUlangPetaWajah()" class="h-8 bg-slate-600 hover:bg-slate-500 text-white px-3 rounded-lg text-[10px] font-bold transition" title="Muat ulang data wajah dari server"><i class="fa-solid fa-rotate-right mr-1"></i>Muat Ulang</button>
-              </div>
-            </div>
-            <div class="text-[10px] text-slate-400 leading-relaxed text-right">
-              <p><i class="fa-solid fa-circle-info text-cyan-400 mr-1"></i>Wajah terdaftar: <b class="text-white">${Object.keys(peta || {}).length}</b> murid.</p>
-              <p class="max-w-[300px]">Pendaftaran memakai foto Drive siswa <b>atau</b> kamera. Pencocokan hanya di perangkat (gambar wajah tidak dikirim).</p>
-            </div>
-          </div>
-          <div class="flex-1 overflow-auto custom-scrollbar bg-[#0b1220] rounded-lg border border-white/10">
-            <table class="w-full text-left whitespace-nowrap">
-              <thead class="sticky top-0 bg-slate-900 z-10 text-[10px] uppercase text-slate-400 shadow-md">
-                <tr>
-                  <th class="px-3 py-2 border-b border-white/10 text-center">#</th>
-                  <th class="px-3 py-2 border-b border-white/10">NIS</th>
-                  <th class="px-3 py-2 border-b border-white/10">Nama Lengkap</th>
-                  <th class="px-3 py-2 border-b border-white/10 text-center">Kelas</th>
-                  <th class="px-3 py-2 border-b border-white/10 text-center">Status Wajah</th>
-                  <th class="px-3 py-2 border-b border-white/10 text-center">Aksi</th>
-                </tr>
-              </thead>
-              <tbody class="text-xs text-slate-200">
-                ${terfilter.map(barisMuridWajah).join('') || `<tr><td colspan="6" class="p-4 text-center text-slate-500 italic">Tidak ada murid.</td></tr>`}
-              </tbody>
-            </table>
-          </div>
-        </div>`;
-    } catch (e) {
-      console.error('renderRegistrasiWajah:', e);
-      panel.innerHTML = `<div class="p-6 text-center text-red-400"><i class="fa-solid fa-triangle-exclamation text-2xl mb-2"></i><br>Gagal menyiapkan pendaftaran wajah.<br><span class="text-xs">${fxEscape(e && e.message ? e.message : e)}</span></div>`;
-    }
-  }
-
-  function muatUlangPetaWajah() {
-    petaWajahCache = null;
-    renderRegistrasiWajah();
-  }
-
-  // ==================================================================
-  // 7. KELOLA WAJAH per murid (form registrasi di halaman murid)
+  // 6. KELOLA WAJAH per murid (form registrasi)
   // ==================================================================
   const SKOR_MIN_FOTO = 0.5; // skor deteksi minimal utk mengambil wajah dari foto
   const TIPS_POSE = [ // urutan saran pose registrasi multi-sampel (Fase 2 — adopsi repo referensi)
@@ -722,7 +634,7 @@
   }
 
   /**
-   * Loop deteksi RINGAN untuk kamera depan (modal Registrasi Wajah).
+   * Loop deteksi RINGAN untuk kamera depan (modal kelolaWajah).
    * inputSize 160 + TANPA FaceRecognitionNet per frame (net terberat) → indikator
    * hijau segar dalam 1–3 dtk di perangkat lemah. Descriptor dihitung sekali saat
    * klik dari deteksi+landmarks tersimpan (extractFaces), hasil tetap setara karena
@@ -1254,16 +1166,15 @@
     }
   }
 
-  /** Segarkan tampilan wajah: panel lama (no-op setelah panel dihapus) + tabel Daftar Murid. */
+  /** Segarkan kolom Status Wajah pada tabel Daftar Murid (setelah simpan/nonaktif/hapus). */
   function refreshDaftarWajahTable() {
-    renderRegistrasiWajah();
     if (typeof renderTabelMuridTerfilter === 'function') {
       try { renderTabelMuridTerfilter(); } catch (e) { console.error('refresh Daftar Murid:', e); }
     }
   }
 
   // ==================================================================
-  // 8. PEMINDAIAN WAJAH LIVE DI MODAL ABSENSI
+  // 7. PEMINDAIAN WAJAH LIVE DI MODAL ABSENSI
   // ==================================================================
   /** Hentikan pemindaian wajah (stream kamera + loop deteksi) bila aktif. */
   function berhentiPindaiWajah() {
@@ -1524,7 +1435,7 @@
   }
 
   // ==================================================================
-  // 8b. PEMINDAIAN WAJAH UNTUK ABSEN MANDIRI (verifikasi selfie)
+  // 7b. PEMINDAIAN WAJAH UNTUK ABSEN MANDIRI (verifikasi selfie)
   // ==================================================================
   /**
    * Verifikasi identitas murid pada Absen Mandiri: cocokkan wajah kamera depan
@@ -1564,7 +1475,7 @@
       const row = (rows || [])[0];
       const daftarSampel = row ? normalisasiDescriptorWajah(row.wajah_descriptor) : null;
       if (!daftarSampel || !daftarSampel.length) {
-        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-[10px] p-2 mb-2 text-center">Wajah ${fxEscape(nama || nisS)} belum terdaftar/aktif.<br><span class="text-amber-100/70">Daftarkan di menu Manajemen Akun Murid → Registrasi Wajah.</span></div>`;
+        wrap.innerHTML = `<div class="rounded border border-amber-500/50 bg-amber-900/30 text-amber-200 text-[10px] p-2 mb-2 text-center">Wajah ${fxEscape(nama || nisS)} belum terdaftar/aktif.<br><span class="text-amber-100/70">Daftarkan lewat Manajemen Akun Murid — klik ikon wajah pada baris siswa.</span></div>`;
         return false;
       }
 
@@ -1644,7 +1555,7 @@
   }
 
   // ==================================================================
-  // 8c. PRE-WARM MODEL — pindai & modal jadi instan
+  // 7c. PRE-WARM MODEL — pindai & modal jadi instan
   // ==================================================================
   // Model (±6,4 MB) diunduh SAAT HALAMAN IDLE, bukan ketika admin menekan
   // Face Scan / membuka modal. Server aplikasi menyajikan folder models/ (di
@@ -1666,7 +1577,7 @@
   })();
 
   // ==================================================================
-  // 9. EKSPOR API PUBLIK
+  // 8. EKSPOR API PUBLIK
   // ==================================================================
   window.FaceWajah = {
     kelolaWajah,
@@ -1675,8 +1586,6 @@
     ambilStatusWajah,
     htmlBadgeWajah,
     ikonStatusWajah,
-    renderRegistrasiWajah,
-    muatUlangPetaWajah,
     mulaiPindaiWajahAbsen,
     berhentiPindaiWajah,
     pindaiWajahMandiri,
