@@ -32,6 +32,7 @@
 
   let modelsLoaded = false;
   let modelsPromise = null;
+  let modelsRinganPromise = null;   // promise muat model RINGAN (modal registrasi): detektor + landmarks saja
   let petaWajahCache = null;        // { nis: { descriptor:[128], status } } — cache tab registrasi
   let scanAktif = null;             // state pindai live (dihentikan total sebelum mulai ulang)
   let deteksiLoopToken = 0;         // membatalkan loop deteksi ringan kamera modal (naikkan utk berhenti)
@@ -81,17 +82,25 @@
   // ------------------------------------------------------------------
   // 2. Pemuatan model (lokal, sekali pakai)
   // ------------------------------------------------------------------
-  async function pastikanModels() {
-    if (modelsLoaded) return true;
+  /** Pastikan library face-api sudah tersedia (throw bila belum dimuat). */
+  function wajahApiAda() {
     if (!window.faceapi || typeof window.faceapi.nets === 'undefined') {
       throw new Error('Library pengenalan wajah belum dimuat. Periksa file vendor/face-api.min.js.');
     }
+    return window.faceapi;
+  }
+
+  async function pastikanModels() {
+    if (modelsLoaded) return true;
+    wajahApiAda();
     if (modelsPromise) return modelsPromise;
     const fa = window.faceapi;
     const muatSekali = async () => {
-      await fa.nets.tinyFaceDetector.loadFromUri(MODELS_DIR);
-      await fa.nets.faceLandmark68Net.loadFromUri(MODELS_DIR);
-      await fa.nets.faceRecognitionNet.loadFromUri(MODELS_DIR);
+      // Guard isLoaded: net yang sudah dimuat (mis. oleh modal registrasi) tidak
+      // diunduh ulang — hemat bandwidth & waktu di jaringan sekolah.
+      if (!fa.nets.tinyFaceDetector.isLoaded) await fa.nets.tinyFaceDetector.loadFromUri(MODELS_DIR);
+      if (!fa.nets.faceLandmark68Net.isLoaded) await fa.nets.faceLandmark68Net.loadFromUri(MODELS_DIR);
+      if (!fa.nets.faceRecognitionNet.isLoaded) await fa.nets.faceRecognitionNet.loadFromUri(MODELS_DIR);
     };
     modelsPromise = (async () => {
       try {
@@ -113,6 +122,43 @@
       throw new Error('Gagal memuat model wajah: ' + (e && e.message ? e.message : e));
     }
     return true;
+  }
+
+  /**
+   * Muat model RINGAN untuk modal Registrasi Wajah: hanya tiny face detector +
+   * landmark 68 titik (±550 KB). Cukup untuk loop indikator & kotak scan kamera.
+   * FaceRecognitionNet (±6,4 MB) sengaja TIDAK dimuat di sini — dipanggil
+   * on-demand lewat pastikanNetRecok() tepat sebelum descriptor dihitung, sehingga
+   * tombol "Gunakan Kamera" aktif jauh lebih cepat, terutama di jaringan sekolah.
+   * Tidak mengubah modelsLoaded (jalur lengkap tetap dimuat saat absensi).
+   */
+  function pastikanModelsRingan() {
+    if (modelsLoaded) return Promise.resolve(true); // sudah lengkap → tak perlu apa-apa
+    wajahApiAda();
+    if (modelsRinganPromise) return modelsRinganPromise;
+    const fa = window.faceapi;
+    const muatSekali = async () => {
+      if (!fa.nets.tinyFaceDetector.isLoaded) await fa.nets.tinyFaceDetector.loadFromUri(MODELS_DIR);
+      if (!fa.nets.faceLandmark68Net.isLoaded) await fa.nets.faceLandmark68Net.loadFromUri(MODELS_DIR);
+    };
+    modelsRinganPromise = (async () => {
+      try {
+        await muatSekali();
+      } catch (ePertama) {
+        // Retry sekali (jaringan bergoyang), sama seperti jalur lengkap.
+        console.warn('Muat model wajah (ringan) gagal pertama kali, mencoba ulang:', (ePertama && ePertama.message) || ePertama);
+        await new Promise(r => setTimeout(r, 900));
+        await muatSekali();
+      }
+    })();
+    return modelsRinganPromise;
+  }
+
+  /** Pastikan FaceRecognitionNet (net berat, descriptor 128 dimensi) sudah dimuat. */
+  async function pastikanNetRecok() {
+    const fa = wajahApiAda();
+    if (fa.nets.faceRecognitionNet.isLoaded) return;
+    await fa.nets.faceRecognitionNet.loadFromUri(MODELS_DIR);
   }
 
   // ------------------------------------------------------------------
@@ -260,6 +306,7 @@
     const o = opts || {};
     const conf = o.scoreThreshold || 0.35;
     const inputSize = o.inputSize || 320;
+    await pastikanNetRecok(); // descriptor 128-d butuh FaceRecognitionNet — muat on-demand bila belum ada
     const deteksi = await fa.detectSingleFace(el, new fa.TinyFaceDetectorOptions({ inputSize, scoreThreshold: conf }))
       .withFaceLandmarks(true)
       .withFaceDescriptor();
@@ -469,6 +516,27 @@
   const SKOR_MIN_FOTO = 0.5; // skor deteksi minimal utk mengambil wajah dari foto
   let kameraBerjalan = null; // { stream, video } aktif saat ini
 
+  /** Terjemahkan error getUserMedia menjadi pesan Indonesia yang bisa ditindaklanjuti. */
+  function pesanKameraError(e) {
+    const n = (e && e.name) || '';
+    if (n === 'NotAllowedError' || n === 'PermissionDeniedError') {
+      return 'Izin kamera ditolak peramban. Klik ikon gembok di address bar → izinkan kamera, lalu coba lagi.';
+    }
+    if (n === 'NotFoundError' || n === 'DevicesNotFoundError') {
+      return 'Tidak ada kamera terdeteksi di perangkat ini. Gunakan tombol "Gunakan Foto".';
+    }
+    if (n === 'NotReadableError' || n === 'TrackStartError') {
+      return 'Kamera sedang dipakai aplikasi/peramban lain. Tutup aplikasi itu lalu klik "Gunakan Kamera" lagi.';
+    }
+    if (n === 'OverconstrainedError') {
+      return 'Kamera tidak mendukung pengaturan yang diminta. Pilih kamera lain dari daftar.';
+    }
+    if (n === 'SecurityError' || n === 'PermissionDismissedError') {
+      return 'Peramban memblokir akses kamera (butuh HTTPS atau localhost).';
+    }
+    return (e && e.message) ? e.message : String(e);
+  }
+
   async function mulaiKameraKe(videoEl, deviceId) {
     hentikanKamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -477,7 +545,23 @@
     const videoCfg = deviceId
       ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
       : { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
-    const stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio: false });
+    let stream = null;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio: false });
+    } catch (ePertama) {
+      // NotReadableError sering transien (kamera baru saja dilepas aplikasi lain/
+      // driver) → beri kesempatan kedua setelah jeda singkat sebelum menyerah.
+      if (ePertama && (ePertama.name === 'NotReadableError' || ePertama.name === 'TrackStartError')) {
+        await new Promise(r => setTimeout(r, 900));
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio: false });
+        } catch (eKedua) {
+          throw new Error(pesanKameraError(eKedua));
+        }
+      } else {
+        throw new Error(pesanKameraError(ePertama));
+      }
+    }
     videoEl.srcObject = stream;
     videoEl.setAttribute('playsinline', 'true');
     await videoEl.play();
@@ -489,10 +573,53 @@
     if (kameraBerjalan && kameraBerjalan.stream) {
       kameraBerjalan.stream.getTracks().forEach(t => t.stop());
     }
+    // Bersihkan kotak scan dari overlay kamera (bila ada) — tidak boleh ada sisa bekas.
+    if (kameraBerjalan && kameraBerjalan.overlay) {
+      const ov = kameraBerjalan.overlay;
+      const ctx = ov.getContext && ov.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, ov.width, ov.height);
+    }
     deteksiLoopToken++;     // hentikan loop deteksi ringan kamera modal
     hasilDeteksiLive = null;
     bisuStatusLoop = false; // modal berikutnya menampilkan pesan loop kembali
     kameraBerjalan = null;
+  }
+
+  /** Gambar kotak deteksi + kerangka landmark pada overlay (mirror object-cover),
+   *  memetakan koordinat frame video ke ukuran tampilan area kamera — sama seperti
+   *  overlay modal absensi, sehingga "scan" kamera terlihat jelas oleh admin. */
+  function gambarScanKamera(ctx, hasilDeteksi, oW, oH, videoEl) {
+    if (!ctx || !hasilDeteksi || !videoEl) return;
+    const vw = videoEl.videoWidth || 640;
+    const vh = videoEl.videoHeight || 480;
+    const elW = videoEl.clientWidth || oW;
+    const elH = videoEl.clientHeight || oH;
+    if (!elW || !elH) return;
+    const s = Math.max(elW / vw, elH / vh);   // skala object-cover
+    const offX = (elW - vw * s) / 2;
+    const offY = (elH - vh * s) / 2;
+    const b = hasilDeteksi.detection && hasilDeteksi.detection.box;
+    const pts = hasilDeteksi.landmarks && hasilDeteksi.landmarks.positions;
+    if (!b && !pts) return;
+    if (b) {
+      ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+      ctx.strokeRect(offX + b.x * s, offY + b.y * s, b.width * s, b.height * s);
+    }
+    if (pts && pts.length) {
+      ctx.fillStyle = 'rgba(34,211,238,0.30)';
+      ctx.strokeStyle = 'rgba(34,211,238,0.50)';
+      ctx.lineWidth = 1;
+      for (let i = 0; i < pts.length; i++) {
+        const px = offX + pts[i].x * s;
+        const py = offY + pts[i].y * s;
+        ctx.beginPath(); ctx.arc(px, py, 1.2, 0, Math.PI * 2); ctx.fill();
+        if (i > 0) {
+          ctx.beginPath();
+          ctx.moveTo(offX + pts[i - 1].x * s, offY + pts[i - 1].y * s);
+          ctx.lineTo(px, py); ctx.stroke();
+        }
+      }
+    }
   }
 
   /**
@@ -505,8 +632,10 @@
    * hasil loop ini (jangan meluncurkan deteksi kedua yang bersaing di GPU/CPU).
    * Setelah wajah diambil, pesan loop dibungkam (bisuStatusLoop) agar tidak menimpa
    * pesan sukses; loop tetap berjalan supaya klik berikutnya instan.
+   * overlayEl (opsional): canvas tempat kotak deteksi + landmark digambar live —
+   * tanpa overlay ini modal registrasi tidak pernah menampilkan indikator visual.
    */
-  async function loopDeteksiKameraLive(videoEl, setHasil) {
+  async function loopDeteksiKameraLive(videoEl, setHasil, overlayEl) {
     const fa = window.faceapi;
     if (!fa || !videoEl) return;
     const token = ++deteksiLoopToken;
@@ -514,8 +643,24 @@
     const opts = new fa.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.2 });
     let terakhir = 0;
     let pernahTerdeteksi = false;
+    let gagalStreak = 0;          // frame gagal beruntun — di luarnya pesan error muncul
+    let pesanGagalDitampilkan = false;
+    if (overlayEl && kameraBerjalan) kameraBerjalan.overlay = overlayEl; // ikut dibersihkan saat kamera berhenti
     while (token === deteksiLoopToken && videoEl.isConnected && kameraBerjalan && kameraBerjalan.video === videoEl) {
       const now = Date.now();
+      // Sinkronkan ukuran + bersihkan overlay tiap iterasi → kotak hilang saat wajah tak terlihat.
+      let ctxOverlay = null;
+      let oW = 0, oH = 0;
+      if (overlayEl && overlayEl.isConnected) {
+        oW = videoEl.clientWidth || 0;
+        oH = videoEl.clientHeight || 0;
+        if (oW && oH) {
+          if (overlayEl.width !== oW) overlayEl.width = oW;
+          if (overlayEl.height !== oH) overlayEl.height = oH;
+          ctxOverlay = overlayEl.getContext('2d');
+          if (ctxOverlay) ctxOverlay.clearRect(0, 0, oW, oH);
+        }
+      }
       if (now - terakhir < 120) { await new Promise(r => setTimeout(r, 60)); continue; }
       terakhir = now;
       if (videoEl.readyState < 2) { await new Promise(r => setTimeout(r, 200)); continue; }
@@ -526,6 +671,9 @@
         const d = await fa.detectSingleFace(videoEl, opts).withFaceLandmarks(true);
         if (token !== deteksiLoopToken) break;
         if (d) {
+          gagalStreak = 0;
+          pesanGagalDitampilkan = false;
+          if (ctxOverlay) gambarScanKamera(ctxOverlay, d, oW, oH, videoEl);
           hasilDeteksiLive = { deteksi: d.detection, landmarks: d.landmarks, skor: d.score, waktu: Date.now() };
           if (!pernahTerdeteksi) {
             pernahTerdeteksi = true;
@@ -535,10 +683,24 @@
           pernahTerdeteksi = false;
           if (!bisuStatusLoop && typeof setHasil === 'function') setHasil('<i class="fa-solid fa-video mr-1"></i>Wajah sempat terdeteksi — arahkan wajah kembali ke kamera bila indikator hilang.', 'text-amber-200');
         }
-      } catch (e) { /* frame gagal diproses → lanjut ke frame berikutnya */ }
+      } catch (e) {
+        // Error frame TIDAK lagi ditelan senyap: dilaporkan ke konsol + pesan satu
+        // kali per rentetan gagal — kondisi bermasalah tidak lagi membuat modal diam.
+        gagalStreak++;
+        console.error('loopDeteksiKameraLive frame #' + gagalStreak + ':', e);
+        if (!pesanGagalDitampilkan && gagalStreak >= 5 && !bisuStatusLoop && typeof setHasil === 'function') {
+          pesanGagalDitampilkan = true;
+          setHasil('<i class="fa-solid fa-triangle-exclamation text-red-300 mr-1"></i>Gagal memproses frame kamera berulang kali. ' + fxEscape(e && e.message ? e.message : e), 'text-red-300');
+        }
+      }
       // Jeda singkat tetap diberikan walau deteksi lebih lambat dari interval: UI bernapas
       // dan beban inferensi tidak menumpuk saat perangkat lambat.
       await new Promise(r => setTimeout(r, 60));
+    }
+    // Bersihkan sisa gambar scan bila loop berhenti (modal/kamera ditutup).
+    if (overlayEl) {
+      const ctx = overlayEl.getContext && overlayEl.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, overlayEl.width, overlayEl.height);
     }
   }
 
@@ -600,6 +762,13 @@
     return Promise.race([pastikanModels(), timeout]);
   }
 
+  /** Muat model RINGAN dengan batas waktu (modal registrasi — lebih longgar: 25 dtk). */
+  function pastikanModelsRinganTepatWaktu(ms = 25000) {
+    const pesanTimeout = 'Memuat model wajah terlalu lama (lebih dari ' + Math.round(ms / 1000) + ' detik). Periksa koneksi dan pastikan folder "models" tersaji oleh server, lalu muat ulang halaman dan coba lagi.';
+    const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error(pesanTimeout)), ms));
+    return Promise.race([pastikanModelsRingan(), timeout]);
+  }
+
   async function kelolaWajah(nis) {
     const murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
       ? cacheAkunMurid.find(m => String(m.nis_nip) === String(nis))
@@ -635,7 +804,10 @@
             <span class="text-[9px] uppercase tracking-wider text-slate-400 shrink-0"><i class="fa-solid fa-camera-rotate mr-1"></i>Kamera</span>
             <select id="camera-select" class="bg-slate-800 border border-white/10 text-white text-[10px] rounded px-1.5 py-1 flex-1 min-w-0 focus:outline-none focus:border-cyan-500" title="Pilih kamera"><option value="">Kamera bawaan</option></select>
           </div>
-          <video id="wajah-video" autoplay playsinline muted class="w-full h-52 object-cover" style="transform:scaleX(-1)"></video>
+          <div class="relative">
+            <video id="wajah-video" autoplay playsinline muted class="w-full h-52 object-cover" style="transform:scaleX(-1)"></video>
+            <canvas id="wajah-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1)"></canvas>
+          </div>
           <div id="wajah-panduan" class="px-2 py-1.5 bg-slate-900/70 border-t border-white/10 text-[10px] leading-relaxed text-slate-300">
             <b class="text-cyan-300">Posisi &amp; perintah:</b> hadapkan wajah lurus ke kamera · cahaya cukup dari depan · jarak 40–80 cm · tanpa masker/kacamata gelap. Gerakan kepala boleh pelan; begitu indikator hijau muncul, klik <b>Deteksi dari Kamera</b>.
           </div>
@@ -662,9 +834,11 @@
         const btnSimpan  = cari('btn-wajah-simpan');
         const btnNonaktif = cari('btn-wajah-nonaktif');
         const kameraPilih = cari('camera-select');
+        const overlayEl = cari('wajah-overlay');
         // Guard: elemen modal yang hilang TIDAK boleh terjadi senyap.
         ['wajah-preview','wajah-hasil','btn-wajah-foto','btn-wajah-kamera',
-         'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan'].forEach((id) => {
+         'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan',
+         'wajah-overlay'].forEach((id) => {
           if (!cari(id)) console.error('[FaceWajah] Elemen #' + id + ' tidak ditemukan di dalam modal.');
         });
 
@@ -701,7 +875,7 @@
         if (btnKam) btnKam.disabled = true;
         setHasil('<i class="fa-solid fa-circle-notch fa-spin mr-1"></i>Menyiapkan model wajah…');
         try {
-          await pastikanModelsTepatWaktu(12000);
+          await pastikanModelsRinganTepatWaktu(25000);
           if (btnFoto) btnFoto.disabled = false;
           if (btnKam) btnKam.disabled = false;
           setHasil(st === 'aktif'
@@ -740,6 +914,7 @@
             return;
           }
           try {
+            setHasil('<i class="fa-solid fa-video mr-1"></i>Menunggu izin kamera — klik <b>Izinkan</b> bila peramban meminta…', 'text-amber-200');
             await mulaiKameraKe(videoEl);
             areaKam.classList.remove('hidden');
             areaKam.style.display = 'block';
@@ -756,10 +931,10 @@
                 const aktifId = kameraAktifDeviceId();
                 if (kameraPilih && aktifId) kameraPilih.value = aktifId;
               }
-              loopDeteksiKameraLive(videoEl, setHasil); // mulai ulang loop ringan utk kamera baru
+              loopDeteksiKameraLive(videoEl, setHasil, overlayEl); // mulai ulang loop ringan utk kamera baru
             });
             bisuStatusLoop = false;              // sesi kamera baru → status loop "bicara" lagi
-            loopDeteksiKameraLive(videoEl, setHasil); // deteksi ringan berjalan langsung — status memberi tahu saat wajah terlihat
+            loopDeteksiKameraLive(videoEl, setHasil, overlayEl); // deteksi ringan berjalan langsung — status memberi tahu saat wajah terlihat
             setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — atur posisi wajah. Indikator hijau muncul begitu wajah terdeteksi, lalu klik <b>Deteksi dari Kamera</b>.');
           } catch (e) {
             console.error(e);
@@ -787,6 +962,7 @@
                   if (aligned) {
                     const crop = await faWindow.extractFaces(videoEl, [aligned]);
                     if (crop && crop.length) {
+                      await pastikanNetRecok(); // net descriptor dimuat on-demand (bukan saat modal dibuka)
                       const d128 = await faWindow.nets.faceRecognitionNet.computeFaceDescriptor(crop[0]);
                       hasil = { descriptor: Array.from(d128), skor: hasilDeteksiLive.skor };
                       pakaiLoop = true;
