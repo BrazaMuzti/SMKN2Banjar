@@ -99,3 +99,27 @@ table {
 }
 .animate-blob { animation: blob 7s infinite; }
 .animation-delay-2000 { animation-delay: 2s; }
+
+/* [UPGRADE] Kartu "Ulang Tahun Anggota" Info Ekskul — kilau berjalan + kue berayun */
+.anim-ulangtahun { position: relative; overflow: hidden; }
+.anim-ulangtahun::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 35%, rgba(244, 114, 182, 0.25) 50%, transparent 65%);
+  animation: anim-ulangtahun-kilat 3.5s linear infinite;
+}
+@keyframes anim-ulangtahun-kilat {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+.anim-cake-boble {
+  display: inline-block;
+  animation: anim-cake-boble 1.2s ease-in-out infinite;
+  transform-origin: 50% 100%;
+}
+@keyframes anim-cake-boble {
+  0%, 100% { transform: translateY(0) rotate(-6deg); }
+  50% { transform: translateY(-4px) rotate(6deg); }
+}
