@@ -152,7 +152,7 @@ async function ambilDaftarEkskul() {
 /** Anggota ekskul: murid (tabel akun) yang kolom Ekstrakurikuler-nya memuat ekskul terpilih. */
 async function ambilAnggotaEkskul(ekskul) {
   if (!ekskul) return [];
-  const kolom = 'nis_nip, nama_lengkap, tingkat_kelas, jabatan, no_telepon, jabatan_ekskul_map';
+  const kolom = 'nis_nip, nama_lengkap, tingkat_kelas, jabatan, no_telepon, jabatan_ekskul_map, tgl_lahir';
   let { data, error } = await supaClient.from('akun')
     .select(kolom)
     .eq('tipe', 'murid')
@@ -160,7 +160,7 @@ async function ambilAnggotaEkskul(ekskul) {
   // Kolom jabatan_ekskul_map belum ada (migrasi 20260926 belum dijalankan) → coba tanpa kolom itu
   if (error && /jabatan_ekskul_map/i.test(error.message || '')) {
     ({ data, error } = await supaClient.from('akun')
-      .select('nis_nip, nama_lengkap, tingkat_kelas, jabatan, no_telepon')
+      .select('nis_nip, nama_lengkap, tingkat_kelas, jabatan, no_telepon, tgl_lahir')
       .eq('tipe', 'murid')
       .ilike('ekstrakurikuler', `%${ekskul}%`));
   }
@@ -1520,7 +1520,10 @@ async function renderDashboardMurid(container) {
           <button onclick="cetakKartuQrMurid()" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"><i class="fa-solid fa-print"></i> Cetak Kartu QR</button>
         </div>
         <div class="flex-1 w-full">
-          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold mb-1">Absensi Hari Ini</div>
+          <div class="flex items-center justify-between gap-2 mb-1 flex-wrap">
+            <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">Absensi Hari Ini</div>
+            <button onclick="changeMenu('absen-mandiri', 'Absensi Hari Ini')" class="bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1.5" title="Buka menu Absen Mandiri Siswa (face scan / captcha)"><i class="fa-solid fa-user-check"></i> Absensi Hari Ini</button>
+          </div>
           <div class="flex flex-wrap gap-1">${chipHariIni || '<span class="text-[10px] text-slate-500 italic">Hari libur / belum ada sesi absen.</span>'}</div>
         </div>
       </div>
@@ -3137,8 +3140,8 @@ function showModalEditAbsen(tanggal) {
       document.getElementById('btn-hadir-semua').addEventListener('click', () => document.querySelectorAll('.radio-h').forEach(r => { r.checked = true; r.dataset.on = '1'; }));
       const btnToggle = document.getElementById('btn-toggle-kunci-panel');
       if(btnToggle) { btnToggle.addEventListener('click', () => { const panel = document.getElementById('panel-kunci-admin'); if(panel.classList.contains('hidden')) { panel.classList.remove('hidden'); btnToggle.classList.add('bg-blue-600', 'text-white'); btnToggle.classList.remove('bg-white/10', 'text-slate-300'); } else { panel.classList.add('hidden'); btnToggle.classList.add('bg-white/10', 'text-slate-300'); btnToggle.classList.remove('bg-blue-600', 'text-white'); } }); }
-      document.getElementById('btn-qr-modal').addEventListener('click', () => { if (window.FaceWajah) window.FaceWajah.berhentiPindaiWajah(); const fwFace2 = document.getElementById('face-reader-wrap'); if (fwFace2) fwFace2.classList.add('hidden'); if (html5QrcodeScanner) { try { const prevClear = html5QrcodeScanner.clear && html5QrcodeScanner.clear(); if (prevClear && prevClear.catch) prevClear.catch(() => {}); } catch (e) {} html5QrcodeScanner = null; } document.getElementById('qr-reader-in-modal').classList.remove('hidden'); html5QrcodeScanner = new Html5QrcodeScanner("qr-reader-in-modal", { fps: 10, qrbox: {width: 200, height: 200} }); html5QrcodeScanner.render((nis) => { const radioH = document.querySelector(`input[name="absen_${nis}"][value="H"]`); if (radioH && !radioH.checked) { radioH.checked = true; radioH.dataset.on = '1'; const nama = listMuridKelas.find(m => m.nis == nis)?.nama || "Siswa"; const utt = new SpeechSynthesisUtterance(`Hadir, ${nama}`); utt.lang = 'id-ID';utt.rate = 1.4; window.speechSynthesis.speak(utt); const r = document.getElementById(`row-murid-${nis}`); r.classList.add('bg-green-900/50'); setTimeout(() => r.classList.remove('bg-green-900/50'), 1500); } }, () => {}); });
-      const tandaiHadirWajah = (nis) => { const radioH = document.querySelector(`input[name="absen_${nis}"][value="H"]`); if (!radioH) return false; const sudah = radioH.checked; if (!sudah) { radioH.checked = true; radioH.dataset.on = '1'; const nama = (listMuridKelas.find(m => m.nis == nis) || {}).nama || 'Siswa'; try { const utt = new SpeechSynthesisUtterance(`Hadir, ${nama}`); utt.lang = 'id-ID'; utt.rate = 1.4; window.speechSynthesis.speak(utt); } catch (e) {} const r = document.getElementById(`row-murid-${nis}`); if (r) { r.classList.add('bg-green-900/50'); setTimeout(() => r.classList.remove('bg-green-900/50'), 1500); } } return !sudah; };
+      document.getElementById('btn-qr-modal').addEventListener('click', () => { if (window.FaceWajah) window.FaceWajah.berhentiPindaiWajah(); const fwFace2 = document.getElementById('face-reader-wrap'); if (fwFace2) fwFace2.classList.add('hidden'); if (html5QrcodeScanner) { try { const prevClear = html5QrcodeScanner.clear && html5QrcodeScanner.clear(); if (prevClear && prevClear.catch) prevClear.catch(() => {}); } catch (e) {} html5QrcodeScanner = null; } document.getElementById('qr-reader-in-modal').classList.remove('hidden'); html5QrcodeScanner = new Html5QrcodeScanner("qr-reader-in-modal", { fps: 10, qrbox: {width: 200, height: 200} }); html5QrcodeScanner.render((nis) => { const radioH = document.querySelector(`input[name="absen_${nis}"][value="H"]`); if (radioH && !radioH.checked) { radioH.checked = true; radioH.dataset.on = '1'; const nama = listMuridKelas.find(m => m.nis == nis)?.nama || "Siswa"; showToast('success', 'Hadir — ' + nama); const utt = new SpeechSynthesisUtterance(`Hadir, ${nama}`); utt.lang = 'id-ID';utt.rate = 1.4; window.speechSynthesis.speak(utt); const r = document.getElementById(`row-murid-${nis}`); r.classList.add('bg-green-900/50'); setTimeout(() => r.classList.remove('bg-green-900/50'), 1500); } }, () => {}); });
+      const tandaiHadirWajah = (nis) => { const radioH = document.querySelector(`input[name="absen_${nis}"][value="H"]`); if (!radioH) return false; const sudah = radioH.checked; if (!sudah) { radioH.checked = true; radioH.dataset.on = '1'; const nama = (listMuridKelas.find(m => m.nis == nis) || {}).nama || 'Siswa'; showToast('success', 'Hadir — ' + nama); try { const utt = new SpeechSynthesisUtterance(`Hadir, ${nama}`); utt.lang = 'id-ID'; utt.rate = 1.4; window.speechSynthesis.speak(utt); } catch (e) {} const r = document.getElementById(`row-murid-${nis}`); if (r) { r.classList.add('bg-green-900/50'); setTimeout(() => r.classList.remove('bg-green-900/50'), 1500); } } return !sudah; };
       document.getElementById('btn-face-modal').addEventListener('click', () => { if (html5QrcodeScanner) { try { const prevClear2 = html5QrcodeScanner.clear && html5QrcodeScanner.clear(); if (prevClear2 && prevClear2.catch) prevClear2.catch(() => {}); } catch (e) {} html5QrcodeScanner = null; } const fwQr = document.getElementById('qr-reader-in-modal'); if (fwQr) fwQr.classList.add('hidden'); const fwFace = document.getElementById('face-reader-wrap'); if (!fwFace) return; fwFace.classList.remove('hidden'); if (window.FaceWajah) { window.FaceWajah.mulaiPindaiWajahAbsen(listMuridKelas, { wrap: fwFace, onMatch: tandaiHadirWajah }); } });
       // Pertemuan ke- otomatis: lanjut dari jurnal terakhir guru+kelas+mapel+tahun ini
       (async () => {
@@ -16267,6 +16270,68 @@ function infoPiketLihatLengkap() {
 // [FIX] deklarasi variabel filter sub-ekskul tab Profil & Anggota (dipakai gantiFilterSubAnggotaProfil & renderTabProfilEkskul)
 let filterSubAnggotaProfil = '';
 
+const HARI_PERHATIAN_ULTAH = 7; // peringatan ulang tahun mulai N hari sebelum hari-H
+
+/** Hitung ulang tahun terdekat tiap anggota ekskul (dari tgl_lahir). Urut: terdekat dulu, maks 12. */
+function hitungUlangTahunAnggota(anggota, jumlahHari) {
+  const now = new Date();
+  const thnIni = now.getFullYear();
+  const awalHariIni = new Date(thnIni, now.getMonth(), now.getDate(), 0, 0, 0); // ulang tahun HARI INI tetap terdeteksi
+  const hasil = [];
+  (anggota || []).forEach(a => {
+    const tgl = String(a.tgl_lahir || '').trim();
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(tgl);
+    if (!m) return;
+    const thn = +m[1], bln = +m[2], hri = +m[3];
+    if (bln < 1 || bln > 12 || hri < 1 || hri > 31) return;
+    const kandidat = [];
+    [thnIni, thnIni + 1].forEach(yy => {
+      const d = new Date(yy, bln - 1, hri, 0, 0, 0);
+      if (d.getTime() >= awalHariIni.getTime()) kandidat.push(d);
+    });
+    if (!kandidat.length) return;
+    const pro = kandidat[0];
+    const hari = Math.max(0, Math.round((pro.getTime() - now.getTime()) / 86400000));
+    if (hari <= (jumlahHari || HARI_PERHATIAN_ULTAH)) {
+      const umur = thnIni - thn - ((new Date(thnIni, bln - 1, hri).getTime() > now.getTime()) ? 1 : 0);
+      hasil.push({ a, tanggal: pro, hari, hariIni: hari === 0, umur });
+    }
+  });
+  return hasil.sort((x, y) => x.hari - y.hari).slice(0, 12);
+}
+
+/** Widget kartu peringatan ulang tahun anggota + tombol WhatsApp ucapan (teks terisi otomatis). */
+function htmlWidgetUlangTahun(ultah, ekskul) {
+  const judul = `<h3 class="text-[11px] font-bold text-pink-300 uppercase mb-2"><i class="fa-solid fa-cake-candles"></i> 🎂 Ulang Tahun Anggota (${HARI_PERHATIAN_ULTAH} Hari ke Depan)</h3>`;
+  if (!ultah || ultah.length === 0) {
+    return `<div class="bg-white/5 border border-white/10 rounded-xl p-3">${judul}
+      <p class="text-[10px] text-slate-400 italic">Tidak ada anggota yang berulang tahun dalam ${HARI_PERHATIAN_ULTAH} hari ke depan. 🎈</p>
+    </div>`;
+  }
+  const item = ultah.map(u => {
+    const nama = escapeHtml(u.a.nama_lengkap || '-');
+    const kelas = escapeHtml(u.a.tingkat_kelas || '-');
+    const tglStr = `${String(u.tanggal.getDate()).padStart(2, '0')} ${(arrBulan[u.tanggal.getMonth()] || '').slice(0, 3)} ${u.tanggal.getFullYear()}`;
+    const label = u.hariIni
+      ? '<span class="text-[9px] font-bold bg-pink-600 text-white px-1.5 py-0.5 rounded animate-pulse">HARI INI 🎉</span>'
+      : (u.hari === 1
+        ? '<span class="text-[9px] font-bold bg-amber-600 text-white px-1.5 py-0.5 rounded">BESOK</span>'
+        : `<span class="text-[9px] text-pink-200">${u.hari} hari lagi</span>`);
+    const pesan = `Assalamualaikum ${u.a.nama_lengkap || ''}, selamat ulang tahun yang ke-${u.umur} 🎂🎉. Semoga panjang umur, sehat, dan sukses selalu. Dari keluarga besar ${ekskul || 'ekstrakurikuler'} 💐`;
+    const wa = linkWA(u.a.no_telepon || '', pesan);
+    return `<div class="flex items-center justify-between bg-slate-800/70 border ${u.hariIni ? 'border-pink-500/50' : 'border-white/10'} rounded px-2 py-1.5 gap-2">
+      <div class="min-w-0">
+        <div class="text-[11px] text-slate-200 truncate">${nama} <span class="text-[9px] text-indigo-300">(${kelas})</span></div>
+        <div class="text-[9px] text-slate-400">${tglStr} · ${label}</div>
+      </div>
+      <div class="shrink-0">${wa}</div>
+    </div>`;
+  }).join('');
+  return `<div class="bg-white/5 border border-white/10 rounded-xl p-3">${judul}
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-1.5">${item}</div>
+  </div>`;
+}
+
 async function renderTabProfilEkskul() {
   const box = boxEkskul();
   const daftar = window.__daftarEkskul || [];
@@ -16317,6 +16382,7 @@ async function renderTabProfilEkskul() {
         ${htmlSubs}
       </div>
       <div id="anggota-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat anggota...</div>
+      <div id="ultah-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat peringatan ulang tahun...</div>
       <div id="jabatan-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat daftar jabatan...</div>
     </div>`;
   const anggota = (await ambilAnggotaEkskul(aktif))
@@ -16384,6 +16450,10 @@ async function renderTabProfilEkskul() {
           </div>`}</div>`;
   const boxA = document.getElementById('anggota-ekskul');
   if (boxA) boxA.outerHTML = html;
+
+  // ---- Peringatan ulang tahun anggota (beberapa hari sebelum → hari-H) ----
+  const boxU = document.getElementById('ultah-ekskul');
+  if (boxU) boxU.outerHTML = htmlWidgetUlangTahun(hitungUlangTahunAnggota(anggota, HARI_PERHATIAN_ULTAH), aktif);
 
   // [REQ 1a] Daftar Siswa Jabatan Ekstrakurikuler — anggota yang menjabat pada ekskul ini
   const berjabatan = anggota.filter(a => petaJab[String(a.nis_nip)]);

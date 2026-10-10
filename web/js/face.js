@@ -374,7 +374,11 @@
     Object.keys(peta || {}).forEach(nis => {
       const list = normalisasiDescriptorWajah(peta[nis] && peta[nis].descriptor);
       if (list && list.length) {
-        labeled.push(new fa.LabeledFaceDescriptors(String(nis), list));
+        // Wajib Float32Array — build face-api tertentu (mis. yang ter-bundle di
+        // file vendor untuk ponsel) menolak Array biasa di konstruktor
+        // LabeledFaceDescriptors ("expected descriptors to be an array of Float32Array").
+        const floatList = list.map(v => (v instanceof Float32Array) ? v : new Float32Array(v));
+        labeled.push(new fa.LabeledFaceDescriptors(String(nis), floatList));
       }
     });
     if (!labeled.length) return null;
@@ -1223,6 +1227,8 @@
         <div class="flex items-center gap-2 bg-slate-900/85 px-2 py-1">
           <span class="text-[9px] uppercase tracking-wider text-slate-400 shrink-0"><i class="fa-solid fa-camera-rotate mr-1"></i>Kamera</span>
           <select id="wajah-live-kamera" class="bg-slate-800 border border-white/10 text-white text-[10px] rounded px-1.5 py-1 flex-1 min-w-0 focus:outline-none focus:border-cyan-500" title="Pilih kamera"><option value="">Kamera bawaan</option></select>
+          <button type="button" id="btn-wajah-cam-env" class="shrink-0 bg-cyan-700 hover:bg-cyan-600 text-white text-[9px] font-bold px-2 py-1 rounded transition" title="Pakai kamera belakang">Belakang</button>
+          <button type="button" id="btn-wajah-cam-user" class="shrink-0 bg-slate-700 hover:bg-slate-600 text-white text-[9px] font-bold px-2 py-1 rounded transition" title="Pakai kamera depan (selfie)">Depan</button>
         </div>
         <div class="relative">
           <video id="wajah-live-video" autoplay playsinline muted class="w-full h-56 object-cover"></video>
@@ -1259,6 +1265,39 @@
       if (scanAktif) scanAktif.stream = streamBaru;
       if (streamLama) streamLama.getTracks().forEach(t => t.stop());
     };
+
+    // Toggle kamera depan/belakang (facingMode) — tanpa perlu memilih perangkat.
+    let facingMuka = 'environment';
+    const tandaiMukaAktif = () => {
+      const aktifUser = document.getElementById('btn-wajah-cam-user');
+      const aktifEnv = document.getElementById('btn-wajah-cam-env');
+      const sorot = (el, ya) => { if (el) { el.classList.toggle('ring-2', ya); el.classList.toggle('ring-yellow-400', ya); } };
+      sorot(aktifUser, facingMuka === 'user');
+      sorot(aktifEnv, facingMuka === 'environment');
+    };
+    const gantiMukaKamera = async (facing) => {
+      try {
+        const streamLama = scanAktif && scanAktif.stream;
+        const streamBaru = await bukaStreamKamera([facing, {}],
+          { width: { ideal: 1280 }, height: { ideal: 720 } });
+        if (!video || !video.isConnected) { streamBaru.getTracks().forEach(t => t.stop()); return; }
+        video.srcObject = streamBaru;
+        await video.play();
+        if (scanAktif) scanAktif.stream = streamBaru;
+        if (streamLama) streamLama.getTracks().forEach(t => t.stop());
+        facingMuka = facing;
+        tandaiMukaAktif();
+        setStatus('<i class="fa-solid fa-video mr-1"></i>Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif — hadapkan wajah ke kamera.', 'text-cyan-100');
+      } catch (e2) {
+        console.error('ganti muka kamera:', e2);
+        setStatus('<i class="fa-solid fa-triangle-exclamation mr-1"></i>' + fxEscape(e2 && e2.message ? e2.message : e2), 'text-amber-200');
+      }
+    };
+    const btnCamUser = document.getElementById('btn-wajah-cam-user');
+    const btnCamEnv = document.getElementById('btn-wajah-cam-env');
+    if (btnCamUser) btnCamUser.addEventListener('click', () => gantiMukaKamera('user'));
+    if (btnCamEnv) btnCamEnv.addEventListener('click', () => gantiMukaKamera('environment'));
+    tandaiMukaAktif();
 
     try {
       const nisList = [...new Set((listMurid || []).map(m => String(m.nis)).filter(Boolean))];
@@ -1486,11 +1525,18 @@
       }
 
       wrap.innerHTML = `
-        <div class="relative rounded-lg overflow-hidden border border-cyan-500 bg-black">
-          <video id="wajah-mandiri-video" autoplay playsinline muted class="w-full h-40 object-cover" style="transform:scaleX(-1)"></video>
-          <canvas id="wajah-mandiri-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1)"></canvas>
-          <div id="wajah-mandiri-live-status" class="absolute top-1.5 left-1.5 right-1.5 text-center text-[10px] font-bold text-white drop-shadow-lg bg-black/40 rounded px-2 py-0.5">Menyiapkan kamera...</div>
-          <button id="btn-wajah-mandiri-stop" class="absolute bottom-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow">Berhenti</button>
+        <div class="rounded-lg overflow-hidden border border-cyan-500 bg-black">
+          <div class="flex items-center gap-2 bg-slate-900/85 px-2 py-1">
+            <span class="text-[9px] uppercase tracking-wider text-slate-400 shrink-0"><i class="fa-solid fa-camera-rotate mr-1"></i>Kamera</span>
+            <button type="button" id="btn-mandiri-cam-user" class="shrink-0 bg-cyan-700 hover:bg-cyan-600 text-white text-[9px] font-bold px-2 py-1 rounded transition" title="Kamera depan (selfie)">Depan</button>
+            <button type="button" id="btn-mandiri-cam-env" class="shrink-0 bg-slate-700 hover:bg-slate-600 text-white text-[9px] font-bold px-2 py-1 rounded transition" title="Kamera belakang">Belakang</button>
+          </div>
+          <div class="relative">
+            <video id="wajah-mandiri-video" autoplay playsinline muted class="w-full h-40 object-cover" style="transform:scaleX(-1)"></video>
+            <canvas id="wajah-mandiri-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1)"></canvas>
+            <div id="wajah-mandiri-live-status" class="absolute top-1.5 left-1.5 right-1.5 text-center text-[10px] font-bold text-white drop-shadow-lg bg-black/40 rounded px-2 py-0.5">Menyiapkan kamera...</div>
+            <button id="btn-wajah-mandiri-stop" class="absolute bottom-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white text-[10px] font-bold px-2 py-0.5 rounded shadow">Berhenti</button>
+          </div>
         </div>`;
 
       const video = document.getElementById('wajah-mandiri-video');
@@ -1532,12 +1578,55 @@
 
       btnStop.addEventListener('click', () => berhentiPindaiWajah());
 
+      // ---- Kamera depan/belakang (facingMode) untuk Absen Mandiri ----
+      let facingMandiri = 'user';
+      const tandaiMukaMandiri = () => {
+        const u = document.getElementById('btn-mandiri-cam-user');
+        const e = document.getElementById('btn-mandiri-cam-env');
+        [u, e].forEach(el => { if (el) { el.classList.remove('ring-2'); el.classList.remove('ring-yellow-400'); } });
+        const t = facingMandiri === 'user' ? u : e;
+        if (t) { t.classList.add('ring-2'); t.classList.add('ring-yellow-400'); }
+      };
+      const gantiMukaMandiri = async (facing) => {
+        try {
+          const lama = scanAktif && scanAktif.stream;
+          const baru = await bukaStreamKamera([facing, {}], { width: { ideal: 640 }, height: { ideal: 480 } });
+          if (!video || !video.isConnected) { baru.getTracks().forEach(t => t.stop()); return; }
+          video.srcObject = baru;
+          await video.play();
+          if (scanAktif) scanAktif.stream = baru;
+          if (lama) lama.getTracks().forEach(t => t.stop());
+          facingMandiri = facing;
+          video.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+          if (overlay) overlay.style.transform = facing === 'user' ? 'scaleX(-1)' : 'none';
+          tandaiMukaMandiri();
+          setStatus('<i class="fa-solid fa-video mr-1"></i>Kamera ' + (facing === 'user' ? 'depan' : 'belakang') + ' aktif — hadapkan wajah lurus ke kamera ±40–80 cm.', 'text-cyan-100');
+        } catch (e2) {
+          console.error('gantiMukaMandiri:', e2);
+          setStatus('<i class="fa-solid fa-triangle-exclamation mr-1"></i>' + fxEscape(e2 && e2.message ? e2.message : e2), 'text-amber-200');
+        }
+      };
+      const btnCamUserM = document.getElementById('btn-mandiri-cam-user');
+      const btnCamEnvM = document.getElementById('btn-mandiri-cam-env');
+      if (btnCamUserM) btnCamUserM.addEventListener('click', () => gantiMukaMandiri('user'));
+      if (btnCamEnvM) btnCamEnvM.addEventListener('click', () => gantiMukaMandiri('environment'));
+      tandaiMukaMandiri();
+
       await loopDeteksiPindai({
         wrap, video, overlay, matcher,
         peta: { [nisS]: { descriptor: daftarSampel } },
         cooldown: {}, terdeteksi: {}, setStatus, nisList: [nisS],
         onMatch: (nisCocok) => {
           if (String(nisCocok) !== nisS) return false; // hanya identitas sendiri
+          // Notif popup + TTS (sama seperti QR Scan) — nama siswa dibacakan.
+          try {
+            fxToast('success', 'Hadir — ' + (nama || nisS));
+            if ('speechSynthesis' in window) {
+              const uc = new SpeechSynthesisUtterance('Absen mandiri berhasil. Selamat datang, ' + (nama || 'siswa'));
+              uc.lang = 'id-ID'; uc.rate = 1.35; uc.pitch = 1;
+              window.speechSynthesis.speak(uc);
+            }
+          } catch (e) { /* TTS/toast opsional */ }
           if (typeof onHasil === 'function') {
             try { onHasil(nisCocok); } catch (e) { console.error('onHasil pindaiWajahMandiri:', e); }
           }
