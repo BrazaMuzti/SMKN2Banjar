@@ -178,6 +178,38 @@ function petaJabatanAnggota(ekskul, anggota) {
   });
   return map;
 }
+
+/** [UPGRADE] Daftar anggota yang ulang tahun pada rentang [hari ini, +hariKe hari].
+ *  Kembali [{ a, mmdd, umurKe }] diurut tanggal terdekat; umurKe 0 bila tahun lahir
+ *  tidak valid. Tanggal 29-Feb diperlakukan sebagai 1-Mar di tahun non-kabisat.
+ *  mmdd = (bulan*100 + tanggal) dengan bulan 0=Januari (konsisten getMonth()). */
+function ulangTahunTerdekat(anggota, hariKe) {
+  if (!Array.isArray(anggota)) return [];
+  hariKe = Number(hariKe) > 0 ? Number(hariKe) : 7;
+  const kini = new Date();
+  const kodeKini = kini.getMonth() * 100 + kini.getDate();
+  const batas = new Date(kini.getTime() + hariKe * 86400000);
+  const kodeBatas = batas.getMonth() * 100 + batas.getDate();
+  const lintasTahun = kodeBatas < kodeKini;
+  const bulat = (t) => {
+    const d = new Date(t + 'T00:00:00');
+    return d.getMonth() * 100 + d.getDate();
+  };
+  return (anggota || [])
+    .filter(a => a && typeof a.tgl_lahir === 'string' && /\d{4}-\d{2}-\d{2}/.test(a.tgl_lahir))
+    .map(a => ({ a, mmdd: bulat(a.tgl_lahir), tahunLahir: parseInt(a.tgl_lahir.slice(0, 4), 10) }))
+    .filter(r => lintasTahun ? (r.mmdd >= kodeKini || r.mmdd <= kodeBatas) : (r.mmdd >= kodeKini && r.mmdd <= kodeBatas))
+    .map(r => {
+      let umurKe = 0;
+      if (r.tahunLahir >= 1900 && r.tahunLahir <= kini.getFullYear() + 1) {
+        const t = new Date(kini.getFullYear(), Math.floor(r.mmdd / 100), r.mmdd % 100);
+        if (t.getTime() < kini.getTime()) t.setFullYear(t.getFullYear() + 1);
+        umurKe = t.getFullYear() - r.tahunLahir;
+      }
+      return { a: r.a, mmdd: r.mmdd, umurKe };
+    })
+    .sort((x, y) => x.mmdd - y.mmdd);
+}
 async function petaWaliKelas() {
   if (cacheGuruWali.length === 0) {
     try {
@@ -15300,6 +15332,7 @@ async function renderTabInfoEkskul() {
         <div id="info-pengumuman-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengumuman...</div>
         <div id="info-agenda-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat agenda...</div>
       </div>
+      <div id="info-ulangtahun-ekskul" class="hidden"></div>
       <div id="info-piket-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat jadwal piket...</div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div id="info-pengurus-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengurus...</div>
@@ -15338,6 +15371,39 @@ async function renderTabInfoEkskul() {
   const subMap = await ambilSubAnggota(aktif);
   const pengurus = urutkanPengurusBakuEkskul(anggota.filter(a => (petaJab[String(a.nis_nip)] || '') || /Ekstra/i.test(a.jabatan || '')), petaJab);
   window.__cacheInfoEkskul = { anggota, petaJab, subs, subMap, aktif };
+
+  // [UPGRADE] Kartu "Ulang Tahun Anggota" — 7 hari ke depan, hari ini disorot besar.
+  (() => {
+    const boxUt = document.getElementById('info-ulangtahun-ekskul');
+    if (!boxUt) return;
+    const ulangThn = ulangTahunTerdekat(anggota, 7);
+    if (!ulangThn.length) return;
+    const kodeHariIni = new Date().getMonth() * 100 + new Date().getDate();
+    const tagBulan = (bb) => ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'][bb] || bb;
+    const hariIni = ulangThn.some(r => r.mmdd === kodeHariIni);
+    const cardUt = `
+  <div class="anim-ulangtahun rounded-xl p-3 ${hariIni ? 'border-2 border-pink-400/80 bg-gradient-to-r from-rose-900/50 via-pink-900/40 to-rose-900/50' : 'border-2 border-cyan-500/40 bg-gradient-to-r from-indigo-900/40 via-slate-800/50 to-indigo-900/40'}">
+    <h3 class="text-[11px] font-bold uppercase flex items-center gap-2 mb-2 ${hariIni ? 'text-pink-200' : 'text-cyan-200'}"><span class="text-base anim-cake-boble">🎂</span> Ulang Tahun Anggota <span class="text-[9px] font-normal normal-case opacity-80">(7 hari ke depan)</span></h3>
+    ${ulangThn.map(r => {
+      const a = r.a;
+      const uIni = r.mmdd === kodeHariIni;
+      const jab = petaJab[String(a.nis_nip)] || '';
+      const subsEx = (Array.isArray(subMap[String(a.nis_nip)]) ? subMap[String(a.nis_nip)] : []).join(', ');
+      const gabJab = [jab, subsEx].map(s => String(s || '').trim()).filter(Boolean);
+      const umurTeks = r.umurKe > 0 ? 'Ulang tahun ke-' + r.umurKe : 'Ulang tahun';
+      const teksUcapan = 'Assalamualaikum ' + (a.nama_lengkap || '') + ', selamat ' + umurTeks + ' (tanggal ' + tagBulan(Math.floor(r.mmdd / 100)) + ' ' + (r.mmdd % 100) + ') 🎂🎉. Semoga selalu sehat, sukses, dan semangat dalam ekstrakurikuler ' + aktif + '. — Pembina Ekstrakurikuler';
+      return `<div class="flex items-center gap-2 rounded-lg px-3 py-2 mb-1.5 ${uIni ? 'bg-pink-500/20 border border-pink-400/60' : 'bg-black/25 border border-white/10'}">
+        <span class="text-lg shrink-0">${uIni ? '🎉' : '🎂'}</span>
+        <div class="min-w-0 flex-1">
+          <div class="text-[11px] font-bold truncate ${uIni ? 'text-pink-100' : 'text-white'}">${escapeHtml(a.nama_lengkap || '-')} ${uIni ? '<span class="text-[8px] text-pink-300 font-bold ml-1 align-middle">HARI INI!</span>' : ''}</div>
+          <div class="text-[9px] text-slate-400 truncate">${tagBulan(Math.floor(r.mmdd / 100))} ${r.mmdd % 100} · ${umurTeks}${gabJab.length ? ' · ' + escapeHtml(gabJab.join(', ')) : ''}</div>
+        </div>
+        ${linkWA(a.no_telepon, teksUcapan)}
+      </div>`;
+    }).join('')}
+  </div>`;
+    boxUt.outerHTML = cardUt;
+  })();
 
   let agendaRows = [];
   try {
