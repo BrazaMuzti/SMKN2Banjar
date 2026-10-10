@@ -809,9 +809,20 @@
   }
 
   async function kelolaWajah(nis) {
-    const murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
+    let murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
       ? cacheAkunMurid.find(m => String(m.nis_nip) === String(nis))
       : null;
+    if (!murid) {
+      // Self-service (menu siswa "Data Akun Murid"): cache admin (cacheAkunMurid) tidak ada di sesi ini,
+      // ambil row murid langsung — RLS mengizinkan baris sendiri utk siswa, semua baris utk admin.
+      try {
+        const fa = fxSupabase();
+        const { data, error } = await fa.from('akun')
+          .select('nis_nip, nama_lengkap, tingkat_kelas, url_foto, wajah_descriptor, wajah_status')
+          .eq('nis_nip', String(nis)).eq('tipe', 'murid').maybeSingle();
+        if (!error && data) murid = data;
+      } catch (e) { console.error('[FaceWajah] ambil murid fallback:', e); }
+    }
     if (!murid) { fxToast('error', 'Data murid tidak ditemukan.'); return; }
 
     // Modal dibuka SEKETIKA (tanpa await di depan) — klik tombol tabel selalu diberi respons.
@@ -819,7 +830,11 @@
     // siap dipakai begitu model siap, tanpa menahan pembukaan modal.
     let sampelWajah = [];             // daftar descriptor (maks JUMLAH_SAMPEL_MAKS) — data multi-pose
     let skorSementara = 0;
-    const st = statusMurid(petaWajahCache, nis);
+    // Status: petaWajahCache sudah terisi penuh di sesi admin → dipakai dulu; di sesi siswa
+    // cache kosong → status dihitung dari kolom wajah row yang diambil (fallback) di atas.
+    const st = (petaWajahCache && petaWajahCache[String(nis)])
+      ? statusMurid(petaWajahCache, nis)
+      : (murid.wajah_descriptor ? (murid.wajah_status === 'nonaktif' ? 'nonaktif' : 'aktif') : 'belum');
     const nama = murid.nama_lengkap || '';
     const kelas = murid.tingkat_kelas || '';
 
