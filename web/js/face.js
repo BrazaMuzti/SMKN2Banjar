@@ -31,6 +31,7 @@
   const COOLDOWN_MS = 2500;         // jeda antar-matching orang yang sama
   const DETECT_INTERVAL_MS = 400;   // jeda antar-frame analisis saat pindai live (dulu 180 ms — terlalu berat utk ponsel kelas menengah)
   const JUMLAH_SAMPEL_MAKS = 6;     // jumlah maksimal sampel descriptor per murid (array-of-arrays, adopsi multi-pose repo referensi)
+  const HENTIAN_AUTO_MS = 8000;     // jeda masa tenggang utk siswa terlambat setelah SEMUA terdaftar terdeteksi → kamera henti otomatis
 
   let modelsLoaded = false;
   let modelsPromise = null;
@@ -495,6 +496,10 @@
     'tengadahkan sedikit ke atas',
     'mendekat (≈40 cm) dengan ekspresi netral'
   ];
+  const AUTO_POLL_MS = 900;         // jeda poll loop auto-mindai registrasi (hasilDeteksiLive segar ~2×/dtk)
+  const AUTO_JEDA_MS = 1500;        // jeda minimal antar percobaan/ambilan sampel auto
+  const POSO_MIN_JARAK = 0.25;      // sampel baru harus ≥ jarak Euclidean ini dari sampel terdekat (pose bervariasi)
+  const POSO_MIN_JARAK_FALLBACK = 0.12; // pose stagnan >4 dtk (semua percobaan mirip) → sampel tetap ditambah (anti-macet)
   let kameraBerjalan = null; // { stream, video } aktif saat ini
 
   /** Terjemahkan error getUserMedia menjadi pesan Indonesia yang bisa ditindaklanjuti. */
@@ -552,14 +557,20 @@
     throw new Error(pesanKameraError(errAkhir));
   }
 
-  async function mulaiKameraKe(videoEl, deviceId) {
+  async function mulaiKameraKe(videoEl, deviceId, potret) {
     hentikanKamera();
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       throw new Error('Kamera tidak tersedia di peramban ini (butuh HTTPS atau localhost).');
     }
+    // Registrasi wajah minta ORIENTASI POTRET (720×1280) — sensor kamera depan modern
+    // memberikan native atas-bawah; kamera 4:3 lama tetap berfungsi (`ideal` bukan
+    // `exact`: driver kembali ukuran terbaik). Crop 9:16 dikomputasi di snapshot sebagai fallback.
+    const ukuran = potret
+      ? { width: { ideal: 720 }, height: { ideal: 1280 } }
+      : { width: { ideal: 640 }, height: { ideal: 480 } };
     const videoCfg = deviceId
-      ? { deviceId: { exact: deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }
-      : { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } };
+      ? Object.assign({ deviceId: { exact: deviceId } }, ukuran)
+      : Object.assign({ facingMode: 'user' }, ukuran);
     let stream = null;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ video: videoCfg, audio: false });
@@ -830,6 +841,26 @@
     return Promise.race([pastikanModelsRingan(), timeout]);
   }
 
+  /** Rekam descriptor dari hasil loop ringan (hasilDeteksiLive) — jalur SAMA dengan klik
+   *  "Deteksi dari Kamera": landmarks.align → extractFaces → FaceRecognitionNet (net
+   *  descriptor dimuat on-demand). → { descriptor, skor } ATAU null bila hasil usang/gagal. */
+  async function descriptorDariHasilLive(videoEl, hasil) {
+    if (!hasil || !hasil.landmarks) return null;
+    try {
+      const faWindow = window.faceapi;
+      const aligned = hasil.landmarks.align(null, { useDlibAlignment: true });
+      if (!aligned) return null;
+      const crop = await faWindow.extractFaces(videoEl, [aligned]);
+      if (!crop || !crop.length) return null;
+      await pastikanNetRecok(); // net descriptor dimuat on-demand (bukan saat modal dibuka)
+      const d128 = await faWindow.nets.faceRecognitionNet.computeFaceDescriptor(crop[0]);
+      return { descriptor: Array.from(d128), skor: hasil.skor };
+    } catch (e) {
+      console.warn('descriptorDariHasilLive:', e); // box usang → jatuh ke one-shot / percobaan berikut
+      return null;
+    }
+  }
+
   async function kelolaWajah(nis) {
     let murid = (typeof cacheAkunMurid !== 'undefined' && cacheAkunMurid.find)
       ? cacheAkunMurid.find(m => String(m.nis_nip) === String(nis))
@@ -852,6 +883,10 @@
     // siap dipakai begitu model siap, tanpa menahan pembukaan modal.
     let sampelWajah = [];             // daftar descriptor (maks JUMLAH_SAMPEL_MAKS) — data multi-pose
     let skorSementara = 0;
+    let autoGambarAktif = true;       // Auto 6 pose: ON baku — sampel terekam otomatis bila wajah segar & pose bervariasi
+    let autoGambarToken = 0;          // membatalkan loop auto (modal ditutup / auto dibungkam)
+    let autoGambarLoper = false;      // loop auto sedang berjalan (mulai sekali; berhenti via flag/token)
+    let laatstAutoGambar = 0;         // timestamp sampel auto terakhir — jeda antar-shot
     // Status: petaWajahCache sudah terisi penuh di sesi admin → dipakai dulu; di sesi siswa
     // cache kosong → status dihitung dari kolom wajah row yang diambil (fallback) di atas.
     const st = (petaWajahCache && petaWajahCache[String(nis)])
@@ -869,7 +904,7 @@
             <p class="text-[10px] text-slate-400 font-mono">NIS ${nis} · ${fxEscape(kelas)}</p>
             <p class="mt-1">${BADGE_STATUS[st] || BADGE_STATUS.belum}</p>
           </div>
-          <img id="wajah-preview" class="w-24 h-28 rounded-lg object-cover bg-slate-700 border border-white/10" src="" alt="Foto siswa">
+          <img id="wajah-preview" class="w-24 h-42 rounded-lg object-cover bg-slate-700 border border-white/10" src="" alt="Foto siswa">
         </div>
         <div class="flex justify-center items-center gap-1.5 bg-black/60 p-1 rounded-lg mb-2">
           <button id="btn-wajah-foto" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white rounded px-2 py-1.5 text-[10px] font-bold transition" title="Gunakan foto siswa yang tersimpan di akun"><i class="fa-solid fa-image mr-1"></i>Gunakan Foto</button>
@@ -888,9 +923,12 @@
             <canvas id="wajah-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1); transform-origin:center"></canvas>
           </div>
           <div id="wajah-panduan" class="px-2 py-1.5 bg-slate-900/70 border-t border-white/10 text-[10px] leading-relaxed text-slate-300">
-            <b class="text-cyan-300">Posisi &amp; perintah:</b> hadapkan wajah lurus ke kamera · cahaya cukup dari depan · jarak 40–80 cm · tanpa masker/kacamata gelap. Gerakan kepala boleh pelan; begitu indikator hijau muncul, klik <b>Deteksi dari Kamera</b>.
+            <b class="text-cyan-300">Posisi &amp; perintah:</b> hadapkan wajah lurus ke kamera · cahaya cukup dari depan · jarak 40–80 cm · tanpa masker/kacamata gelap. Ganti pose saat indikator hijau — mode <b>Auto 6 pose</b> menambah sampel sendiri (6/6 lalu <b>Simpan Data Wajah</b>); klik <b>Deteksi dari Kamera</b> utk sampel manual.
           </div>
-          <button id="btn-wajah-tangkap" class="w-full bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-2.5 rounded-lg text-[11px] font-bold transition" title="Deteksi wajah dari frame kamera"><i class="fa-solid fa-camera mr-1"></i>Deteksi dari Kamera</button>
+          <div class="flex gap-2 items-stretch">
+              <button id="btn-wajah-tangkap" class="flex-1 bg-cyan-600 hover:bg-cyan-700 text-white px-3 py-2 rounded-lg text-[11px] font-bold transition" title="Deteksi wajah dari frame kamera (manual — setiap klik menambah sampel)"><i class="fa-solid fa-camera mr-1"></i>Deteksi dari Kamera</button>
+              <button type="button" id="btn-wajah-auto" class="shrink-0 bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold px-2 py-2 rounded-lg transition" title="Mindai 6 pose otomatis — sampel ditambah sendiri bila pose bervariasi (klik utk ON/OFF)"><i class="fa-solid fa-wand-magic mr-1"></i><span id="wajah-auto-label">Auto 6 pose: ON</span></button>
+            </div>
         </div>
         <div id="wajah-hasil" class="text-center text-[11px] min-h-[16px] mb-2 text-slate-300">${st === 'aktif' ? '<i class="fa-solid fa-circle-check text-green-400 mr-1"></i>Sudah terdaftar — menyimpan ulang akan menimpa wajah lama.' : 'Pilih sumber wajah (foto siswa atau kamera).'}</div>
         <div id="wajah-sampel-info" class="hidden mt-1 mb-2 text-[10px] text-slate-300 bg-slate-800/60 border border-white/10 rounded px-2 py-1.5 leading-relaxed"></div>
@@ -919,7 +957,7 @@
         // Guard: elemen modal yang hilang TIDAK boleh terjadi senyap.
         ['wajah-preview','wajah-hasil','btn-wajah-foto','btn-wajah-kamera',
          'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan',
-         'wajah-overlay','wajah-sampel-info'].forEach((id) => {
+         'wajah-overlay','wajah-sampel-info','btn-wajah-auto','wajah-auto-label'].forEach((id) => {
           if (!cari(id)) console.error('[FaceWajah] Elemen #' + id + ' tidak ditemukan di dalam modal.');
         });
 
@@ -1032,7 +1070,7 @@
           }
           try {
             setHasil('<i class="fa-solid fa-video mr-1"></i>Menunggu izin kamera — klik <b>Izinkan</b> bila peramban meminta…', 'text-amber-200');
-            await mulaiKameraKe(videoEl);
+            await mulaiKameraKe(videoEl, null, true); // potret 9:16 — crop rasio potret di snapshot
             areaKam.classList.remove('hidden');
             areaKam.style.display = 'block';
             btnKam.disabled = true;
@@ -1055,7 +1093,7 @@
             // lalu pasang listener ganti kamera → mulai ulang stream dengan device baru.
             await isiDaftarKamera(kameraPilih, async (deviceId) => {
               try {
-                await mulaiKameraKe(videoEl, deviceId);
+                await mulaiKameraKe(videoEl, deviceId, true); // potret juga utk kamera diganti
                 setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera diganti. Atur posisi wajah lalu klik <b>Deteksi dari Kamera</b>.');
               } catch (e) {
                 console.error(e);
@@ -1067,7 +1105,8 @@
             });
             bisuStatusLoop = false;              // sesi kamera baru → status loop "bicara" lagi
             loopDeteksiKameraLive(videoEl, setHasil, overlayEl); // deteksi ringan berjalan langsung — status memberi tahu saat wajah terlihat
-            setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — atur posisi wajah. Indikator hijau muncul begitu wajah terdeteksi, lalu klik <b>Deteksi dari Kamera</b>.');
+            mulaiAutoGambar(); // auto-mindai 6 pose berjalan langsung (flag ON baku; klik tombol Auto utk beralih manual)
+            setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — atur posisi wajah. Mode <b>Auto 6 pose</b> menambah sampel sendiri saat pose bervariasi (klik <b>Deteksi dari Kamera</b> utk manual).');
           } catch (e) {
             console.error(e);
             setHasil(fxEscape(e.message || e), 'text-red-300');
@@ -1084,26 +1123,14 @@
             //    tanpa FaceRecognitionNet → segar dalam 1–3 dtk bahkan di perangkat lambat.
             //    Descriptor dihitung SEKALI saat klik, MEREKAPLIKASI jalur internal
             //    `.withFaceDescriptor()`: landmarks.align → extractFaces → FaceRecognitionNet.
-            const faWindow = window.faceapi;
             const batasTunggu = Date.now() + 4000;
             while (Date.now() < batasTunggu) {
               const segar = hasilDeteksiLive && (Date.now() - hasilDeteksiLive.waktu) < 3500;
-              if (segar && faWindow && hasilDeteksiLive.landmarks) {
-                try {
-                  const aligned = hasilDeteksiLive.landmarks.align(null, { useDlibAlignment: true });
-                  if (aligned) {
-                    const crop = await faWindow.extractFaces(videoEl, [aligned]);
-                    if (crop && crop.length) {
-                      await pastikanNetRecok(); // net descriptor dimuat on-demand (bukan saat modal dibuka)
-                      const d128 = await faWindow.nets.faceRecognitionNet.computeFaceDescriptor(crop[0]);
-                      hasil = { descriptor: Array.from(d128), skor: hasilDeteksiLive.skor };
-                      pakaiLoop = true;
-                      break;
-                    }
-                  }
-                } catch (e) {
-                  console.warn('btnTangkap descriptor:', e); // box usang → jatuh ke one-shot
-                }
+              if (segar) {
+                // Jalur descriptor SAMA (landmarks.align → extractFaces → FaceRecognitionNet)
+                // dibagi ke helper — di-reuse oleh auto-mindai 6 pose.
+                const h = await descriptorDariHasilLive(videoEl, hasilDeteksiLive);
+                if (h) { hasil = h; pakaiLoop = true; break; }
               }
               await new Promise(r => setTimeout(r, 90));
             }
@@ -1157,12 +1184,22 @@
           }
           sampelWajah.push(Array.isArray(hasil.descriptor) ? Array.from(hasil.descriptor) : hasil.descriptor);
           skorSementara = hasil.skor;
+          // Snapshot PROPORASI POTRET 9:16 — frame kamera (mis. 640×480 4:3) dicrop tengah
+          // ke rasio potret penuh dan di-output 900×1600 (format ID foto). Pratinjau
+          // wajah-preview memakai rasio sama → WYSIWYG; data JS yang dikirim pun potret.
+          const vwSnap = videoEl.videoWidth || 640;
+          const vhSnap = videoEl.videoHeight || 480;
+          const RASIO_POTRET = 9 / 16;
+          let swSnap = vwSnap, shSnap = vhSnap, sxSnap = 0, sySnap = 0;
+          if (vwSnap / vhSnap > RASIO_POTRET) { swSnap = Math.round(vhSnap * RASIO_POTRET); sxSnap = Math.round((vwSnap - swSnap) / 2); }
+          else { shSnap = Math.round(vwSnap / RASIO_POTRET); sySnap = Math.round((vhSnap - shSnap) / 2); }
+          const OUT_W_SNAP = 900, OUT_H_SNAP = 1600;
           const canvas = document.createElement('canvas');
-          canvas.width = videoEl.videoWidth || 640; canvas.height = videoEl.videoHeight || 480;
-          canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+          canvas.width = OUT_W_SNAP; canvas.height = OUT_H_SNAP;
+          canvas.getContext('2d').drawImage(videoEl, sxSnap, sySnap, swSnap, shSnap, 0, 0, OUT_W_SNAP, OUT_H_SNAP);
           const snap = cari('wajah-preview');
           if (snap) {
-            if (snap.tagName !== 'IMG') snap.outerHTML = '<img id="wajah-preview" class="w-24 h-28 rounded-lg object-cover bg-slate-700 border border-white/10" alt="Foto siswa">';
+            if (snap.tagName !== 'IMG') snap.outerHTML = '<img id="wajah-preview" class="w-24 h-42 rounded-lg object-cover bg-slate-700 border border-white/10" alt="Foto siswa">';
             const imgSnap = cari('wajah-preview');
             if (imgSnap) imgSnap.src = canvas.toDataURL('image/jpeg', 0.85);
           }
@@ -1180,6 +1217,68 @@
           }
           setHasil('<i class="fa-solid fa-check text-green-400 mr-1"></i>' + pesanSampel + ' <b>Simpan Data Wajah</b> atau klik Deteksi untuk pose berikutnya.', 'text-green-300');
           aktifkanSimpan();
+        });
+
+        // ===== AUTO-MINDAI 6 pose — hasil loop ringan (hasilDeteksiLive) dipakai tanpa klik =====
+        const btnAuto = cari('btn-wajah-auto');
+        const lavelAuto = cari('wajah-auto-label');
+        const setLavelAuto = () => { if (lavelAuto) lavelAuto.textContent = 'Auto 6 pose: ' + (autoGambarAktif ? 'ON' : 'OFF'); };
+        setLavelAuto();
+        const mulaiAutoGambar = async () => {
+          if (autoGambarLoper || !areaKam || !areaKam.isConnected || !videoEl.srcObject) return;
+          autoGambarLoper = true;
+          const token = autoGambarToken;
+          let tSjanse = 0; // sejak percobaan sampel diTOLAK (pose masih mirip) — utk fallback stagnan >4 dtk
+          while (autoGambarAktif && token === autoGambarToken && areaKam.isConnected
+              && sampelWajah.length < JUMLAH_SAMPEL_MAKS) {
+            const t = Date.now();
+            const segar = hasilDeteksiLive && (t - hasilDeteksiLive.waktu) < 1200;
+            if (segar && t - laatstAutoGambar >= AUTO_JEDA_MS) {
+              const h = await descriptorDariHasilLive(videoEl, hasilDeteksiLive);
+              if (h) {
+                const jarakMin = sampelWajah.length === 0
+                  ? 999
+                  : Math.min.apply(null, sampelWajah.map(s => jarakEuclidean(s, h.descriptor)));
+                const stagnan = tSjanse && (t - tSjanse) >= 4000;
+                const tambah = jarakMin >= POSO_MIN_JARAK || (stagnan && jarakMin >= POSO_MIN_JARAK_FALLBACK);
+                if (tambah) {
+                  sampelWajah.push(Array.isArray(h.descriptor) ? Array.from(h.descriptor) : h.descriptor);
+                  skorSementara = h.skor;
+                  laatstAutoGambar = t;
+                  tSjanse = 0;
+                  renderInfoSampel();
+                  aktifkanSimpan();
+                  if (sampelWajah.length >= JUMLAH_SAMPEL_MAKS) {
+                    autoGambarAktif = false;
+                    setLavelAuto();
+                    setHasil('<i class="fa-solid fa-circle-check text-green-400 mr-1"></i><b>' + JUMLAH_SAMPEL_MAKS + '/' + JUMLAH_SAMPEL_MAKS + ' sampel terekam (auto)</b> — klik <b>Simpan Data Wajah</b>.', 'text-green-300');
+                  } else {
+                    setHasil('<i class="fa-solid fa-camera text-cyan-300 mr-1"></i>Auto-mindai: sampel <b>' + sampelWajah.length + '/' + JUMLAH_SAMPEL_MAKS + '</b> — pose berikut: <i class="text-cyan-200">' + TIPS_POSE[sampelWajah.length % TIPS_POSE.length] + '</i>.', 'text-green-300');
+                  }
+                } else {
+                  tSjanse = t; // pose terlalu mirip — siswa ganti pose; bila stagnan >4 dtk → fallback
+                }
+              }
+            }
+            await new Promise(r => setTimeout(r, AUTO_POLL_MS));
+          }
+          autoGambarLoper = false;
+        };
+        if (btnAuto) btnAuto.addEventListener('click', () => {
+          if (autoGambarAktif) {
+            autoGambarAktif = false;
+            setLavelAuto();
+            setHasil('<i class="fa-solid fa-hand mr-1"></i>Auto-mindai DINONAKTIFKAN — klik <b>Deteksi dari Kamera</b> utk sampel manual.', 'text-amber-200');
+            return;
+          }
+          if (!videoEl.srcObject) {
+            setHasil('Nyalakan kamera dulu (<b>Gunakan Kamera</b>) — auto-mindai butuh stream aktif.', 'text-amber-300');
+            return;
+          }
+          autoGambarAktif = true;
+          setLavelAuto();
+          setHasil('<i class="fa-solid fa-wand-magic text-cyan-300 mr-1"></i>Auto-mindai AKTIF — ganti pose pelan saat indikator hijau; sampel terekam sendiri.', 'text-green-300');
+          mulaiAutoGambar();
         });
 
         if (btnSimpan) btnSimpan.addEventListener('click', async () => {
@@ -1218,7 +1317,11 @@
           }
         });
       },
-      willClose: () => hentikanKamera()
+      willClose: () => {
+        autoGambarAktif = false;
+        autoGambarToken++; // membatalkan loop auto bila modal ditutup
+        hentikanKamera();
+      }
     }).catch(() => {}).finally(hentikanKamera);
   }
 
@@ -1503,12 +1606,11 @@
       }
 
       const cooldown = {}; // nis → last match timestamp
-      const terdeteksi = new Set(); // nis yang susah cocok — beri tahu sekali
       if (btnStop) btnStop.addEventListener('click', () => berhentiPindaiWajah());
 
       setStatus('<i class="fa-solid fa-video mr-1"></i>Kamera menyala — hadapkan wajah ke kamera.');
 
-      await loopDeteksiPindai({ wrap, video, overlay, matcher, peta, cooldown, terdeteksi, setStatus, onMatch, nisList });
+      await loopDeteksiPindai({ wrap, video, overlay, matcher, peta, cooldown, setStatus, onMatch, nisList });
     } catch (e) {
       console.error('mulaiPindaiWajahAbsen:', e);
       const pesanKamera = /notallowederror|permissiondenied|denied/i.test(String((e && e.message) || e))
@@ -1523,12 +1625,20 @@
    *  inputSize 224 (bukan 320) + jeda DETECT_INTERVAL_MS (400 ms): beban inferensi
    *  per frame turun drastis → perangkat menengah tidak panas/lag dan deteksi tidak
    *  menumpuk. SEMUA sampel per NIS diikutkan via LabeledFaceDescriptors (min-distance).
+   *  AUTO-HENTIAN: bila SEMUA siswa terdaftar (targhe = jumlah label peta, min 2 — mode
+   *  mandiri single-label tidak terpengaruh) sudah cocok, countdown masa tenggang HENTIAN_AUTO_MS;
+   *  siswa terlambat masih bisa cocok & reset countdown → loop berhenti otomatis
+   *  (o.onSemuaCocok = hook opsional utk caller, dipanggil saat break).
    *  Catatan: `cooldown` dibaca dari `o.cooldown` (versi lama memakai nama `cooldown`
    *  yang tidak terdefinisi → ReferenceError begitu pertama kali cocok). */
   async function loopDeteksiPindai(o) {
     const fa = window.faceapi;
     const opts = new fa.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.2 });
     const cooldown = o.cooldown || {};        // nis → timestamp cocok terakhir
+    const targheCocok = (o.peta && typeof o.peta === 'object') ? Object.keys(o.peta).length : 0;
+    const telahCocok = new Set();             // nis unik yang sudah cocok — utk deteksi "semua terdaftar ✓"
+    let semuaSelamate = false;                // semua terdaftar cocok → countdown masa tenggang siswa terlambat
+    let sejakSemua = 0;
     let terakhir = 0;
     let hadirCount = 0;
 
@@ -1545,6 +1655,15 @@
 
       // Batas kecepatan deteksi
       const now = Date.now();
+      // AUTO-HENTIAN: countdown masa tenggang lewat → loop berhenti otomatis (break; hook opsional
+      // o.onSemuaCocok utk caller). Check dijalankan tiap iterasi, sebelum rate-limit.
+      if (semuaSelamate && scanAktif && !scanAktif.hentikan && o.wrap.isConnected
+          && now - sejakSemua >= HENTIAN_AUTO_MS) {
+        if (typeof o.onSemuaCocok === 'function') {
+          try { o.onSemuaCocok(); } catch (e) { console.error('onSemuaCocok:', e); }
+        }
+        break;
+      }
       if (now - terakhir < DETECT_INTERVAL_MS) {
         await new Promise(r => setTimeout(r, DETECT_INTERVAL_MS));
         continue;
@@ -1595,7 +1714,19 @@
           if (typeof o.onMatch === 'function') {
             try { baruDitandai = o.onMatch(nis) !== false; } catch (e) { baruDitandai = true; }
           }
+          telahCocok.add(nis);
           if (baruDitandai) hadirCount += 1;
+          // Semua siswa terdaftar sudah cocok (min 2 label — 1 label = mode mandiri, hentian
+          // manual cukup) → countdown tenggang; match berikutnya (siswa terlambat) reset countdown.
+          if (targheCocok >= 2 && telahCocok.size >= targheCocok) {
+            if (!semuaSelamate) {
+              semuaSelamate = true;
+              sejakSemua = now; // mulai countdown tenggang — siswa terlambat bisa reset
+              o.setStatus('<i class="fa-solid fa-circle-check mr-1" style="color:#4ade80"></i>Semua ' + targheCocok + ' siswa terdaftar terdeteksi ✓ — kamera henti otomatis bila tak ada siswa lain (±' + Math.round(HENTIAN_AUTO_MS / 1000) + ' dtk)…', 'text-green-100');
+            } else {
+              sejakSemua = now; // siswa terlambat masuk → reset countdown
+            }
+          }
           ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 3; ctx.setLineDash([]);
           ctx.strokeRect(bx, by, b.width * s, b.height * s);
           o.setStatus('<i class="fa-solid fa-circle-check mr-1" style="color:#4ade80"></i>Cocok! ' + fxEscape(nis) + ' — Hadir (' + hadirCount + '×) · kemiripan ~' + persenKemiripan(best.distance) + '%.', 'text-green-100');
@@ -1772,7 +1903,7 @@
       await loopDeteksiPindai({
         wrap, video, overlay, matcher,
         peta: { [nisS]: { descriptor: daftarSampel } },
-        cooldown: {}, terdeteksi: {}, setStatus, nisList: [nisS],
+        cooldown: {}, setStatus, nisList: [nisS],
         onMatch: (nisCocok) => {
           if (String(nisCocok) !== nisS) return false; // hanya identitas sendiri
           // Notif popup + TTS (sama seperti QR Scan) — nama siswa dibacakan.
