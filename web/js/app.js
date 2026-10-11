@@ -3255,6 +3255,18 @@ function showModalEditAbsen(tanggal) {
         Swal.showValidationMessage('Pertemuan ke- harus berupa angka minimal 1.'); return false;
       }
       return { absenList: absenPayload, nisDihapus, ketMasal: inputEl ? inputEl.value : "", jurnal: isiJurnal ? jurnalRaw : null };
+    },
+    willClose: () => {
+      // Kamera dilepas penuh saat modal ditutup. Scanner QR (html5-qrcode) TIDAK
+      // menutup kamera otomatis — stream yang masih millikki bisa diblokir modal
+      // lain dengan error "Kamera sedang dipakai… NotReadable".
+      if (html5QrcodeScanner) {
+        try { const p = html5QrcodeScanner.clear && html5QrcodeScanner.clear(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* opsional */ }
+        html5QrcodeScanner = null;
+      }
+      if (window.FaceWajah) { try { window.FaceWajah.berhentiPindaiWajah(); } catch (e) { /* opsional */ } }
+      const fwFaceW = document.getElementById('face-reader-wrap');
+      if (fwFaceW) fwFaceW.classList.add('hidden');
     }
   }).then((res) => {
     if (!res.isConfirmed || !res.value) return;
@@ -6387,12 +6399,14 @@ function openPenilaianMasal() {
           <div class="flex gap-1.5">
             <button type="button" id="btn-urut-masal" class="text-[9px] bg-white/10 px-1.5 py-1 rounded hover:bg-white/20 text-white transition" title="Balik urutan daftar siswa"><i class="fa-solid fa-arrow-down-a-z mr-1"></i>A-Z</button>
             <button type="button" id="btn-qr-masal-nilai" class="text-[9px] bg-blue-600 px-1.5 py-1 rounded hover:bg-blue-700 text-white shadow-md transition">Scan QR</button>
+            <button type="button" id="btn-face-masal-nilai" class="text-[9px] bg-cyan-600 px-1.5 py-1 rounded hover:bg-cyan-700 text-white shadow-md transition">Face Scan</button>
             <button type="button" id="btn-toggle-masal" class="text-[9px] bg-white/10 px-1.5 py-1 rounded hover:bg-white/20 text-white transition">Pilih Semua</button>
           </div>
         </div>
         
         <!-- Ukuran Canvas QR diperkecil -->
         <div id="qr-reader-nilai-masal" class="hidden border-2 border-blue-500/50 rounded-lg mb-2 overflow-hidden shadow-inner bg-black/50" style="max-width: 180px; margin: 0 auto;"></div>
+        <div id="face-reader-nilai-masal" class="hidden rounded-lg overflow-hidden mb-2"></div>
         
         <div class="max-h-[35vh] overflow-y-auto custom-scrollbar bg-black/20 rounded border border-white/10 p-1 scroll-smooth" id="container-chk-masal"></div>
       </div>
@@ -6493,6 +6507,7 @@ function openPenilaianMasal() {
           if(qrContainer.classList.contains('hidden')) {
             qrContainer.classList.remove('hidden');
             scannerNilai = new Html5QrcodeScanner("qr-reader-nilai-masal", { fps: 10, qrbox: {width: 120, height: 120} });
+            window.__scannerNilai = scannerNilai;
             scannerNilai.render((nis) => {
               const chk = popup.querySelector(`#chk-masal-${nis}`);
               if (chk && !chk.checked) {
@@ -6519,9 +6534,71 @@ function openPenilaianMasal() {
             }, () => {});
           } else {
             qrContainer.classList.add('hidden');
-            if(scannerNilai) { scannerNilai.clear(); scannerNilai = null; }
+            if(scannerNilai) { scannerNilai.clear(); scannerNilai = null; window.__scannerNilai = null; }
           }
         };
+
+        // [REQ] Face Scan — sama seperti tombol Face di modal absensi: wajah yang cocok
+        // dengan akun murid (kamera live) → ceklis siswa ditandai + TTS + fokus kolom.
+        // Agnostik kategori (Pengetahuan/Keterampilan/Sikap/Ekstrakurikuler A-D).
+        const tandaiNilaiScan = (nis) => {
+          const nisS = String(nis);
+          const chk = popup.querySelector(`#chk-masal-${nisS}`);
+          if (!chk) return false;
+          const sudah = chk.checked;
+          if (!sudah) {
+            chk.checked = true;
+            const lbl = popup.querySelector(`#lbl-masal-${nisS}`);
+            if (lbl) {
+              lbl.classList.add('bg-green-900/60');
+              lbl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              setTimeout(() => lbl.classList.remove('bg-green-900/60'), 1500);
+            }
+            // TTS Cepat Bahasa Indonesia (nama siswa dibacakan) + auto-focus kolom.
+            try {
+              const namaM = listMuridKelas.find(m => String(m.NIS) === nisS)?.["Nama Lengkap"] || "Siswa";
+              const utt = new SpeechSynthesisUtterance(namaM);
+              utt.lang = 'id-ID'; utt.rate = 1.4;
+              window.speechSynthesis.speak(utt);
+            } catch (e) { /* TTS opsional */ }
+            const inp = popup.querySelector(`.input-masal-individu[data-nis="${nisS}"]`);
+            if (inp) { inp.focus(); if (typeof inp.select === 'function') inp.select(); }
+          }
+          return !sudah;
+        };
+
+        let faceNilaiAktif = false;
+        popup.querySelector('#btn-face-masal-nilai').onclick = () => {
+          const fwFaceN = popup.querySelector('#face-reader-nilai-masal');
+          if (faceNilaiAktif) {
+            faceNilaiAktif = false;
+            fwFaceN.classList.add('hidden');
+            fwFaceN.innerHTML = '';
+            if (window.FaceWajah) window.FaceWajah.berhentiPindaiWajah();
+            return;
+          }
+          // Face scan menyala → QR scanner tidak boleh dipakai kamera bersamaan.
+          const qrContainerN = popup.querySelector('#qr-reader-nilai-masal');
+          if (!qrContainerN.classList.contains('hidden')) {
+            qrContainerN.classList.add('hidden');
+            if (window.__scannerNilai) { try { window.__scannerNilai.clear(); } catch (e) {} window.__scannerNilai = null; }
+          }
+          if (!window.FaceWajah || typeof window.FaceWajah.mulaiPindaiWajahAbsen !== 'function') {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'error', title: 'Library wajah belum siap — muat ulang halaman.', showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
+            return;
+          }
+          faceNilaiAktif = true;
+          fwFaceN.classList.remove('hidden');
+          window.FaceWajah.mulaiPindaiWajahAbsen(
+            listMuridKelas.map(function (m) { return { nis: String(m.NIS), nama: String(m["Nama Lengkap"] || '') }; }),
+            { wrap: fwFaceN, onMatch: tandaiNilaiScan }
+          );
+        };
+    },
+    willClose: () => {
+      // Kamera dilepas penuh saat modal ditutup (Simpan/Batal) — QR & face stream.
+      if (window.__scannerNilai) { try { window.__scannerNilai.clear(); } catch (e) {} window.__scannerNilai = null; }
+      if (window.FaceWajah) { try { window.FaceWajah.berhentiPindaiWajah(); } catch (e) {} }
     }
   }).then((res) => {
       if (res.isConfirmed) {
