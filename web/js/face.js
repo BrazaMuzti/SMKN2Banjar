@@ -550,7 +550,7 @@
     const ikon = POSE_IKON[(idx || 0) % POSE_IKON.length];
     const arah = POSE_ARAH[(idx || 0) % POSE_ARAH.length];
     overlayEl.innerHTML =
-      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;background:rgba(0,0,0,0.18);border:2px dashed rgba(255,255,255,0.45);border-radius:12px">' +
+      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;background:rgba(0,0,0,0.10);border:1.5px dashed rgba(255,255,255,0.32);border-radius:12px">' +
         '<div style="font-size:30px;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.6);animation:posePulse 1.6s ease-in-out infinite">' + ikon + '</div>' +
         '<div style="margin-top:6px;font-size:10px;font-weight:900;letter-spacing:2px;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.8)">' + arah + '</div>' +
       '</div>';
@@ -975,7 +975,7 @@
           <div class="relative h-36 overflow-hidden">
             <video id="wajah-video" autoplay playsinline muted class="w-full h-full object-cover" style="transform:scaleX(-1); transform-origin:center"></video>
             <canvas id="wajah-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1); transform-origin:center"></canvas>
-            <div id="wajah-pose-box" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1); transform-origin:center"></div>
+            <div id="wajah-pose-box" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:none; transform-origin:center"></div>
           </div>
           <div id="wajah-panduan" class="px-2 py-1.5 bg-slate-900/70 border-t border-white/10 text-[10px] leading-relaxed text-slate-300">
             <b class="text-cyan-300">Posisi &amp; perintah:</b> hadapkan wajah lurus ke kamera · cahaya cukup dari depan · jarak 40–80 cm · tanpa masker/kacamata gelap. Ganti pose saat indikator hijau — mode <b>Auto 6 pose</b> menambah sampel sendiri (6/6 lalu <b>Simpan Data Wajah</b>); klik <b>Deteksi dari Kamera</b> utk sampel manual.
@@ -1056,9 +1056,19 @@
           if (btnKosong) btnKosong.addEventListener('click', () => {
             sampelWajah = [];
             skorSementara = 0;
+            laatstAutoGambar = 0;
+            // [B3] Hapus semua → mulai /langkah 0 dari awal: kamera auto-mindai dihidupkan
+            // kembali, pose pertama diucapkan ulang & overlay panah di-reset (progres di awal).
+            autoGambarAktif = true;
+            setLavelAuto();
+            const pdBox = popup.querySelector('#wajah-pose-box');
+            if (pdBox) updateOverlayPose(pdBox, 0);
+            ucapkanTTS('Mulai. ' + TIPS_POSE[0] + '.');
             renderInfoSampel();
             aktifkanSimpan();
             setHasil('<i class="fa-solid fa-broom text-amber-300 mr-1"></i>Sampel dibersihkan. Deteksi dari kamera lagi atau gunakan foto.', 'text-amber-200');
+            // Hidupkan ulang loop auto bila kamera masih menyala (mode ON baku).
+            if (videoEl && videoEl.srcObject) mulaiAutoGambar();
           });
         };
 
@@ -1240,6 +1250,7 @@
           if (sampelWajah.length >= JUMLAH_SAMPEL_MAKS) {
             renderInfoSampel();
             setHasil('<i class="fa-solid fa-circle-exclamation text-amber-300 mr-1"></i>Sampel sudah maksimal (' + JUMLAH_SAMPEL_MAKS + '). Klik <b>Simpan Data Wajah</b>.', 'text-amber-300');
+            ucapkanTTS('Selesai. Tekan Simpan Data Wajah.');
             return;
           }
           sampelWajah.push(Array.isArray(hasil.descriptor) ? Array.from(hasil.descriptor) : hasil.descriptor);
@@ -1312,6 +1323,9 @@
                     autoGambarAktif = false;
                     setLavelAuto();
                     setHasil('<i class="fa-solid fa-circle-check text-green-400 mr-1"></i><b>' + JUMLAH_SAMPEL_MAKS + '/' + JUMLAH_SAMPEL_MAKS + ' sampel terekam (auto)</b> — klik <b>Simpan Data Wajah</b>.', 'text-green-300');
+                    // [B2] Beri tahu lewat suara bahwa pendataan selesai & tinggal simpan.
+                    updateOverlayPose(poseBoxEl, 0);
+                    ucapkanTTS('Selesai. Tekan Simpan Data Wajah.');
                   } else {
                     setHasil('<i class="fa-solid fa-camera text-cyan-300 mr-1"></i>Auto-mindai: sampel <b>' + sampelWajah.length + '/' + JUMLAH_SAMPEL_MAKS + '</b> — pose berikut: <i class="text-cyan-200">' + TIPS_POSE[sampelWajah.length % TIPS_POSE.length] + '</i>.', 'text-green-300');
                   }
