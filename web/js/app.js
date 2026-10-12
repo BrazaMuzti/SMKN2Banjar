@@ -9290,6 +9290,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
+                            <button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i> <span class="hidden sm:inline">Wajah Masal</span></button>
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -9473,16 +9474,15 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
         const tombolWajah = window.FaceWajah && typeof window.FaceWajah.kelolaWajah === 'function'
             ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="w-7 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-400'} hover:text-white rounded transition mr-1" title="${wajahAktif ? 'Kelola data wajah' : 'Registrasi data wajah'}"><i class="fa-solid fa-face-viewfinder"></i></button>`
             : '';
-        // [AKSES] Sembunyikan tombol aksi bila pengguna tidak berhak mengelola baris ini
-        // (admin = semua; guru wali/pembina = baris yang diampu; murid = baris miliknya).
-        const bolehEdit = bisaEditAkunMurid(d);
+        // [AKSES] Edit & Reset Password SELALU tampil di kolom Aksi — tidak tergantung Status Wajah
+        // maupun role (admin/guru/pembina/murid). Otorisasi sesungguhnya tetap di sisi server
+        // (RLS + RPC set_password_murid menolak pemanggil tak berwenang), jadi ini hanya efek UI.
+        // Tombol Hapus tetap khusus admin (adminPenuh).
         const adminPenuh = isAdminAktif();
-        const tombolEdit = bolehEdit
-            ? `<button onclick="editAkunMurid('${escJs(d.id || '')}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>`
+        const tombolEdit = (d && d.id)
+            ? `<button onclick="editAkunMurid('${escJs(d.id)}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>`
             : '';
-        const tombolReset = adminPenuh
-            ? `<button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>`
-            : '';
+        const tombolReset = `<button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>`;
         const tombolHapus = adminPenuh
             ? `<button onclick="deleteAkunMurid('${escJs(nis)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>`
             : '';
@@ -10661,6 +10661,57 @@ function medsosTeks(medsosArr) {
     .join('; ');
 }
 
+/** Registrasi wajah masal dari foto profil (murid ber-foto namun belum punya wajah).
+ *  Mengikuti filter tabel aktif; berjalan berurutan dengan progres; best-effort. */
+async function scanWajahMasal() {
+  const fw = window.FaceWajah;
+  if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function') {
+    return showToast('error', 'Modul wajah (face.js) belum dimuat.');
+  }
+  let sumber;
+  try { sumber = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid')); }
+  catch (e) { console.warn('scanWajahMasal fetch:', e); sumber = cacheAkunMurid || []; }
+  const rows = muridTersaring(sumber);
+  const nisList = rows.map(d => String(d.nis_nip || d.NIS || d.nis)).filter(Boolean);
+  let statusMap = {};
+  if (fw.ambilStatusWajah) { try { statusMap = await fw.ambilStatusWajah(nisList); } catch (e) { console.warn('scanWajahMasal status:', e); } }
+  const kandidat = rows.filter(d => {
+    const nis = String(d.nis_nip || d.NIS || d.nis);
+    return d.url_foto && statusMap[nis] === 'belum';
+  });
+  if (!kandidat.length) {
+    showToast('info', 'Tidak ada murid ber-foto yang belum punya wajah pada filter aktif.');
+    return;
+  }
+  const { value } = await Swal.fire({
+    title: 'Registrasi Wajah Masal',
+    html: `<b>${kandidat.length}</b> murid ber-foto tapi belum punya wajah akan didaftarkan otomatis dari foto profil.<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid.</span>`,
+    icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, lanjut', cancelButtonText: 'Batal',
+    background: '#1e293b', color: '#fff'
+  });
+  if (!value) return;
+  Swal.fire({ title: 'Memproses…', text: '0/' + kandidat.length, allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+  let ok = 0, gagal = 0; const errs = [];
+  for (let i = 0; i < kandidat.length; i++) {
+    const d = kandidat[i];
+    const nis = String(d.nis_nip || d.NIS || d.nis);
+    try {
+      const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, String(d.nama_lengkap || ''));
+      if (r && r.ok) ok++; else { gagal++; if (r && r.pesan) errs.push((d.nama_lengkap || nis) + ': ' + r.pesan); }
+    } catch (e) { gagal++; errs.push((d.nama_lengkap || nis) + ': ' + (e && e.message ? e.message : e)); }
+    if (typeof Swal.update === 'function') { try { Swal.update({ text: (i + 1) + '/' + kandidat.length }); } catch (e) {} }
+  }
+  Swal.close();
+  if (fw.muatPetaWajah) { try { await fw.muatPetaWajah(); } catch (e) {} }
+  if (typeof renderManajemenMurid === 'function') { try { renderManajemenMurid(document.getElementById('main-content')); } catch (e) {} }
+  return Swal.fire({
+    icon: gagal === 0 ? 'success' : 'warning',
+    title: gagal === 0 ? 'Wajah masal selesai' : 'Sebagian gagal',
+    text: `Berhasil: ${ok} · Gagal: ${gagal}` + (errs.length ? ' · ' + errs.slice(0, 3).join(' | ') : ''),
+    background: '#1e293b', color: '#fff'
+  });
+}
+
 /** Cetak lembar foto siswa (A4 portrait, 4 kolom × 6 baris per halaman) — ikut filter tabel aktif. */
 async function cetakFotoSiswa() {
   Swal.fire({ title: 'Menyiapkan Lembar Foto...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
@@ -10796,6 +10847,18 @@ async function simpanAkunMurid(formData, isNew) {
   if (typeof renderManajemenMurid === 'function') {
     renderManajemenMurid(document.getElementById('main-content'));
   }
+  // [C2] Auto-registrasi wajah: setelah foto baru tersimpan, coba sisipkan descriptor
+  // dari foto itu (bila murid menambah/ganti foto profil, wajah otomatis ikut terdaftar).
+  // Berjalan best-effort di latar belakang — gagal tidak menggagalkan simpan data.
+  try {
+    const urlFotoTersimpan = String(p_data.url_foto || '');
+    if (window.FaceWajah && typeof window.FaceWajah.registrasiOtomatisDariFoto === 'function'
+        && urlFotoTersimpan && urlFotoTersimpan !== 'SEDANG_DIUPLOAD' && currentUser.role !== 'murid') {
+      window.FaceWajah.registrasiOtomatisDariFoto(String(formData.nis || ''), urlFotoTersimpan, String(formData.nama_lengkap || ''))
+        .then((r) => { if (r && !r.ok) console.warn('Auto-registrasi wajah:', r.pesan); })
+        .catch((e) => console.warn('Auto-registrasi wajah error:', e));
+    }
+  } catch (eC2) { console.warn('Auto-registrasi wajah (C2):', eC2); }
 }
 
 
