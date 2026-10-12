@@ -9290,7 +9290,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
-                            <button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i> <span class="hidden sm:inline">Wajah Masal</span></button>
+                            ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -10662,8 +10662,15 @@ function medsosTeks(medsosArr) {
 }
 
 /** Registrasi wajah masal dari foto profil (murid ber-foto namun belum punya wajah).
- *  Mengikuti filter tabel aktif; berjalan berurutan dengan progres; best-effort. */
+ *  Mengikuti filter tabel aktif; berjalan berurutan dengan progres; best-effort.
+ *  Hak akses: admin & guru (wali kelas/pembina) — sejalan dgn tombol Import (bisaImportMuridAktif). */
+let scanWajahMasalSedangProses = false;
 async function scanWajahMasal() {
+  // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol): murid dilarang bulk-registrasi.
+  if (((currentUser || {}).role) === 'murid') {
+    return showToast('error', 'Fitur Wajah Masal khusus admin/guru.'); // keamanan real tetap di RPC simpan_wajah_murid
+  }
+  if (scanWajahMasalSedangProses) return showToast('info', 'Wajah masal sedang memproses…');
   const fw = window.FaceWajah;
   if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function') {
     return showToast('error', 'Modul wajah (face.js) belum dimuat.');
@@ -10685,29 +10692,50 @@ async function scanWajahMasal() {
   }
   const { value } = await Swal.fire({
     title: 'Registrasi Wajah Masal',
-    html: `<b>${kandidat.length}</b> murid ber-foto tapi belum punya wajah akan didaftarkan otomatis dari foto profil.<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid.</span>`,
+    html: `<b>${kandidat.length}</b> murid ber-foto tapi belum punya wajah akan didaftarkan otomatis dari foto profil.<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid. Kamu bisa membatalkan di tengah jalan.</span>`,
     icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, lanjut', cancelButtonText: 'Batal',
     background: '#1e293b', color: '#fff'
   });
   if (!value) return;
-  Swal.fire({ title: 'Memproses…', text: '0/' + kandidat.length, allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
-  let ok = 0, gagal = 0; const errs = [];
-  for (let i = 0; i < kandidat.length; i++) {
+
+  scanWajahMasalSedangProses = true;
+  let ok = 0, gagal = 0; const errs = []; let berhenti = false;
+  let i = 0;
+  // Modal progres (DIBUKA tanpa await — JANGAN menunggu resolve karena bisa termakan selamanya
+  // bila user tidak menekan Batal; kita hanya memantau penutupan via promise untuk hentikan loop).
+  const promProgres = Swal.fire({
+    title: 'Memproses…',
+    html: `<div id="wajah-masal-progress" class="text-sm">0/${kandidat.length} · menyiapkan…</div>`,
+    allowOutsideClick: false, showCancelButton: true, cancelButtonText: 'Batal',
+    didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff'
+  });
+  promProgres.then(() => { berhenti = true; }).catch(() => { berhenti = true; });
+  const teksProgres = () =>
+    `${Math.min(i + 1, kandidat.length)}/${kandidat.length} · <span class="text-green-400">✓${ok}</span> <span class="text-red-400">✗${gagal}</span>${kandidat[i] ? ' — ' + escapeHtml(String(kandidat[i].nama_lengkap || kandidat[i].nas_murid || kandidat[i].NIS || '')) : ''}`;
+  for (i = 0; i < kandidat.length; i++) {
+    if (berhenti) break;
     const d = kandidat[i];
     const nis = String(d.nis_nip || d.NIS || d.nis);
+    const nama = String(d.nama_lengkap || nis);
     try {
-      const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, String(d.nama_lengkap || ''));
-      if (r && r.ok) ok++; else { gagal++; if (r && r.pesan) errs.push((d.nama_lengkap || nis) + ': ' + r.pesan); }
-    } catch (e) { gagal++; errs.push((d.nama_lengkap || nis) + ': ' + (e && e.message ? e.message : e)); }
-    if (typeof Swal.update === 'function') { try { Swal.update({ text: (i + 1) + '/' + kandidat.length }); } catch (e) {} }
+      const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, nama);
+      if (r && r.ok) ok++; else { gagal++; if (r && r.pesan) errs.push(nama + ': ' + r.pesan); }
+    } catch (e) { gagal++; errs.push(nama + ': ' + (e && e.message ? e.message : e)); }
+    const pb = document.getElementById('wajah-masal-progress');
+    if (pb) pb.innerHTML = teksProgres();
   }
   Swal.close();
-  if (fw.muatPetaWajah) { try { await fw.muatPetaWajah(); } catch (e) {} }
-  if (typeof renderManajemenMurid === 'function') { try { renderManajemenMurid(document.getElementById('main-content')); } catch (e) {} }
+  let pesanHasil = `Berhasil: <b class="text-green-400">${ok}</b> · Gagal: <b class="text-red-400">${gagal}</b>` + (berhenti ? ' · <i>Dihentikan pengguna</i>' : '');
+  if (errs.length) {
+    pesanHasil += `<div class="mt-2 text-left"><div class="text-[11px] text-slate-400 mb-1">Murid gagal (${errs.length}):</div><div class="max-h-40 overflow-auto custom-scrollbar rounded bg-slate-900 border border-white/10 p-2 text-[10px] text-red-300">${errs.map(e => `• ${escapeHtml(e)}`).join('<br>')}</div></div>`;
+  }
+  try { if (fw.muatPetaWajah) { await fw.muatPetaWajah(); } } catch (e) {}
+  try { if (typeof renderManajemenMurid === 'function') renderManajemenMurid(document.getElementById('main-content')); } catch (e) {}
+  scanWajahMasalSedangProses = false;
   return Swal.fire({
-    icon: gagal === 0 ? 'success' : 'warning',
-    title: gagal === 0 ? 'Wajah masal selesai' : 'Sebagian gagal',
-    text: `Berhasil: ${ok} · Gagal: ${gagal}` + (errs.length ? ' · ' + errs.slice(0, 3).join(' | ') : ''),
+    icon: (gagal === 0 && !berhenti) ? 'success' : 'warning',
+    title: berhenti ? 'Wajah masal dihentikan' : (gagal === 0 ? 'Wajah masal selesai' : 'Sebagian gagal'),
+    html: pesanHasil,
     background: '#1e293b', color: '#fff'
   });
 }
