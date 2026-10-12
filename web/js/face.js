@@ -22,6 +22,19 @@
 (() => {
   'use strict';
 
+  // Animasi overlay pose registrasi (panah & label arah) — didefinisikan SEKALI di
+  // <head> agar keyframes posePulse tersedia kapan pun modal kelolaWajah dibuka.
+  (function sisipkanCssOverlayPose() {
+    try {
+      if (document.getElementById('sbg-pose-pulse-css')) return;
+      const st = document.createElement('style');
+      st.id = 'sbg-pose-pulse-css';
+      st.textContent =
+        '@keyframes posePulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.18);opacity:0.75}}';
+      (document.head || document.documentElement).appendChild(st);
+    } catch (e) { console.warn('sisipkanCssOverlayPose:', e); }
+  })();
+
   // ------------------------------------------------------------------
   // 0. Konstanta
   // ------------------------------------------------------------------
@@ -502,6 +515,47 @@
   const POSO_MIN_JARAK_FALLBACK = 0.12; // pose stagnan >4 dtk (semua percobaan mirip) → sampel tetap ditambah (anti-macet)
   let kameraBerjalan = null; // { stream, video } aktif saat ini
 
+  /** Label arah setiap pose registrasi (indeks sama dengan TIPS_POSE) utk overlay animasi wajah. */
+  const POSE_ARAH = ['LURUS', 'KIRI', 'KANAN', 'BAWAH', 'ATAS', 'DEKAT'];
+  /** Ikon FontAwesome utk tiap pose (indeks sama dengan TIPS_POSE). */
+  const POSE_IKON = [
+    '<i class="fa-solid fa-arrows-up-down text-white/90"></i>',
+    '<i class="fa-solid fa-arrow-rotate-left text-white/90"></i>',
+    '<i class="fa-solid fa-arrow-rotate-right text-white/90"></i>',
+    '<i class="fa-solid fa-arrow-down text-white/90"></i>',
+    '<i class="fa-solid fa-arrow-up text-white/90"></i>',
+    '<i class="fa-solid fa-arrows-left-right-to-line text-white/90"></i>'
+  ];
+
+  /** Bicarakan teks memakai SpeechSynthesis (mantap: batalkan ucapan lama, bahasa Indonesia). */
+  function ucapkanTTS(teks) {
+    try {
+      if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') return;
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(teks);
+      u.lang = 'id-ID';
+      u.rate = 0.95;
+      u.pitch = 1.05;
+      window.speechSynthesis.speak(u);
+    } catch (e) {
+      console.warn('ucapkanTTS:', e); // TTS gagal diam-diam — bukan kegagalan fatal
+    }
+  }
+
+  /** Perbarui elemen overlay pose (panah + label arah) milik modal kelolaWajah.
+   *  Overlay hanyalah lapisan transparan di atas kamera — animasi wajah SVG/panah
+   *  digambar via CSS gif + teks arah, dipanggil tiap pose berganti. */
+  function updateOverlayPose(overlayEl, idx) {
+    if (!overlayEl || overlayEl.dataset.matikan === '1') return;
+    const ikon = POSE_IKON[(idx || 0) % POSE_IKON.length];
+    const arah = POSE_ARAH[(idx || 0) % POSE_ARAH.length];
+    overlayEl.innerHTML =
+      '<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;pointer-events:none;background:rgba(0,0,0,0.18);border:2px dashed rgba(255,255,255,0.45);border-radius:12px">' +
+        '<div style="font-size:30px;line-height:1;text-shadow:0 2px 6px rgba(0,0,0,0.6);animation:posePulse 1.6s ease-in-out infinite">' + ikon + '</div>' +
+        '<div style="margin-top:6px;font-size:10px;font-weight:900;letter-spacing:2px;color:#fff;text-shadow:0 1px 4px rgba(0,0,0,0.8)">' + arah + '</div>' +
+      '</div>';
+  }
+
   /** Terjemahkan error getUserMedia menjadi pesan Indonesia yang bisa ditindaklanjuti. */
   function pesanKameraError(e) {
     const n = (e && e.name) || '';
@@ -921,6 +975,7 @@
           <div class="relative h-36 overflow-hidden">
             <video id="wajah-video" autoplay playsinline muted class="w-full h-full object-cover" style="transform:scaleX(-1); transform-origin:center"></video>
             <canvas id="wajah-overlay" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1); transform-origin:center"></canvas>
+            <div id="wajah-pose-box" class="absolute inset-0 w-full h-full pointer-events-none" style="transform:scaleX(-1); transform-origin:center"></div>
           </div>
           <div id="wajah-panduan" class="px-2 py-1.5 bg-slate-900/70 border-t border-white/10 text-[10px] leading-relaxed text-slate-300">
             <b class="text-cyan-300">Posisi &amp; perintah:</b> hadapkan wajah lurus ke kamera · cahaya cukup dari depan · jarak 40–80 cm · tanpa masker/kacamata gelap. Ganti pose saat indikator hijau — mode <b>Auto 6 pose</b> menambah sampel sendiri (6/6 lalu <b>Simpan Data Wajah</b>); klik <b>Deteksi dari Kamera</b> utk sampel manual.
@@ -953,11 +1008,12 @@
         const btnNonaktif = cari('btn-wajah-nonaktif');
         const kameraPilih = cari('camera-select');
         const overlayEl = cari('wajah-overlay');
+        const poseBoxEl = cari('wajah-pose-box');
         const sampelInfoEl = cari('wajah-sampel-info');
         // Guard: elemen modal yang hilang TIDAK boleh terjadi senyap.
         ['wajah-preview','wajah-hasil','btn-wajah-foto','btn-wajah-kamera',
          'wajah-camera-area','wajah-video','btn-wajah-tangkap','btn-wajah-simpan',
-         'wajah-overlay','wajah-sampel-info','btn-wajah-auto','wajah-auto-label'].forEach((id) => {
+         'wajah-overlay','wajah-pose-box','wajah-sampel-info','btn-wajah-auto','wajah-auto-label'].forEach((id) => {
           if (!cari(id)) console.error('[FaceWajah] Elemen #' + id + ' tidak ditemukan di dalam modal.');
         });
 
@@ -1105,6 +1161,10 @@
             });
             bisuStatusLoop = false;              // sesi kamera baru → status loop "bicara" lagi
             loopDeteksiKameraLive(videoEl, setHasil, overlayEl); // deteksi ringan berjalan langsung — status memberi tahu saat wajah terlihat
+            // [TTS + Overlay Pose] Ucapkan pose PERTAMA (lurus) & tampilkan panah arah
+            // sejak kamera dinyalakan — siswa langsung tahu pose mana yang diminta.
+            ucapkanTTS('Mulai. ' + TIPS_POSE[0] + '.');
+            updateOverlayPose(poseBoxEl, 0);
             mulaiAutoGambar(); // auto-mindai 6 pose berjalan langsung (flag ON baku; klik tombol Auto utk beralih manual)
             setHasil('<i class="fa-solid fa-video mr-1"></i>Kamera aktif — atur posisi wajah. Mode <b>Auto 6 pose</b> menambah sampel sendiri saat pose bervariasi (klik <b>Deteksi dari Kamera</b> utk manual).');
           } catch (e) {
@@ -1255,6 +1315,12 @@
                   } else {
                     setHasil('<i class="fa-solid fa-camera text-cyan-300 mr-1"></i>Auto-mindai: sampel <b>' + sampelWajah.length + '/' + JUMLAH_SAMPEL_MAKS + '</b> — pose berikut: <i class="text-cyan-200">' + TIPS_POSE[sampelWajah.length % TIPS_POSE.length] + '</i>.', 'text-green-300');
                   }
+                  // [TTS + Overlay Pose] Bicarakan pose berikutnya & perbarui panah arah.
+                  // Setiap sampel berhasil → ucapan pose berikutnya otomatis diputar;
+                  // overlay kamera menampilkan ikon arah + label (LURUS/KIRI/KANAN/...).
+                  const posIdx = sampelWajah.length % TIPS_POSE.length;
+                  ucapkanTTS('Pose berikut: ' + TIPS_POSE[posIdx] + '.');
+                  updateOverlayPose(poseBoxEl, posIdx);
                 } else {
                   tSjanse = t; // pose terlalu mirip — siswa ganti pose; bila stagnan >4 dtk → fallback
                 }
@@ -1458,6 +1524,25 @@
       statusEl.className = 'absolute top-2 left-2 right-2 text-center text-[11px] font-bold drop-shadow-lg bg-black/40 rounded px-2 py-1 ' + (warna || 'text-white');
     };
 
+    // Tunggu video element siap membaca frame (readyState ≥ HAVE_CURRENT_DATA / 2).
+    // Tanpa ini, face-api memanggil video yang baru diganti stream-nya pada
+    // readyState 0–1 → error/eksepsi & loop deteksi mati diam-diam (kamera
+    // "tidak memproses" setelah diganti depan/belakang).
+    const tungguVideoSiap = (el, batasMs) => {
+      return new Promise(resolve => {
+        if (!el) return resolve();
+        if (el.readyState >= 2) return resolve();
+        const batas = Date.now() + (batasMs || 4000);
+        const cek = () => {
+          if (el.readyState >= 2) return resolve();
+          if (Date.now() >= batas) return resolve(); // timeout — loop siap coba-coba
+          setTimeout(cek, 60);
+        };
+        el.addEventListener('loadeddata', () => resolve(), { once: true });
+        cek();
+      });
+    };
+
     // Ganti kamera live tanpa mengulang seluruh pemindaian.
     const gantiKameraPindai = async (deviceId) => {
       const streamLama = scanAktif && scanAktif.stream;
@@ -1469,6 +1554,7 @@
       }
       video.srcObject = streamBaru;
       await video.play();
+      await tungguVideoSiap(video);
       if (scanAktif) { scanAktif.stream = streamBaru; scanAktif.video = video; }
       if (streamLama) streamLama.getTracks().forEach(t => t.stop());
       mukaDepanPindai = (() => {
@@ -1478,7 +1564,6 @@
       })();
       terapkanTfPindai();
     };
-
     // Ganti depan/belakang lewat dropdown (opsi sentinel __depan__/__belakang__).
     let facingMuka = 'environment';
     // Sinkronkan pilihan dropdown dengan facingMode stream yang sedang aktif.
@@ -1495,6 +1580,7 @@
         if (!video || !video.isConnected) { streamBaru.getTracks().forEach(t => t.stop()); return; }
         video.srcObject = streamBaru;
         await video.play();
+        await tungguVideoSiap(video);
         if (scanAktif) { scanAktif.stream = streamBaru; scanAktif.video = video; }
         if (streamLama) streamLama.getTracks().forEach(t => t.stop());
         facingMuka = facing;
@@ -1669,6 +1755,16 @@
         continue;
       }
       terakhir = now;
+
+      // Jeda bila video belum siap (baru diganti kamera / pertama dibuka).
+      // readyState < 2 (HAVE_CURRENT_DATA) → frame belum bisa dibaca face-api;
+      // men-detectSingleFace terlalu dini bikin error/\"video tidak siap\" dan
+      // loop mati diam-diam sehingga pemindaian berhenti setelah ganti kamera.
+      if (video.readyState < 2) {
+        o.setStatus('<i class="fa-solid fa-video mr-1"></i>Menyiapkan frame kamera…', 'text-amber-200');
+        await new Promise(r => setTimeout(r, 250));
+        continue;
+      }
 
       let deteksi = null;
       try {
@@ -1876,6 +1972,18 @@
         const t = facingMandiri === 'user' ? u : e;
         if (t) { t.classList.add('ring-2'); t.classList.add('ring-yellow-400'); }
       };
+      const tungguSiapMandiri = (el) => {
+        return new Promise(resolve => {
+          if (!el || el.readyState >= 2) return resolve();
+          const cek = () => {
+            if (el.readyState >= 2) return resolve();
+            if (Date.now() >= Date.now() + 4000) return resolve();
+            setTimeout(cek, 60);
+          };
+          el.addEventListener('loadeddata', () => resolve(), { once: true });
+          cek();
+        });
+      };
       const gantiMukaMandiri = async (facing) => {
         try {
           const lama = scanAktif && scanAktif.stream;
@@ -1883,6 +1991,7 @@
           if (!video || !video.isConnected) { baru.getTracks().forEach(t => t.stop()); return; }
           video.srcObject = baru;
           await video.play();
+          await tungguSiapMandiri(video);
           if (scanAktif) { scanAktif.stream = baru; scanAktif.video = video; }
           if (lama) lama.getTracks().forEach(t => t.stop());
           facingMandiri = facing;

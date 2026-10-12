@@ -6407,6 +6407,7 @@ function openPenilaianMasal() {
         <!-- Ukuran Canvas QR diperkecil -->
         <div id="qr-reader-nilai-masal" class="hidden border-2 border-blue-500/50 rounded-lg mb-2 overflow-hidden shadow-inner bg-black/50" style="max-width: 180px; margin: 0 auto;"></div>
         <div id="face-reader-nilai-masal" class="hidden rounded-lg overflow-hidden mb-2"></div>
+        <div id="toast-scan-nilai" class="hidden items-center justify-center gap-1.5 mb-3 px-3 py-2 rounded-lg text-xs font-bold text-white shadow-lg border bg-emerald-600/90 border-emerald-400/60 fixed top-3 left-1/2 -translate-x-1/2 z-[9999]" style="max-width:280px"></div>
         
         <div class="max-h-[35vh] overflow-y-auto custom-scrollbar bg-black/20 rounded border border-white/10 p-1 scroll-smooth" id="container-chk-masal"></div>
       </div>
@@ -6538,6 +6539,27 @@ function openPenilaianMasal() {
           }
         };
 
+        // [REQ] Popup notifikasi nama siswa saat pencocokan wajah (mirip tampilkanBannerScan
+        // pada modal absensi). Memakai elemen #toast-scan-nilai di dalam popup ini.
+        const tampilkanBannerScanNilai = (namaSiswa) => {
+          const el = popup.querySelector('#toast-scan-nilai');
+          if (!el) return;
+          if (el._tt) clearTimeout(el._tt);
+          if (el._tf) clearTimeout(el._tf);
+          el.classList.remove('hidden', 'opacity-0');
+          el.className = 'flex items-center justify-center gap-1.5 mb-3 px-3 py-2 rounded-lg text-xs font-bold text-white shadow-lg border transition-opacity duration-300 bg-emerald-600/90 border-emerald-400/60 fixed top-3 left-1/2 -translate-x-1/2 z-[9999]';
+          el.style.maxWidth = '280px';
+          el.textContent = '';
+          const ik = document.createElement('i');
+          ik.className = 'fa-solid fa-circle-check mr-1';
+          el.appendChild(ik);
+          el.appendChild(document.createTextNode('Ditemukan — ' + String(namaSiswa || 'Siswa')));
+          el._tf = setTimeout(() => {
+            el.classList.add('opacity-0');
+            el._tt = setTimeout(() => el.classList.add('hidden'), 250);
+          }, 1800);
+        };
+
         // [REQ] Face Scan — sama seperti tombol Face di modal absensi: wajah yang cocok
         // dengan akun murid (kamera live) → ceklis siswa ditandai + TTS + fokus kolom.
         // Agnostik kategori (Pengetahuan/Keterampilan/Sikap/Ekstrakurikuler A-D).
@@ -6548,6 +6570,8 @@ function openPenilaianMasal() {
           const sudah = chk.checked;
           if (!sudah) {
             chk.checked = true;
+            const namaM = listMuridKelas.find(m => String(m.NIS) === nisS)?.["Nama Lengkap"] || "Siswa";
+            tampilkanBannerScanNilai(namaM); // popup notifikasi nama siswa
             const lbl = popup.querySelector(`#lbl-masal-${nisS}`);
             if (lbl) {
               lbl.classList.add('bg-green-900/60');
@@ -6556,7 +6580,6 @@ function openPenilaianMasal() {
             }
             // TTS Cepat Bahasa Indonesia (nama siswa dibacakan) + auto-focus kolom.
             try {
-              const namaM = listMuridKelas.find(m => String(m.NIS) === nisS)?.["Nama Lengkap"] || "Siswa";
               const utt = new SpeechSynthesisUtterance(namaM);
               utt.lang = 'id-ID'; utt.rate = 1.4;
               window.speechSynthesis.speak(utt);
@@ -9450,6 +9473,19 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
         const tombolWajah = window.FaceWajah && typeof window.FaceWajah.kelolaWajah === 'function'
             ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="w-7 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-400'} hover:text-white rounded transition mr-1" title="${wajahAktif ? 'Kelola data wajah' : 'Registrasi data wajah'}"><i class="fa-solid fa-face-viewfinder"></i></button>`
             : '';
+        // [AKSES] Sembunyikan tombol aksi bila pengguna tidak berhak mengelola baris ini
+        // (admin = semua; guru wali/pembina = baris yang diampu; murid = baris miliknya).
+        const bolehEdit = bisaEditAkunMurid(d);
+        const adminPenuh = isAdminAktif();
+        const tombolEdit = bolehEdit
+            ? `<button onclick="editAkunMurid('${escJs(d.id || '')}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>`
+            : '';
+        const tombolReset = adminPenuh
+            ? `<button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>`
+            : '';
+        const tombolHapus = adminPenuh
+            ? `<button onclick="deleteAkunMurid('${escJs(nis)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>`
+            : '';
 
         return `
             <tr class="hover:bg-white/5 border-b border-white/5 transition row-murid" data-nis="${escapeHtml(String(nis))}" data-ekskul="${ekskulData}" data-tahun="${escapeHtml(tahunData)}">
@@ -9468,9 +9504,9 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
 
                 <td class="px-4 py-3 text-center whitespace-nowrap">
                     ${tombolWajah}
-                    <button onclick="editAkunMurid('${escJs(d.id || '')}')" class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                    <button onclick="resetPasswordMurid('${escJs(nis)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>
-                    <button onclick="deleteAkunMurid('${escJs(nis)}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>
+                    ${tombolEdit}
+                    ${tombolReset}
+                    ${tombolHapus}
                 </td>
             </tr>
         `;
@@ -12351,6 +12387,39 @@ function bisaImportMuridAktif() {
     return !!waliKelasAktif() || ekskulDiampuAktif().length > 0;
 }
 
+/** Normalkan NIS/NIP dari satu baris akun murid (kolom gaya Sheets/snake_case). */
+function nisBarisMurid(d) {
+    return String((d && (d.nis_nip || d.NIS || d.nis)) || '');
+}
+
+/** Normalkan daftar eskstrakurikuler dari satu baris akun murid. */
+function ekskulBarisMurid(d) {
+    return String((d && (d.ekstrakurikuler || d.Ekstrakurikuler || d.ekskul)) || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+}
+
+/** Hak akses edit/lihat-aksi satu baris akun murid.
+ *  - Admin: selalu boleh.
+ *  - Guru: boleh jika wali kelas murid tersebut (kelas sama) ATAU pembina salah satu
+ *    eskstrakurikuler murid tersebut. Selaras dengan RLS import/edit akun murid.
+ *  - Murid: hanya untuk baris milik dirinya sendiri (NIS cocok dengan sesi login). */
+function bisaEditAkunMurid(d) {
+    if (isAdminAktif()) return true;
+    const role = (currentUser || {}).role;
+    if (role === 'murid') {
+        const nisSesi = String(((currentUser || {}).user || {})["NIS"] || '');
+        return !!nisSesi && nisSesi === nisBarisMurid(d);
+    }
+    if (role === 'guru') {
+        if (waliKelasAktif() && waliKelasAktif() === kelasSiswaTahun(d)) return true;
+        const diampu = ekskulDiampuAktif();
+        if (diampu.length) {
+            const ekskulSiswa = ekskulBarisMurid(d);
+            if (ekskulSiswa.some(e => diampu.includes(e))) return true;
+        }
+    }
+    return false;
+}
 
 /** Ringkasan penugasan utk badge tabel: "TA: Mapel1, Mapel2 · Wali X" per tahun. */
 function ringkasanPenugasan(row) {
