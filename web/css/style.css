@@ -4064,11 +4064,44 @@ table {
   width: 100%;
 }
 .table-sticky-header th {
+  position: -webkit-sticky;
   position: sticky;
   top: 0;
   background-color: rgb(30, 41, 59);
   z-index: 20;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+.table-sticky-header thead {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+}
+
+.animasi-scan-nama {
+  animation: scanNamaPuls 0.9s ease-in-out 2 !important;
+}
+@keyframes scanNamaPuls {
+  0%   { background-color: rgba(34, 197, 94, 0.85); box-shadow: inset 0 0 0 2px rgba(34, 197, 94, 0.9); }
+  50%  { background-color: rgba(34, 197, 94, 0.45); box-shadow: inset 0 0 0 1px rgba(34, 197, 94, 0.5); }
+  100% { background-color: transparent; box-shadow: inset 0 0 0 0 transparent; }
+}
+
+@media (max-width: 640px) {
+  .swal2-container.swal2-backdrop-show,
+  .swal2-container.swal2-noanimation {
+    align-items: flex-start !important;
+  }
+  .swal2-container .swal2-popup {
+    max-width: 100vw !important;
+    max-height: 96dvh !important;
+    overflow-y: auto;
+    touch-action: pan-y;
+    -webkit-overflow-scrolling: touch;
+  }
+  .swal2-container .swal2-popup .swal2-html-container {
+    max-height: none !important;
+    overflow: visible !important;
+  }
 }
 ::-webkit-scrollbar {
   width: 6px;
