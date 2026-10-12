@@ -948,9 +948,19 @@
       : (murid.wajah_descriptor ? (murid.wajah_status === 'nonaktif' ? 'nonaktif' : 'aktif') : 'belum');
     const nama = murid.nama_lengkap || '';
     const kelas = murid.tingkat_kelas || '';
+    // [B4] Navegasi prev/next antar murid di modal registrasi wajah (sesi admin/guru).
+    // Rehaza urutan cache admin bila ada; self-service (tanpa cache) → tak ada nav.
+    let daftarNav = [];
+    let idxNav = -1;
+    if (typeof cacheAkunMurid !== 'undefined' && Array.isArray(cacheAkunMurid) && cacheAkunMurid.length > 1) {
+      daftarNav = cacheAkunMurid
+        .filter(m => String(m.tipe || '') === 'murid' || (m.nis_nip || m.NIS || m.nis))
+        .map(m => String(m.nis_nip || m.NIS || m.nis));
+      idxNav = daftarNav.indexOf(String(nis));
+    }
 
     Swal.fire({
-      title: `<div class="text-sm font-bold mt-1"><i class="fa-solid fa-face-viewfinder text-cyan-400 mr-2"></i>Foto Siswa</div>`,
+      title: `<div class="flex items-center gap-2 mt-1">${daftarNav.length > 1 ? `<button id="nav-wajah-prev" class="w-6 h-6 rounded bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center transition" title="Murid sebelumnya"><i class="fa-solid fa-chevron-left text-[10px]"></i></button>` : ''}<div class="text-sm font-bold"><i class="fa-solid fa-face-viewfinder text-cyan-400 mr-2"></i>Foto Siswa</div>${daftarNav.length > 1 ? `<button id="nav-wajah-next" class="w-6 h-6 rounded bg-slate-700 hover:bg-slate-600 text-white flex items-center justify-center transition" title="Murid berikutnya"><i class="fa-solid fa-chevron-right text-[10px]"></i></button>` : ''}</div>`,
       html: `
         <div class="flex items-start gap-3 justify-between mb-2">
           <div class="text-left flex-1">
@@ -1022,6 +1032,21 @@
           hasilEl.innerHTML = teks;
           hasilEl.className = 'text-center text-[11px] min-h-[16px] mb-2 ' + (warna || 'text-slate-300');
         };
+        // [B4] Navigasi prev/next antar murid — tutup modal ini & buka murid tetangga.
+        if (daftarNav.length > 1) {
+          const nav = (step) => {
+            const nx = idxNav + step;
+            if (nx < 0 || nx >= daftarNav.length) return;
+            const nisTujuan = daftarNav[nx];
+            if (!nisTujuan || String(nisTujuan) === String(nis)) return;
+            Swal.close();
+            kelolaWajah(String(nisTujuan));
+          };
+          const btnPrev = popup.querySelector('#nav-wajah-prev');
+          const btnNext = popup.querySelector('#nav-wajah-next');
+          if (btnPrev) btnPrev.addEventListener('click', () => nav(-1));
+          if (btnNext) btnNext.addEventListener('click', () => nav(1));
+        }
         const aktifkanSimpan = () => {
           if (!btnSimpan) return;
           const n = sampelWajah.length;
@@ -2086,9 +2111,29 @@
     }
   });
 
-  // ==================================================================
-  // 8. EKSPOR API PUBLIK
-  // ==================================================================
+  // [B6] Registrasi wajah otomatis dari foto profil yang sudah tersimpan (url_foto).
+  // Dipakai menu "Data Akun Murid": satu klik menyisipkan 1 sampel descriptor dari
+  // foto Drive murid tanpa buka modal kamera. Mengembalikan { ok, skor, pesan? }.
+  async function registrasiOtomatisDariFoto(nis, urlFoto, nama) {
+    const nisS = String(nis || '');
+    if (!urlFoto) return { ok: false, pesan: 'Murid belum punya foto profil. Gunakan kamera.' };
+    try {
+      await pastikanModelsRinganTepatWaktu();
+      const img = await muatGambarDariUrl(urlFoto);
+      const hasil = await hasilDeteksiKuat(img, 'foto');
+      const d = Array.from(hasil.descriptor);
+      await simpanWajahKeDb(nisS, [d], 'aktif', 'ganti');
+      if (petaWajahCache) petaWajahCache[nisS] = { descriptor: [d], status: 'aktif' };
+      try { beriTahuWajahTersimpan(nisS, 'aktif'); } catch (e) {}
+      if (typeof refreshDaftarWajahTable === 'function') { try { refreshDaftarWajahTable(); } catch (e) {} }
+      return { ok: true, skor: hasil.skor, nama: nama || '' };
+    } catch (e) {
+      console.error('registrasiOtomatisDariFoto:', e);
+      return { ok: false, pesan: (e && e.message) ? e.message : String(e) };
+    }
+  }
+
+  /* [8] EKSPOR API PUBLIK — jangan sampai terkomentari */
   window.FaceWajah = {
     kelolaWajah,
     hapusDataWajah,
@@ -2099,6 +2144,7 @@
     mulaiPindaiWajahAbsen,
     berhentiPindaiWajah,
     pindaiWajahMandiri,
+    registrasiOtomatisDariFoto,
     urlFotoUntukCanvas
   };
 })();
