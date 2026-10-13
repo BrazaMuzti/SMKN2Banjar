@@ -2290,12 +2290,11 @@ async function renderAbsensiModule(container) {
              </select>
           </div>
           <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Pilih Kelas">
-             <select id="select-kelas" class="hidden" onchange="loadDataMuridDanAbsen()">
+             <div class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-pink-400 group-hover:bg-pink-500 group-hover:text-white transition shadow-sm"><i class="fa-solid fa-users text-[10px] sm:text-xs"></i></div>
+             <select id="select-kelas" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="loadDataMuridDanAbsen()">
                <option value="Semua Kelas" id="opt-semua-kelas" class="bg-slate-800 text-white">-- Semua --</option>
                ${opsiKelasAbsenHTML(listKelas, 'Mapel', listMapelDiampu[0] || '')}
              </select>
-             <button type="button" id="btn-dropdown-kelas" onclick="toggleDropdownKelasAbsen(event)" class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-pink-400 hover:bg-pink-500 hover:text-white transition shadow-sm"><i class="fa-solid fa-users text-[10px] sm:text-xs"></i></button>
-             <div id="panel-kelas-absen" class="hidden absolute left-0 top-full mt-1 z-50 w-56 overflow-y-auto bg-slate-800 border border-white/20 rounded-lg shadow-xl text-[11px] text-white p-1.5" style="z-index:9999; max-height: 20rem;"></div>
           </div>
         </div>
         
@@ -2447,74 +2446,9 @@ function opsiKelasAbsenHTML(listKelas, jenis, nama) {
   return html || opt(listKelas || []);
 }
 
-/** Panel dropdown kustom "Pilih Kelas": kelas diampu tampil paling atas (langsung terlihat),
- *  "Kelas Lainnya (Baca Saja)" dikolapse (tersembunyi) dan muncul saat header-nya diklik. */
-function renderPanelKelasAbsenHTML(listKelas, jenis, nama, nilaiTerpilih) {
-  const isGuru = currentUser && currentUser.role === 'guru';
-  const btnKelas = (k, aktif) => `<button type="button" onclick="pilihKelasAbsen('${escJs(k)}')" class="w-full text-left px-2 py-1 rounded hover:bg-pink-600/40 transition ${aktif ? 'bg-pink-600/60 font-bold' : ''}">${escapeHtml(k)}</button>`;
-  let html = `<div class="px-1 pb-1 mb-1 border-b border-white/10 text-slate-400 font-bold uppercase text-[9px]">Pilih Kelas</div>`;
-  const tampilkanSemuaKelas = isAdminAbsen() || jenis === 'Ekskul' || jenis === 'SemuaMapel';
-  if (tampilkanSemuaKelas) html += btnKelas('Semua Kelas', nilaiTerpilih === 'Semua Kelas');
-  if (!isGuru) {
-    html += (listKelas || []).map(k => btnKelas(k, nilaiTerpilih === k)).join('');
-    return html;
-  }
-  const diampuSet = hitungKelasDiampuAbsen(jenis, nama);
-  const diampu = (listKelas || []).filter(k => diampuSet.has(k));
-  const lain = (listKelas || []).filter(k => !diampuSet.has(k));
-  if (diampu.length > 0) {
-    html += `<div class="px-1 pt-1 pb-0.5 text-green-300 font-bold text-[9px] uppercase">Kelas Diampu (Bisa Edit)</div>`;
-    html += diampu.map(k => btnKelas(k, nilaiTerpilih === k)).join('');
-  }
-  if (lain.length > 0) {
-    const terbuka = lain.includes(nilaiTerpilih); // otomatis terbuka bila kelas terpilih ada di "lainnya"
-    html += `<button type="button" onclick="toggleKelasLainnyaAbsen(this)" class="w-full flex items-center justify-between px-1 pt-1.5 pb-0.5 text-slate-400 font-bold text-[9px] uppercase hover:text-white transition">
-               <span>Kelas Lainnya (Baca Saja) (${lain.length})</span>
-               <i class="fa-solid fa-chevron-${terbuka ? 'up' : 'down'} text-[8px]"></i>
-             </button>`;
-    html += `<div class="${terbuka ? '' : 'hidden'}">${lain.map(k => btnKelas(k, nilaiTerpilih === k)).join('')}</div>`;
-  }
-  return html || opsiKelasAbsenHTML(listKelas, jenis, nama);
-}
-
-/** Buka/tutup panel dropdown "Pilih Kelas"; auto-close saat klik di luar panel. */
-function toggleDropdownKelasAbsen(ev) {
-  if (ev) ev.stopPropagation();
-  const panel = document.getElementById('panel-kelas-absen');
-  if (!panel) return;
-  const sedangTerbuka = !panel.classList.contains('hidden');
-  document.querySelectorAll('#panel-kelas-absen').forEach(p => p.classList.add('hidden'));
-  if (sedangTerbuka) return;
-  panel.classList.remove('hidden');
-  const tutupDiLuar = (e) => {
-    if (!panel.contains(e.target) && e.target.id !== 'btn-dropdown-kelas' && !e.target.closest('#btn-dropdown-kelas')) {
-      panel.classList.add('hidden');
-      document.removeEventListener('click', tutupDiLuar);
-    }
-  };
-  setTimeout(() => document.addEventListener('click', tutupDiLuar), 0);
-}
-
-/** Kolapse/expand daftar "Kelas Lainnya (Baca Saja)" di dalam panel (tanpa menutup panel). */
-function toggleKelasLainnyaAbsen(btn) {
-  const wrap = btn.nextElementSibling;
-  const icon = btn.querySelector('i');
-  if (!wrap) return;
-  wrap.classList.toggle('hidden');
-  if (icon) { icon.classList.toggle('fa-chevron-down'); icon.classList.toggle('fa-chevron-up'); }
-}
-
-/** Pilih kelas dari panel kustom: set value select asli (agar semua logika lama tetap jalan via event change). */
-function pilihKelasAbsen(kelas) {
-  const sel = document.getElementById('select-kelas');
-  if (!sel) return;
-  sel.value = kelas;
-  sel.dispatchEvent(new Event('change'));
-  const panel = document.getElementById('panel-kelas-absen');
-  if (panel) panel.classList.add('hidden');
-}
-
-/** Segarkan opsi "Pilih Kelas" (label diampu/lainnya) mengikuti mapel/ekskul terpilih saat ini. */
+/** Segarkan opsi native `<select id="select-kelas">` (label diampu/lainnya) mengikuti mapel/ekskul
+ *  terpilih saat ini. Sekarang Pilih Kelas memakai select asli yang menimpa ikon (sama seperti
+ *  Tahun Pelajaran & Mapel Diampu), sehingga hanya perlu membangun ulang opsi-opsi di dalamnya. */
 function perbaruiOpsiKelasAbsen(listKelasAll) {
   const selKelas = document.getElementById('select-kelas');
   if (!selKelas) return;
@@ -2524,8 +2458,6 @@ function perbaruiOpsiKelasAbsen(listKelasAll) {
   const nilaiLama = selKelas.value;
   selKelas.innerHTML = `<option value="Semua Kelas" id="opt-semua-kelas" class="bg-slate-800 text-white">-- Semua --</option>${opsiKelasAbsenHTML(daftar, jenis, nama)}`;
   if ([...selKelas.options].some(o => o.value === nilaiLama)) selKelas.value = nilaiLama;
-  const panel = document.getElementById('panel-kelas-absen');
-  if (panel) panel.innerHTML = renderPanelKelasAbsenHTML(daftar, jenis, nama, selKelas.value);
 }
 
 /** Mode akses mapel terpilih: 'keduanya' (admin) | 'menulis' | 'baca'. */
@@ -9782,19 +9714,51 @@ function suntikCSSMobileFormAkun() {
     styleEl.id = 'swal-mobile-akun-style';
     styleEl.textContent = `
         .swal2-popup.swal-mobile-akun .swal2-html-container { text-align: left; padding-left: 0; padding-right: 0; overflow: visible !important; }
+        /* Desktop: modal berukuran tetap; biarkan grid form yang menggulung sendiri (single scroll). */
+        @media (min-width: 641px) {
+            .swal2-popup.swal-mobile-akun .akun-form-grid {
+                max-height: 70vh;
+                overflow-y: auto;
+                overflow-x: hidden;
+                padding-right: 0.4rem;
+            }
+            .swal2-popup.swal-mobile-akun .swal2-html-container { overflow: visible !important; }
+        }
         @media (max-width: 640px) {
             .swal2-popup.swal-mobile-akun {
                 width: calc(100vw - 12px) !important;
                 max-width: 100vw !important;
                 max-height: 96dvh !important;
                 margin: 0 !important;
-                padding: 0.75rem !important;
+                padding: 0.6rem !important;
                 border-radius: 0.75rem;
             }
             .swal2-popup.swal-mobile-akun .swal2-title { padding: 0 0 0.5rem; font-size: 0.95rem; }
             .swal2-popup.swal-mobile-akun .swal2-html-container { padding-bottom: env(safe-area-inset-bottom, 0) !important; }
             .swal2-popup.swal-mobile-akun .swal2-actions { flex-wrap: wrap !important; gap: 0.4rem !important; }
             .swal2-popup.swal-mobile-akun .swal2-styled { margin: 0 !important; flex: 1 1 auto; }
+            /* Form mobile: rapi, satu kolom penuh, tanpa overflow horizontal. */
+            .swal2-popup.swal-mobile-akun .akun-form-grid {
+                display: grid !important;
+                grid-template-columns: 1fr !important;
+                gap: 0.55rem !important;
+                padding: 0.35rem 0 !important;
+                min-width: 0 !important;
+                max-height: none !important;
+                overflow: visible !important;
+            }
+            .swal2-popup.swal-mobile-akun .akun-form-grid > * { min-width: 0 !important; max-width: 100% !important; }
+            .swal2-popup.swal-mobile-akun .akun-form-grid input,
+            .swal2-popup.swal-mobile-akun .akun-form-grid select,
+            .swal2-popup.swal-mobile-akun .akun-form-grid textarea {
+                width: 100% !important;
+                max-width: 100% !important;
+                box-sizing: border-box !important;
+            }
+            .swal2-popup.swal-mobile-akun .akun-form-grid label { line-height: 1.3 !important; }
+            /* Ruang grid sub-ekskul & daftar ekskul menyesuaikan lebar layar kecil. */
+            .swal2-popup.swal-mobile-akun .akun-form-grid [style*="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))"],
+            .swal2-popup.swal-mobile-akun .sub-ekskul-form-wrap { display: grid !important; grid-template-columns: 1fr !important; gap: 0.3rem !important; }
         }
         @media (max-width: 380px) {
             .swal2-popup.swal-mobile-akun .swal2-actions .swal2-styled { width: 100% !important; }
@@ -9903,7 +9867,7 @@ async function openFormAkunMurid(isNew, data = {}) {
     const lbl = "font-bold text-blue-300";
 
     const formHTML = `
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left text-[11px] text-slate-300 mt-1 max-h-[70vh] overflow-y-auto overflow-x-hidden custom-scrollbar p-1 pr-2 min-w-0" style="max-height:70vh;overflow-y:auto;overflow-x:hidden;">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left text-[11px] text-slate-300 mt-1 min-w-0 akun-form-grid">
             ${sec('Identitas Siswa')}
             <div><label class="${lbl}">ID Akun</label><input id="f_idakun" value="${escJs(nisV)}" readonly class="w-full bg-black/60 border border-white/10 rounded px-2 py-1 mt-0.5 text-slate-400 outline-none opacity-70"></div>
             <div><label class="${lbl}">NIS *</label><input id="f_nis" value="${escJs(nisV)}" ${!isNew?'readonly':''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500 disabled:opacity-50"></div>
