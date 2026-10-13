@@ -97,6 +97,11 @@ function mulaiGeserNamaModal(e) {
 /** Lebar kolom Nama Siswa tabel absensi (dapat digeser via col-resizer; tersimpan di localStorage). */
 let wNamaAbsen = parseInt(localStorage.getItem('sisip_nama_width'), 10) || 110;
 
+/** Lebar kolom Nama Siswa tabel Input Nilai (Pengetahuan/Keterampilan/Sikap/Ekskul).
+ *  Dapat digeser via col-resizer yang sama; tersimpan di localStorage agar konsisten
+ *  antar kategori & bertahan setelah render ulang. Default 160px. */
+let wNamaNilai = parseInt(localStorage.getItem('sisip_nama_nilai_width'), 10) || 160;
+
 /** (A) Urut A-Z/Z-A daftar siswa pada modal absen masal (DOM reorder — pilihan radio aman). */
 let urutNamaModalAsc = null; // null = urutan asli (belum diurutkan)
 function toggleUrutNamaModal() {
@@ -5321,7 +5326,7 @@ function renderTabelPengetahuan() {
       <tr class="bg-slate-800 text-slate-300 text-[10px] uppercase tracking-wider text-center border-b border-white/20">
         <th class="sticky left-0 bg-slate-800 z-50 px-2 py-2 border-r border-white/10 w-8 cursor-pointer hover:bg-slate-700 text-blue-400 shadow-md" onclick="toggleNamaSiswaNilai()">No</th>
         <!-- Ganti kode <th> Nama Siswa yang lama dengan ini: -->
-        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: 160px; min-width: 50px;">
+        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: ${wNamaNilai}px; min-width: ${wNamaNilai}px;">
         <div class="flex items-center justify-between gap-1 pr-1"><span class="truncate font-semibold">Nama Siswa</span><button onclick="event.stopPropagation(); siklusUrutNamaNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Nama (A-Z / Z-A)">${ikonUrutNamaNilai()}</button></div>
         <!-- Garis Handle Geser (Kursor berubah jadi panah geser) -->
         <div class="col-resizer absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/50 transition-colors"></div></th>
@@ -7679,7 +7684,7 @@ function renderTabelKeterampilan() {
       <tr class="bg-slate-800 text-slate-300 text-[10px] uppercase tracking-wider text-center border-b border-white/20">
         <th class="sticky left-0 bg-slate-800 z-50 px-2 py-2 border-r border-white/10 w-8 cursor-pointer hover:bg-slate-700 text-blue-400 shadow-md" onclick="toggleNamaSiswaNilai()">No</th>
         <!-- Ganti kode <th> Nama Siswa yang lama dengan ini: -->
-        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: 160px; min-width: 50px;">
+        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: ${wNamaNilai}px; min-width: ${wNamaNilai}px;">
         <div class="flex items-center justify-between gap-1 pr-1"><span class="truncate font-semibold">Nama Siswa</span><button onclick="event.stopPropagation(); siklusUrutNamaNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Nama (A-Z / Z-A)">${ikonUrutNamaNilai()}</button></div>
         <!-- Garis Handle Geser (Kursor berubah jadi panah geser) -->
         <div class="col-resizer absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/50 transition-colors"></div></th>
@@ -8180,7 +8185,7 @@ function renderTabelSikap() {
       <tr class="bg-slate-800 text-slate-300 text-[10px] uppercase tracking-wider text-center border-b border-white/20">
         <th class="sticky left-0 bg-slate-800 z-50 px-2 py-2 border-r border-white/10 w-8 cursor-pointer hover:bg-slate-700 text-blue-400 shadow-md" onclick="toggleNamaSiswaNilai()">No</th>
         <!-- Ganti kode <th> Nama Siswa yang lama dengan ini: -->
-        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: 160px; min-width: 50px;">
+        <th rowspan="2" class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: ${wNamaNilai}px; min-width: ${wNamaNilai}px;">
         <div class="flex items-center justify-between gap-1 pr-1"><span class="truncate font-semibold">Nama Siswa</span><button onclick="event.stopPropagation(); siklusUrutNamaNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Nama (A-Z / Z-A)">${ikonUrutNamaNilai()}</button></div>
         <!-- Garis Handle Geser (Kursor berubah jadi panah geser) -->
         <div class="col-resizer absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/50 transition-colors"></div></th>
@@ -8914,22 +8919,27 @@ function enableNamaSiswaResize() {
             const newResizer = resizer.cloneNode(true);
             resizer.parentNode.replaceChild(newResizer, resizer);
 
+            // Pointer Events agar bisa digeser via mouse (desktop) DAN sentuhan (HP/tablet),
+            // konsisten dengan mulaiGeserNamaModal. touch-action:none mencegah scroll konflik.
+            newResizer.style.touchAction = 'none';
+
             let startX, startWidth;
 
-            newResizer.addEventListener('mousedown', function (e) {
+            newResizer.addEventListener('pointerdown', function (e) {
+                e.preventDefault();
                 startX = e.clientX;
-                startWidth = th.offsetWidth;
-                
-                function onMouseMove(e) {
-                    let currentWidth = startWidth + (e.clientX - startX);
-                    if (currentWidth < 50) currentWidth = 50;  // Batas minimum 50px
+                startWidth = th.offsetWidth || wNamaNilai;
+
+                function onPointerMove(ev) {
+                    let currentWidth = Math.round(startWidth + (ev.clientX - startX));
+                    if (currentWidth < 50) currentWidth = 50;   // Batas minimum 50px
                     if (currentWidth > 400) currentWidth = 400; // Batas maksimum
-                    
+
                     // Terapkan ukuran pada Header (th)
                     th.style.width = currentWidth + 'px';
                     th.style.minWidth = currentWidth + 'px';
                     th.style.maxWidth = currentWidth + 'px';
-                    
+
                     // Terapkan ukuran secara sinkron pada seluruh isi baris (td) Nama Siswa di bawahnya
                     const table = th.closest('table');
                     if (table) {
@@ -8945,20 +8955,29 @@ function enableNamaSiswaResize() {
                     }
                 }
 
-                function onMouseUp() {
-                    document.removeEventListener('mousemove', onMouseMove);
-                    document.removeEventListener('mouseup', onMouseUp);
-                    // Persist lebar kolom Nama tabel absensi
-                    if (th.id === 'th-nama-absen') {
-                        wNamaAbsen = th.offsetWidth;
-                        localStorage.setItem('sisip_nama_width', String(wNamaAbsen));
-                        refreshTableAbsenUI(); // hitung ulang offset sticky kolom setelahnya
+                function onPointerUp() {
+                    document.removeEventListener('pointermove', onPointerMove);
+                    document.removeEventListener('pointerup', onPointerUp);
+                    document.removeEventListener('pointercancel', onPointerUp);
+                    // Persist lebar kolom Nama
+                    const w = th.offsetWidth;
+                    if (w >= 50) {
+                        if (th.id === 'th-nama-absen') {
+                            // Tabel absensi → key sisip_nama_width
+                            wNamaAbsen = w;
+                            localStorage.setItem('sisip_nama_width', String(wNamaAbsen));
+                            refreshTableAbsenUI(); // hitung ulang offset sticky kolom setelahnya
+                        } else {
+                            // Tabel Input Nilai (Pengetahuan/Keterampilan/Sikap/Ekskul) → key terpisah
+                            wNamaNilai = w;
+                            localStorage.setItem('sisip_nama_nilai_width', String(wNamaNilai));
+                        }
                     }
                 }
 
-                document.addEventListener('mousemove', onMouseMove);
-                document.addEventListener('mouseup', onMouseUp);
-                e.preventDefault(); // Mencegah teks ter-highlight saat digeser
+                document.addEventListener('pointermove', onPointerMove);
+                document.addEventListener('pointerup', onPointerUp);
+                document.addEventListener('pointercancel', onPointerUp);
             });
         });
     }, 50);
@@ -9015,7 +9034,7 @@ function renderTabelEskul() {
       <thead class="sticky top-0 z-40 shadow-lg">
         <tr class="bg-slate-800 text-slate-300 text-[10px] uppercase tracking-wider text-center border-b border-white/20">
           <th class="sticky left-0 bg-slate-800 z-50 px-2 py-2 border-r border-white/10 w-8 cursor-pointer hover:bg-slate-700 text-blue-400 shadow-md" onclick="toggleNamaSiswaNilai()">No</th>
-          <th class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: 160px; min-width: 50px;">
+          <th class="th-nama-siswa sticky left-[32px] bg-slate-800 z-40 px-3 py-2 border-r border-b border-white/10 text-left align-middle select-none relative" style="display:${displayNama}; width: ${wNamaNilai}px; min-width: ${wNamaNilai}px;">
             <div class="flex items-center justify-between gap-1 pr-1"><span class="truncate font-semibold">Nama Siswa</span><button onclick="event.stopPropagation(); siklusUrutNamaNilai()" class="shrink-0 w-5 h-5 rounded bg-slate-700/70 hover:bg-slate-600 flex items-center justify-center text-[9px]" title="Urutkan Nama (A-Z / Z-A)">${ikonUrutNamaNilai()}</button></div>
             <div class="col-resizer absolute right-0 top-0 bottom-0 w-2 cursor-col-resize hover:bg-blue-500/50 transition-colors"></div>
           </th>
@@ -9725,13 +9744,21 @@ function suntikCSSMobileFormAkun() {
             .swal2-popup.swal-mobile-akun .swal2-html-container { overflow: visible !important; }
         }
         @media (max-width: 640px) {
+            /* Pastikan seluruh popup akun selalu benar-benar di tengah layar (horizontal)
+               walau ada padding container SweetAlert / konten lebar yang nyaris meluber. */
+            .swal2-container:has(.swal-mobile-akun) {
+                justify-content: center !important;
+                padding-inline: 0 !important;
+                overflow-x: hidden !important;
+            }
             .swal2-popup.swal-mobile-akun {
                 width: calc(100vw - 12px) !important;
                 max-width: 100vw !important;
                 max-height: 96dvh !important;
-                margin: 0 !important;
+                margin-inline: auto !important;
                 padding: 0.6rem !important;
                 border-radius: 0.75rem;
+                overflow-x: hidden !important;
             }
             .swal2-popup.swal-mobile-akun .swal2-title { padding: 0 0 0.5rem; font-size: 0.95rem; }
             .swal2-popup.swal-mobile-akun .swal2-html-container { padding-bottom: env(safe-area-inset-bottom, 0) !important; }
@@ -9747,7 +9774,7 @@ function suntikCSSMobileFormAkun() {
                 max-height: none !important;
                 overflow: visible !important;
             }
-            .swal2-popup.swal-mobile-akun .akun-form-grid > * { min-width: 0 !important; max-width: 100% !important; }
+            .swal2-popup.swal-mobile-akun .akun-form-grid > * { min-width: 0 !important; max-width: 100% !important; width: 100% !important; margin-inline: auto !important; }
             .swal2-popup.swal-mobile-akun .akun-form-grid input,
             .swal2-popup.swal-mobile-akun .akun-form-grid select,
             .swal2-popup.swal-mobile-akun .akun-form-grid textarea {
@@ -9756,9 +9783,17 @@ function suntikCSSMobileFormAkun() {
                 box-sizing: border-box !important;
             }
             .swal2-popup.swal-mobile-akun .akun-form-grid label { line-height: 1.3 !important; }
-            /* Ruang grid sub-ekskul & daftar ekskul menyesuaikan lebar layar kecil. */
+            /* Cegah konten dalam baris lebar penuh meluber di layar sempit (mis. blok Foto Siswa / Ekskul). */
+            .swal2-popup.swal-mobile-akun .akun-form-grid > [class*="col-span-2"] { width: 100% !important; max-width: 100% !important; margin-inline: auto !important; box-sizing: border-box !important; }
+            .swal2-popup.swal-mobile-akun .akun-form-grid > [class*="col-span-2"] > * { max-width: 100% !important; min-width: 0 !important; }
+            .swal2-popup.swal-mobile-akun .akun-form-grid [class*="flex"] { flex-wrap: wrap !important; }
+            /* HP: kotak ekstrakurikuler & sub-ekskul dibuat lebih sempit (multi-kolom kecil), tanpa
+               memaksa display (hormati style.display none dari onToggleEkskulForm). */
             .swal2-popup.swal-mobile-akun .akun-form-grid [style*="grid-template-columns:repeat(auto-fill,minmax(132px,1fr))"],
-            .swal2-popup.swal-mobile-akun .sub-ekskul-form-wrap { display: grid !important; grid-template-columns: 1fr !important; gap: 0.3rem !important; }
+            .swal2-popup.swal-mobile-akun .akun-form-grid .sub-ekskul-form-wrap {
+                grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)) !important;
+                gap: 0.35rem !important;
+            }
         }
         @media (max-width: 380px) {
             .swal2-popup.swal-mobile-akun .swal2-actions .swal2-styled { width: 100% !important; }
@@ -9869,11 +9904,15 @@ async function openFormAkunMurid(isNew, data = {}) {
     const formHTML = `
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-left text-[11px] text-slate-300 mt-1 min-w-0 akun-form-grid">
             ${sec('Identitas Siswa')}
-            <div><label class="${lbl}">ID Akun</label><input id="f_idakun" value="${escJs(nisV)}" readonly class="w-full bg-black/60 border border-white/10 rounded px-2 py-1 mt-0.5 text-slate-400 outline-none opacity-70"></div>
-            <div><label class="${lbl}">NIS *</label><input id="f_nis" value="${escJs(nisV)}" ${!isNew?'readonly':''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500 disabled:opacity-50"></div>
-            <div><label class="${lbl}">NISN</label><input id="f_nisn" value="${escJs(nisnV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">No HP/WA</label><input id="f_wa" value="${escJs(waV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">No HP Orang Tua</label><input id="f_wa_ortu" value="${escJs(waOrtuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            <div class="sm:col-span-2 grid grid-cols-3 gap-2">
+                <div><label class="${lbl}">ID Akun</label><input id="f_idakun" value="${escJs(nisV)}" readonly class="w-full bg-black/60 border border-white/10 rounded px-2 py-1 mt-0.5 text-slate-400 outline-none opacity-70"></div>
+                <div><label class="${lbl}">NIS *</label><input id="f_nis" value="${escJs(nisV)}" ${!isNew?'readonly':''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500 disabled:opacity-50"></div>
+                <div><label class="${lbl}">NISN</label><input id="f_nisn" value="${escJs(nisnV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            </div>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">No HP/WA</label><input id="f_wa" value="${escJs(waV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">No HP Orang Tua</label><input id="f_wa_ortu" value="${escJs(waOrtuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            </div>
             <div class="sm:col-span-2"><label class="${lbl}">Nama Lengkap *</label><input id="f_nama" value="${escJs(namaV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
 
             ${sec('Foto Siswa')}
@@ -9889,52 +9928,60 @@ async function openFormAkunMurid(isNew, data = {}) {
             </div>
 
             ${sec('Tahun & Kelas')}
-            <div><label class="${lbl}">ID Tahun Pelajaran</label>
-                <select id="f_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${optTahun}</select>
-            </div>
-            <div><label class="${lbl}">Semester</label>
-                <select id="f_semester" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
-                    <option value="">-- Pilih --</option>
-                    <option value="Ganjil" ${semesterV==='Ganjil'?'selected':''}>Ganjil</option>
-                    <option value="Genap" ${semesterV==='Genap'?'selected':''}>Genap</option>
-                </select>
-            </div>
-            <div><label class="${lbl}">Tingkat/Kelas</label>
-                <select id="f_kelas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${optKelas}</select>
-            </div>
-            <div><label class="${lbl}">Jenis Kelamin</label>
-                <select id="f_jk" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
-                    <option value="">-- Pilih --</option>
-                    <option value="Laki-laki" ${jkV==='Laki-laki'?'selected':''}>Laki-laki</option>
-                    <option value="Perempuan" ${jkV==='Perempuan'?'selected':''}>Perempuan</option>
-                </select>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">ID Tahun Pelajaran</label>
+                    <select id="f_tahun" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${optTahun}</select>
+                </div>
+                <div><label class="${lbl}">Semester</label>
+                    <select id="f_semester" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
+                        <option value="">-- Pilih --</option>
+                        <option value="Ganjil" ${semesterV==='Ganjil'?'selected':''}>Ganjil</option>
+                        <option value="Genap" ${semesterV==='Genap'?'selected':''}>Genap</option>
+                    </select>
+                </div>
+                <div><label class="${lbl}">Tingkat/Kelas</label>
+                    <select id="f_kelas" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${optKelas}</select>
+                </div>
+                <div><label class="${lbl}">Jenis Kelamin</label>
+                    <select id="f_jk" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
+                        <option value="">-- Pilih --</option>
+                        <option value="Laki-laki" ${jkV==='Laki-laki'?'selected':''}>Laki-laki</option>
+                        <option value="Perempuan" ${jkV==='Perempuan'?'selected':''}>Perempuan</option>
+                    </select>
+                </div>
             </div>
 
             ${sec('Data Pribadi')}
-            <div><label class="${lbl}">Tgl Lahir</label><input id="f_lahir" type="date" value="${escJs(lahirV)}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Golongan Darah</label>
-                <select id="f_goldar" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
-                    <option value="">-- Pilih --</option>
-                    ${['A','B','AB','O'].map(g => `<option value="${g}" ${goldarV===g?'selected':''}>${g}</option>`).join('')}
-                </select>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">Tgl Lahir</label><input id="f_lahir" type="date" value="${escJs(lahirV)}" style="color-scheme: dark;" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Golongan Darah</label>
+                    <select id="f_goldar" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none">
+                        <option value="">-- Pilih --</option>
+                        ${['A','B','AB','O'].map(g => `<option value="${g}" ${goldarV===g?'selected':''}>${g}</option>`).join('')}
+                    </select>
+                </div>
+                <div><label class="${lbl}">Agama</label>
+                    <select id="f_agama" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${listAgama.map(a => `<option value="${escJs(a)}" ${agamaV === a ? 'selected' : ''}>${a}</option>`).join('')}</select>
+                </div>
+                <div><label class="${lbl}">Email Login (opsional)</label><input id="f_email" type="email" value="${escJs(emailV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
             </div>
-            <div><label class="${lbl}">Agama</label>
-                <select id="f_agama" class="w-full bg-slate-700 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none"><option value="">-- Pilih --</option>${listAgama.map(a => `<option value="${escJs(a)}" ${agamaV === a ? 'selected' : ''}>${a}</option>`).join('')}</select>
-            </div>
-            <div><label class="${lbl}">Email Login (opsional)</label><input id="f_email" type="email" value="${escJs(emailV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
 
             ${sec('Orang Tua / Wali')}
-            <div><label class="${lbl}">Nama Orang tua Ayah</label><input id="f_ayah" value="${escJs(ayahV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Pekerjaan Ayah</label><input id="f_pk_ayah" value="${escJs(pkAyahV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Nama Orang tua Ibu</label><input id="f_ibu" value="${escJs(ibuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Pekerjaan Ibu</label><input id="f_pk_ibu" value="${escJs(pkIbuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Nama Wali</label><input id="f_wali" value="${escJs(waliV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Alamat</label><input id="f_alamat" value="${escJs(alamatV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">Nama Orang tua Ayah</label><input id="f_ayah" value="${escJs(ayahV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Pekerjaan Ayah</label><input id="f_pk_ayah" value="${escJs(pkAyahV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Nama Orang tua Ibu</label><input id="f_ibu" value="${escJs(ibuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Pekerjaan Ibu</label><input id="f_pk_ibu" value="${escJs(pkIbuV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Nama Wali</label><input id="f_wali" value="${escJs(waliV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+            </div>
 
             ${sec('Media Sosial & Lokasi')}
-            <div class="sm:col-span-2"><label class="${lbl} mb-1 block">Alamat Google Maps <span class="font-normal text-slate-400">(tautan)</span></label>
-                <input id="f_alamat_maps" value="${escJs(alamatMapsV)}" placeholder="https://maps.app.goo.gl/..." class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500">
-                <p class="text-[9px] text-slate-400 mt-0.5">Tempel tautan Google Maps lokasi rumah. Dibuka di tab baru (iframe tidak dipasang karena kebijakan keamanan aplikasi).</p>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">Alamat</label><input id="f_alamat" value="${escJs(alamatV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl} mb-1 block">Alamat Google Maps <span class="font-normal text-slate-400">(tautan)</span></label>
+                    <input id="f_alamat_maps" value="${escJs(alamatMapsV)}" placeholder="https://maps.app.goo.gl/..." class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500">
+                    <p class="text-[9px] text-slate-400 mt-0.5 break-words">Tempel tautan Google Maps lokasi rumah. Dibuka di tab baru (iframe tidak dipasang karena kebijakan keamanan aplikasi).</p>
+                </div>
             </div>
             <div class="sm:col-span-2">
                 <label class="${lbl} mb-1 block">Media Sosial <span class="font-normal text-slate-400">(Instagram, TikTok, Facebook, YouTube, dll.)</span></label>
@@ -9943,16 +9990,18 @@ async function openFormAkunMurid(isNew, data = {}) {
             </div>
 
             ${sec('Jabatan & Ekstrakurikuler')}
-            <div><label class="${lbl} mb-1 block">Jabatan Kelas</label>
-                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
-                    <div id="badge-jabatan-kelas" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
-                    <button type="button" onclick="openPopupPilihJabatan('kelas')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl} mb-1 block">Jabatan Kelas</label>
+                    <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
+                        <div id="badge-jabatan-kelas" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
+                        <button type="button" onclick="openPopupPilihJabatan('kelas')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
+                    </div>
                 </div>
-            </div>
-            <div><label class="${lbl} mb-1 block">Jabatan Ekstrakurikuler</label>
-                <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
-                    <div id="badge-jabatan-ekskul" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
-                    <button type="button" onclick="openPopupPilihJabatan('ekskul')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
+                <div><label class="${lbl} mb-1 block">Jabatan Ekstrakurikuler</label>
+                    <div class="flex items-center justify-between gap-2 bg-black/20 p-1.5 rounded border border-white/10" style="flex-wrap:wrap;">
+                        <div id="badge-jabatan-ekskul" class="flex flex-wrap gap-1 flex-1 min-w-0"></div>
+                        <button type="button" onclick="openPopupPilihJabatan('ekskul')" class="shrink-0 bg-blue-600 hover:bg-blue-700 text-white px-2 py-1 rounded text-[10px] font-bold transition whitespace-nowrap"><i class="fa-solid fa-list-check mr-1"></i>Kelola</button>
+                    </div>
                 </div>
             </div>
 
@@ -9964,10 +10013,12 @@ async function openFormAkunMurid(isNew, data = {}) {
             </div>
 
             ${sec('Catatan & Keamanan')}
-            <div><label class="${lbl}">Catatan Khusus</label><input id="f_catatan" value="${escJs(catatanV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
-            <div><label class="${lbl}">Password ${isNew ? '*' : '(kosong = tidak diubah)'}</label><input id="f_pass" type="text" value="${isNew ? '123456' : ''}" placeholder="${isNew ? '' : 'biarkan kosong'}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"><p class="text-[9px] text-slate-400 mt-0.5">Hash bcrypt (password lokal, tanpa Google). Minimal 6 karakter.</p></div>
+            <div class="sm:col-span-2 grid grid-cols-2 gap-2">
+                <div><label class="${lbl}">Catatan Khusus</label><input id="f_catatan" value="${escJs(catatanV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
+                <div><label class="${lbl}">Password ${isNew ? '*' : '(kosong = tidak diubah)'}</label><input id="f_pass" type="text" value="${isNew ? '123456' : ''}" placeholder="${isNew ? '' : 'biarkan kosong'}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"><p class="text-[9px] text-slate-400 mt-0.5 break-words">Hash bcrypt (password lokal, tanpa Google). Minimal 6 karakter.</p></div>
+            </div>
 
-            <div class="col-span-2 border border-sky-500/30 rounded-lg p-2 bg-sky-900/10">
+            <div class="sm:col-span-2 w-full border border-sky-500/30 rounded-lg p-2 bg-sky-900/10">
                 <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
                     <label class="font-bold text-sky-300 text-[10px]"><i class="fa-solid fa-arrow-up-right-dots mr-1"></i> Riwayat Kelas &amp; Status per Tahun Pelajaran</label>
                     <select id="rs_tahun" onchange="gantiTahunFormRiwayatSiswa(this.value)" class="bg-slate-700 border border-white/20 rounded px-1.5 py-0.5 text-[10px] text-white outline-none">
