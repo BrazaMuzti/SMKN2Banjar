@@ -239,7 +239,7 @@ Yang terjadi saat mode hapus:
 
 ## Perilaku
 
-- Nama file: `{NIS}_{TA}_{Kelas}.jpg` (disanitasi) — contoh `12045_2026-2027_XII-TKJ-1.jpg`.
+- Nama file: `{NISN} {Nama siswa}.jpg` (disanitasi, spasi dipertahankan) — fallback NIS bila NISN kosong. Contoh `310012 12045 Budi Santoso.jpg`.
 - File di-upload dengan izin **"Siapa saja yang memiliki link → Pembaca"** (anyone reader),
   sehingga `<img>` di aplikasi & lembar cetak bisa menampilkannya tanpa login Google.
 - URL yang disimpan: `https://drive.google.com/thumbnail?id=<FILE_ID>&sz=w1000`.

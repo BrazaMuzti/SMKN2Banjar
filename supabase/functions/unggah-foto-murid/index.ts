@@ -19,7 +19,7 @@
 //        diverifikasi ULANG di RPC simpan_foto_murid (security definer) sebelum
 //        url_foto ditulis — pemanggil harus admin ATAU murid pemilik NIS.
 //
-// FILENAME: {nis}_{TA}_{kelas}.jpg — contoh: 12045_2026-2027_XII-TKJ-1.jpg
+// FILENAME: "{NISN} {Nama siswa}.jpg" (fallback NIS bila NISN kosong) — contoh: 310012 12045 Budi Santoso.jpg
 //
 // Secret yang harus diset di Supabase:
 //   GOOGLE_SA_JSON   → isi file JSON kunci service account (memuat client_email
@@ -77,6 +77,21 @@ function sanitasiNama(s: string): string {
     .slice(0, 80) || "foto";
 }
 
+/** Sanitasi NAMA SISWA untuk nama file: buang karakter bahaya TAPI pertahankan spasi
+ *  (format "NISN Nama siswa.jpg" — spasi antar kata dijaga agar file terbaca wajar). */
+function sanitasiNamaSiswa(s: string): string {
+  return String(s || "")
+    .trim()
+    .replace(/[\/\\:*?"<>|]+/g, "-")
+    .replace(/[\u0000-\u001f\u007f]/g, "")
+    .replace(/[^A-Za-z0-9 ._'-]/g, "")
+    .replace(/-+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/^\s+|\s+$/g, "")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || "siswa";
+}
+
 // ============ Identifikasi pemanggil ============
 /** Coba verifikasi Authorization sebagai JWT Supabase (RS256 oleh Auth) → profil pemanggil. */
 async function identifikasiPemanggil(token: string): Promise<{ nis_nip: string; tipe: string } | null> {
@@ -117,7 +132,25 @@ async function identifikasiPemanggil(token: string): Promise<{ nis_nip: string; 
   }
 }
 
-/** Cek pemanggil boleh (admin) ATAU pemilik NIS — via DB (service role). */
+/** Guru (wali kelas / pembina ekskul) mengampu murid p_nis? — via RPC helper. */
+async function guruAmpuMurid(
+  admin: SupabaseClient<any, "public", any>,
+  guruNis: string,
+  muridNis: string,
+): Promise<boolean> {
+  try {
+    const { data } = await admin.rpc("akun_guru_ampu_murid", {
+      p_guru_nis: guruNis,
+      p_murid_nis: muridNis,
+    });
+    return data === true;
+  } catch (e) {
+    console.warn("guruAmpuMurid:", e);
+    return false;
+  }
+}
+
+/** Cek pemanggil boleh (admin) ATAU pemilik NIS ATAU guru wali/pembina — via DB (service role). */
 async function pemanggilDiizinkan(
   admin: SupabaseClient<any, "public", any>,
   p_nis: string,
@@ -127,10 +160,13 @@ async function pemanggilDiizinkan(
   if (caller) {
     if (caller.tipe === "admin") return { ok: true, ...caller };
     if (caller.tipe === "murid" && caller.nis_nip === p_nis) return { ok: true, ...caller };
-    return { ok: false, tipe: caller.tipe, nis_nip: caller.nis_nip, alasan: "Hanya admin atau murid pemilik NIS yang boleh." };
+    if (caller.tipe === "guru" && await guruAmpuMurid(admin, caller.nis_nip, p_nis)) {
+      return { ok: true, ...caller };
+    }
+    return { ok: false, tipe: caller.tipe, nis_nip: caller.nis_nip, alasan: "Hanya admin, murid pemilik NIS, atau guru wali/pembina yang boleh." };
   }
   // Token bukan JWT (sesi aplikasi lokal) → klaim dari frontend; verifikasi baris
-  // akun di DB — mirror logika RPC simpan_foto_murid (admin ATAU murid pemilik NIS).
+  // akun di DB — mirror logika RPC simpan_foto_murid (admin / murid pemilik / guru wali-pembina).
   // RPC security definer tetap menjadi pengadil akhir saat url_foto ditulis.
   const tipe = String(klaim?.tipe || "");
   const nisP = String(klaim?.nisNip || "");
@@ -142,6 +178,19 @@ async function pemanggilDiizinkan(
       .eq("tipe", "murid")
       .maybeSingle();
     if (!baris) return { ok: false, tipe, nis_nip: nisP, alasan: "Data murid tidak ditemukan." };
+    return { ok: true, tipe, nis_nip: nisP };
+  }
+  if (tipe === "guru") {
+    const { data: baris } = await admin
+      .from("akun")
+      .select("nis_nip")
+      .eq("nis_nip", nisP)
+      .eq("tipe", "guru")
+      .maybeSingle();
+    if (!baris) return { ok: false, tipe, nis_nip: nisP, alasan: "Akun guru tidak terverifikasi." };
+    if (!(await guruAmpuMurid(admin, nisP, p_nis))) {
+      return { ok: false, tipe, nis_nip: nisP, alasan: "Guru hanya dapat mengganti foto murid yang diampu (wali kelas / pembina ekskul)." };
+    }
     return { ok: true, tipe, nis_nip: nisP };
   }
   if (tipe === "admin") {
@@ -369,14 +418,15 @@ Deno.serve(async (req) => {
     // 4-5. Upload ke Google Drive (Service Account) — nama file disanitasi.
     //      Folder tujuan DB baca lewat DRIVE_FOLDER_ID; upload + akses publik
     //      ditangani unggahViaDrive (JWT SA → Drive API v3).
-    const tahun = sanitasiNama(String(body.tahun ?? "").replace(/\//g, "-"));
-    const kelas = sanitasiNama(String(body.kelas ?? ""));
+    //      Nama file otomatis: "NISN Nama siswa.jpg" (fallback NIS bila NISN kosong).
     const mimeType = String(foto.split(";", 1)[0].replace("data:", "") || "image/jpeg");
     const ext =
       mimeType === "image/png" ? "png" :
       mimeType === "image/webp" ? "webp" :
       mimeType === "image/gif" ? "gif" : "jpg";
-    const namaFile = `${sanitasiNama(nis)}_${tahun || "TA"}_${kelas || "kelas"}.${ext}`;
+    const nisn = sanitasiNama(String(body.nisn ?? ""));
+    const namaSiswa = sanitasiNamaSiswa(String(body.nama ?? ""));
+    const namaFile = `${nisn || sanitasiNama(nis)} ${namaSiswa}.${ext}`;
     const { fileUrl: urlFoto, fileId } = await unggahViaDrive(namaFile, mimeType, b64);
 
     // 6. Simpan URL ke akun.url_foto (RPC security definer = jaring pengaman otorisasi)
