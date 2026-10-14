@@ -7,8 +7,9 @@
 //   ATAU fallback bila NISN kosong:
 //       "{NIS} {Nama siswa}.jpg"
 //   Fungsi ini:
-//     1) Autentikasi pemanggil sebagai ADMIN (via JWT Supabase ATAU klaim
-//        `pemanggil`{tipe:'admin',nisNip} yang diverifikasi ulang ke tabel akun).
+//     1) Autentikasi pemanggil sebagai ADMIN ATAU GURU (wali kelas / pembina ekskul)
+//        yang berhak — via JWT Supabase ATAU klaim `pemanggil`{tipe,nisNip} yang
+//        diverifikasi ulang ke tabel akun.
 //     2) List folder DRIVE_FOLDER_ID via Drive API v3 `files.list`
 //        (`supportsAllDrives=true&includeItemsFromAllDrives=true`).
 //     3) Parsing tiap nama file → NISN (fallback NIS) → cocokkan ke tabel akun
@@ -145,10 +146,11 @@ async function listFileFolder(
   return hasil;
 }
 
-/** Identifikasi pemanggil sebagai admin.
- *  Jalur 1: Authorization = JWT Supabase (RS256) → auth.getUser() → akun.tipe='admin'.
- *  Jalur 2: klaim `pemanggil`{tipe:'admin',nisNip} diverifikasi ulang ke baris akun (service role). */
-async function adminDiizinkan(
+/** Identifikasi pemanggil berhak (ADMIN, atau GURU wali kelas / pembina ekskul).
+ *  Jalur 1: Authorization = JWT Supabase (RS256) → auth.getUser() → akun.tipe='admin'
+ *           ATAU akun.tipe='guru' dengan wali_kelas/ekstrakurikuler terisi.
+ *  Jalur 2: klaim `pemanggil`{tipe, nisNip} diverifikasi ulang ke baris akun (service role). */
+async function pemanggilDiizinkan(
   token: string,
   klaim: { tipe?: string; nisNip?: string },
 ): Promise<boolean> {
@@ -156,6 +158,14 @@ async function adminDiizinkan(
   const anonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
   const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
   const admin = createClient(url, serviceKey, { auth: { persistSession: false } });
+
+  // Guru berhak bila punya penugasan wali kelas / pembina ekskul (seperti
+  // bisaImportMuridAktif() di frontend). Di sini dipakai untuk SINKRON global seluruh murid,
+  // jadi cukup cek kolom flat wali_kelas/ekstrakurikuler pada baris akun guru.
+  const guruBerhak = (row: { tipe?: string; wali_kelas?: string; ekstrakurikuler?: string }) =>
+    row.tipe === "guru" &&
+    (String(row.wali_kelas || "").trim() !== "" ||
+      String(row.ekstrakurikuler || "").trim() !== "");
 
   // Jalur 1: JWT valid
   if (token && token.split(".").length === 3) {
@@ -168,33 +178,37 @@ async function adminDiizinkan(
       if (!meErr && me?.user) {
         const { data: akun } = await admin
           .from("akun")
-          .select("tipe")
+          .select("tipe, wali_kelas, ekstrakurikuler")
           .eq("user_id", me.user.id)
           .maybeSingle();
-        if (akun && akun.tipe === "admin") return true;
+        if (akun && (akun.tipe === "admin" || guruBerhak(akun))) return true;
         if (me.user.email) {
           const { data: akunE } = await admin
             .from("akun")
-            .select("tipe")
+            .select("tipe, wali_kelas, ekstrakurikuler")
             .eq("email", me.user.email)
             .maybeSingle();
-          if (akunE && akunE.tipe === "admin") return true;
+          if (akunE && (akunE.tipe === "admin" || guruBerhak(akunE))) return true;
         }
       }
     } catch (e) {
-      console.warn("sinkron-foto-drive/adminDiizinkan/jwt:", e);
+      console.warn("sinkron-foto-drive/pemanggilDiizinkan/jwt:", e);
     }
   }
 
-  // Jalur 2: klaim admin lokal (login aplikasi NIS+password) — verifikasi baris akun
-  if (String(klaim?.tipe || "") === "admin" && String(klaim?.nisNip || "")) {
+  // Jalur 2: klaim admin/guru lokal (login aplikasi NIS+NIP+password) — verifikasi baris akun
+  const tipeKlaim = String(klaim?.tipe || "");
+  const idKlaim = String(klaim?.nisNip || "");
+  if (idKlaim) {
     const { data: baris } = await admin
       .from("akun")
-      .select("nis_nip")
-      .eq("nis_nip", String(klaim.nisNip))
-      .eq("tipe", "admin")
+      .select("tipe, wali_kelas, ekstrakurikuler")
+      .eq("nis_nip", idKlaim)
       .maybeSingle();
-    if (baris) return true;
+    if (baris) {
+      if (tipeKlaim === "admin" && baris.tipe === "admin") return true;
+      if (tipeKlaim === "guru" && guruBerhak(baris)) return true;
+    }
   }
   return false;
 }
@@ -212,9 +226,9 @@ Deno.serve(async (req) => {
       pemanggil?: { tipe?: string; nisNip?: string };
     };
 
-    // 1. Otorisasi admin
-    if (!(await adminDiizinkan(token, body.pemanggil || {}))) {
-      return json({ status: "error", message: "Akses khusus admin." }, 403);
+    // 1. Otorisasi admin / guru (wali kelas / pembina ekskul)
+    if (!(await pemanggilDiizinkan(token, body.pemanggil || {}))) {
+      return json({ status: "error", message: "Akses khusus admin, wali kelas, atau pembina ekskul." }, 403);
     }
 
     const saJson = (Deno.env.get("GOOGLE_SA_JSON") || "").trim();
