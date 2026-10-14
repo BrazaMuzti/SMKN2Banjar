@@ -8,7 +8,7 @@ const INFO_APLIKASI = {
   namaPanjang: 'Sistem Informasi Sekolah Indonesia Pintar',
   versi: '1.0.0',
   deskripsi: 'Aplikasi administrasi sekolah: absensi, penilaian, jadwal, kalender pendidikan & laporan — berbasis web, multi-peran (admin, guru, murid).',
-  pengembang: 'Tim Pengembang SISIP : Indra Nur Muhammad, S.Pd., M.Pd.',
+  pengembang: 'Tim Pengembang SISIP : Indra Nur Muhammad, S.Pd., M.Pd. <br> Yusman, S.Ip.',
   kontak: {
     
     wa: '6281320682233',          // contoh: '6281234567890' (62 di depan, tanpa +)
@@ -488,7 +488,6 @@ let userName = namaDenganGelar(
   }
   // Guru dan Admin bisa akses Manajemen Murid
   if (role === 'admin' || role === 'guru') {
-      menus.push({ id: 'ekstrakurikuler', icon: 'fa-medal', text: 'Ekstrakurikuler' });
       menus.push({ id: 'akun-murid', icon: 'fa-user-graduate', text: 'Data Akun Murid' });
       menus.push({ id: 'rapor', icon: 'fa-scroll', text: 'Rapor & Leger' });
       menus.push({ id: 'poin-siswa', icon: 'fa-scale-balanced', text: 'Poin Siswa' });
@@ -500,6 +499,12 @@ let userName = namaDenganGelar(
 
   if (isPengurus) menus.push({ id: 'absensi', icon: 'fa-clipboard-user', text: 'Input Hadir (Pengurus)' });
 
+  // [REQ 4] Menu Ekstrakurikuler hanya utk: admin, pembina (guru pembina ekskul),
+  // walikelas (guru wali kelas), atau murid anggota ekskul. Guru biasa (non-pembina,
+  // non-walikelas) TIDAK mendapat menu ini.
+  if (role === 'admin' || (role === 'guru' && (!!waliKelasAktif() || ekskulDiampuAktif().length > 0))) {
+    menus.push({ id: 'ekstrakurikuler', icon: 'fa-medal', text: 'Ekstrakurikuler' });
+  }
   // Murid anggota/pengurus ekstrakurikuler → menu Ekstrakurikuler (lihat Info, Agenda, Profil)
   // [REQ 1c] termasuk ekskul yang dijabatinya (peta jabatan), bukan hanya yang diikuti
   if (role === 'murid' && ekskulMilikMurid().length > 0) menus.push({ id: 'ekstrakurikuler', icon: 'fa-medal', text: 'Ekstrakurikuler' });
@@ -1797,7 +1802,8 @@ function pilihFotoSaya(setelahSukses) {
     rd.onload = () => bukaCropperFoto(rd.result, async (hasil) => {
       Swal.fire({ title: 'Mengunggah Foto...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
       const res = await unggahFotoMurid({
-        nis, nama: String(user["Nama Lengkap"] || user["Nama Guru"] || ''),
+        nis, nisn: String(user["NISN"] || ''),
+        nama: String(user["Nama Lengkap"] || user["Nama Guru"] || ''),
         tahun: currentTahun, kelas: String(user["Tingkat/Kelas"] || ''), dataUrl: hasil, hapus: false
       });
       Swal.close();
@@ -9917,13 +9923,13 @@ async function openFormAkunMurid(isNew, data = {}) {
 
             ${sec('Foto Siswa')}
             <div class="sm:col-span-2 flex flex-wrap items-center gap-3 bg-black/20 p-2 rounded border border-white/10">
-                <div id="foto-pratinjau-form" class="w-16 rounded-md overflow-hidden border border-white/20 bg-slate-800 flex items-center justify-center" style="height:80px;">${fotoPratinjauHtml(fotoV)}</div>
+                <div id="foto-pratinjau-form" onclick="pilihFotoMuridForm()" title="Klik untuk memilih / seret foto ke kotak ini" ondragover="seretFotoFormEv(this,event)" ondragleave="keluarFotoFormEv(this,event)" ondrop="dropFotoMuridForm(this,event)" class="w-16 rounded-md overflow-hidden border border-white/20 bg-slate-800 flex items-center justify-center cursor-pointer" style="height:80px;">${fotoPratinjauHtml(fotoV)}</div>
                 <div class="space-y-1.5 min-w-[200px] flex-1">
                     <div class="flex flex-wrap gap-1.5">
                         <button type="button" onclick="pilihFotoMuridForm()" class="bg-blue-600 hover:bg-blue-700 text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-camera mr-1"></i>Pilih / Ganti</button>
                         <button type="button" onclick="hapusFotoMuridForm()" class="bg-red-600/20 hover:bg-red-600 text-red-300 hover:text-white px-2.5 py-1 rounded text-[10px] font-bold"><i class="fa-solid fa-trash mr-1"></i>Hapus</button>
                     </div>
-                    <p class="text-[9px] text-slate-400">Pas foto 3×4 (rasio 3:4, hasil potong 900×1200). Foto tersimpan di Google Drive folder "Foto Siswa", nama file otomatis <b>NIS_TA_Kelas.jpg</b>.</p>
+                    <p class="text-[9px] text-slate-400">Pas foto 3×4 (rasio 3:4, hasil potong 900×1200). <b>Seret &amp; letakkan foto</b> ke kotak di samping atau klik <b>Pilih / Ganti</b>. Foto tersimpan di Google Drive folder "Foto Siswa", nama file otomatis <b>NISN Nama siswa.jpg</b>.</p>
                 </div>
             </div>
 
@@ -10477,7 +10483,7 @@ function cetakMutasiSiswa() {
 let formFotoMurid = { dataUrl: null, hapus: false, asal: '' };
 
 /** Kirim foto murid ke Edge Function 'unggah-foto-murid' → URL Drive disimpan ke akun.url_foto. */
-async function unggahFotoMurid({ nis, nama, tahun, kelas, dataUrl, hapus }) {
+async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }) {
   const u = (currentUser || {}).user || {};
   const pemanggil = {
     tipe: String((currentUser || {}).role || ''),
@@ -10511,7 +10517,7 @@ async function unggahFotoMurid({ nis, nama, tahun, kelas, dataUrl, hapus }) {
       'Authorization': `Bearer ${token}`,
       'apikey': SUPABASE_ANON_KEY
     },
-    body: JSON.stringify({ nis, nama, tahun, kelas, foto: dataUrl || undefined, hapus: !!hapus, pemanggil })
+    body: JSON.stringify({ nis, nisn: String(nisn || ''), nama, tahun, kelas, foto: dataUrl || undefined, hapus: !!hapus, pemanggil })
   });
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
 }
@@ -10609,24 +10615,50 @@ function fotoPratinjauHtml(url) {
   return `<img src="${escapeHtml(url)}" alt="Foto" style="width:100%;height:100%;object-fit:cover;" class="w-full h-full">`;
 }
 
-// ---- Form akun murid (admin): pilih/hapus foto ----
+// ---- Form akun murid (admin): pilih / seret-hapus foto ----
 function pilihFotoMuridForm() {
   const inp = document.createElement('input');
   inp.type = 'file'; inp.accept = 'image/*';
-  inp.onchange = () => {
-    const f = (inp.files && inp.files[0]) || null;
-    if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { showToast('error', 'Ukuran file maksimal 5 MB.'); return; }
-    const rd = new FileReader();
-    rd.onload = () => bukaCropperFoto(rd.result, (hasil) => {
-      formFotoMurid.dataUrl = hasil;
-      formFotoMurid.hapus = false;
-      const el = document.getElementById('foto-pratinjau-form');
-      if (el) el.innerHTML = fotoPratinjauHtml(hasil);
-    });
-    rd.readAsDataURL(f);
-  };
+  inp.onchange = () => prosesFileFotoSiswa((inp.files && inp.files[0]) || null);
   inp.click();
+}
+
+/** Proses file gambar dari pilih/seret pada form akun murid → Cropper → state formFotoMurid. [REQ 1] */
+function prosesFileFotoSiswa(f) {
+  if (!f) return;
+  if (!/^image\//i.test(String(f.type || '')) && !/\.(jpe?g|png|webp|gif)$/i.test(String(f.name || ''))) {
+    return showToast('error', 'File harus berupa gambar.');
+  }
+  if (f.size > 5 * 1024 * 1024) { showToast('error', 'Ukuran file maksimal 5 MB.'); return; }
+  cegahRingFotoEv();
+  const rd = new FileReader();
+  rd.onload = () => bukaCropperFoto(rd.result, (hasil) => {
+    formFotoMurid.dataUrl = hasil;
+    formFotoMurid.hapus = false;
+    const el = document.getElementById('foto-pratinjau-form');
+    if (el) { el.innerHTML = fotoPratinjauHtml(hasil); el.classList.remove('ring-2', 'ring-cyan-400'); }
+  });
+  rd.readAsDataURL(f);
+}
+
+/** Highlight kotak pratinjau foto selama drag-enter. [REQ 1] */
+function seretFotoFormEv(el, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  if (el) el.classList.add('ring-2', 'ring-cyan-400');
+}
+function keluarFotoFormEv(el, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  cegahRingFotoEv();
+}
+function cegahRingFotoEv() {
+  const el = document.getElementById('foto-pratinjau-form');
+  if (el) el.classList.remove('ring-2', 'ring-cyan-400');
+}
+function dropFotoMuridForm(el, ev) {
+  ev.preventDefault(); ev.stopPropagation();
+  cegahRingFotoEv();
+  const f = (ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0]) || null;
+  prosesFileFotoSiswa(f);
 }
 
 function hapusFotoMuridForm() {
@@ -10842,6 +10874,7 @@ async function simpanAkunMurid(formData, isNew) {
     try {
       const res = await unggahFotoMurid({
         nis: String(p_data.nis || ''),
+        nisn: String(p_data.nisn || ''),
         nama: String(p_data.nama_lengkap || ''),
         tahun: String(p_data.tahun_pelajaran || ''),
         kelas: String(p_data.tingkat_kelas || ''),
@@ -16668,6 +16701,7 @@ async function renderTabProfilEkskul() {
         ${bolehKelolaAnggota ? `<button onclick="formEkstrakurikuler('${escJs(aktif)}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen"></i> Edit Profil</button>` : ''}
         ${isAdminGuru ? `<button onclick="formEkstrakurikuler('')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Tambah Ekskul</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formTambahAnggotaEkskul()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-user-plus"></i> Tambah Anggota</button>` : ''}
+        ${bolehKelolaAnggota ? `<button onclick="formImportAnggotaEkskul()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Import anggota massal — tempel daftar NIS / upload Excel/CSV"><i class="fa-solid fa-file-import"></i> Import Anggota</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formHapusAnggotaEkskul()" class="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Hapus sementara — tidak tercetak di export, dapat diaktifkan kembali"><i class="fa-solid fa-user-minus"></i> Hapus Anggota</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="exportAnggotaEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Export ke Excel"><i class="fa-solid fa-file-excel"></i></button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="exportAnggotaEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Cetak PDF"><i class="fa-solid fa-file-pdf"></i></button>` : ''}
@@ -17109,7 +17143,123 @@ async function formTambahAnggotaEkskul() {
     renderTabEkskul();
   });
 }
+// ---------- IMPORT ANGGOTA MASSAL (REQ 3) ----------
+/** Muat library SheetJS (xlsx) dari CDN secara lambat — hanya saat file .xlsx/.xls dipilih. [REQ 3] */
+function muatXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+    s.onload = () => resolve(window.XLSX);
+    s.onerror = () => reject(new Error('Gagal memuat library Excel. Ekspor berkas ke CSV atau tempel daftar NIS.'));
+    document.head.appendChild(s);
+  });
+}
 
+/** Baca file teks (CSV/TXT) → kumpulan NIS (dipisah koma/tab/titik koma per baris). [REQ 3] */
+function ekstrakNisDariTeks(teks) {
+  const out = [];
+  String(teks || '').split(/\r?\n/).forEach(b => {
+    String(b).split(/[,;\t]/).map(x => x.trim()).filter(Boolean).forEach(t => {
+      const bersih = t.replace(/[^0-9A-Za-z-]/g, '');
+      if (bersih && !out.includes(bersih)) out.push(bersih);
+    });
+  });
+  return out;
+}
+
+/** Ekstrak NIS dari file (Excel via SheetJS; CSV/TXT native). [REQ 3] */
+async function ekstrakNisDariFile(file) {
+  const nama = String((file && file.name) || '').toLowerCase();
+  if (/\.xlsx$/.test(nama) || /\.xls$/.test(nama)) {
+    const XLSX = await muatXLSX();
+    const buf = await file.arrayBuffer();
+    const wb = XLSX.read(buf, { type: 'array' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    let kolomNis = 0;
+    if (rows[0]) {
+      const idx = rows[0].findIndex(h => /^nis$/i.test(String(h).trim()));
+      if (idx >= 0) kolomNis = idx;
+    }
+    const out = [];
+    for (let i = 1; i < rows.length; i++) {
+      const v = String(rows[i][kolomNis] ?? '').trim().replace(/[^0-9A-Za-z-]/g, '');
+      if (v && !out.includes(v)) out.push(v);
+    }
+    return out;
+  }
+  const teks = await file.text();
+  return ekstrakNisDariTeks(teks);
+}
+
+/** Modal "Import Anggota" (khusus admin/pembina): tempel daftar NIS ATAU upload Excel/CSV,
+ *  lalu tambahkan massal ke ekskul aktif (lewati yang sudah menjadi anggota). [REQ 3] */
+async function formImportAnggotaEkskul() {
+  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  const aktif = window.__ekskulAktif;
+  if (!aktif) return showToast('error', 'Pilih ekstrakurikuler dulu.');
+  const anggotaSaatIni = await ambilAnggotaEkskul(aktif);
+  const sekarang = new Set(anggotaSaatIni.map(a => String(a.nis_nip || a.NIS || a.nis)));
+  const nisSet = new Set();
+  const bacaFile = async () => {
+    const file = document.getElementById('imp_file')?.files?.[0];
+    if (file) { try { (await ekstrakNisDariFile(file)).forEach(n => nisSet.add(n)); } catch (e) { console.warn('import file:', e); } }
+  };
+  const { value, isConfirmed } = await Swal.fire({
+    title: `<i class="fa-solid fa-file-import text-purple-400"></i> Import Anggota ${escapeHtml(aktif)}`,
+    html: `
+      <div class="text-left text-[11px] text-slate-300 mt-2">
+        <p class="mb-1 text-slate-400">Cara 1 — Tempel daftar NIS (satu per baris, atau dipisah koma):</p>
+        <textarea id="imp_nis" rows="5" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none" placeholder="12045&#10;12046, 12047"></textarea>
+        <p class="mb-1 mt-3 text-slate-400">Cara 2 — Upload file Excel (.xlsx/.xls) atau CSV yang berisi daftar/kolom NIS:</p>
+        <input type="file" id="imp_file" accept=".xlsx,.xls,.csv,.txt,text/csv,text/plain" class="block w-full text-[10px] text-slate-300 file:mr-2 file:rounded file:border-0 file:bg-purple-600 file:hover:bg-purple-700 file:text-white file:px-3 file:py-1.5 file:cursor-pointer file:text-xs bg-slate-800/60 border border-white/10 rounded p-1.5">
+        <p class="mt-2 text-[10px] text-slate-500">Hanya siswa yang <b>belum</b> menjadi anggota yang akan ditambahkan. NIS tidak dikenali akan dilaporkan.</p>
+      </div>`,
+    background: '#1e293b', color: '#fff', width: '46rem',
+    showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-user-plus"></i> Tambahkan Semua',
+    preConfirm: async () => {
+      const area = String(document.getElementById('imp_nis')?.value || '');
+      ekstrakNisDariTeks(area).forEach(n => nisSet.add(n));
+      await bacaFile();
+      return { nisSet };
+    }
+  });
+  if (!isConfirmed || !value) return;
+  await bacaFile();
+  if (nisSet.size === 0) return showToast('info', 'Tidak ada NIS yang terisi.');
+  const semua = window.__cacheMuridTambah || (await supaAmbilSemua(
+    supaClient.from('akun').select('nis_nip, nama_lengkap, tahun_pelajaran, tingkat_kelas, ekstrakurikuler').eq('tipe', 'murid')
+  ).catch(() => []));
+  window.__cacheMuridTambah = semua;
+  const petaMurid = {};
+  (semua || []).forEach(m => { if (m.nis_nip) petaMurid[String(m.nis_nip)] = m; });
+  const tambah = [], takDikenali = [], sudahAnggota = [];
+  const kiniTA = String((currentUser || {}).user ? ((currentUser.user['ID Tahun Pelajaran'] || currentTahun) || '') : currentTahun || '');
+  nisSet.forEach(n => {
+    if (sekarang.has(n)) { sudahAnggota.push(n); return; }
+    const m = petaMurid[n];
+    if (!m) { takDikenali.push(n); return; }
+    if (kiniTA && m.tahun_pelajaran && String(m.tahun_pelajaran) !== kiniTA) { takDikenali.push(n + ' (TA lain)'); return; }
+    tambah.push(n);
+  });
+  if (tambah.length === 0) {
+    const info = nisSet.size === 1 ? (takDikenali.length ? `NIS ${takDikenali[0]} tidak dikenali / belum punya akun.` : 'Siswa sudah menjadi anggota.') : 'Tidak ada siswa baru yang bisa ditambahkan.';
+    return showToast('info', info);
+  }
+  Swal.fire({ title: 'Menambah anggota…', didOpen: () => Swal.showLoading(), allowOutsideClick: false, showConfirmButton: false, background: '#1e293b', color: '#fff' });
+  let sukses = 0, gagal = 0, pesanErr = '';
+  try { const ok = await terapkanKeanggotaanEkskul(tambah, aktif, true); if (ok) sukses += tambah.length; else gagal++; }
+  catch (e) { gagal += tambah.length; pesanErr = e.message || ''; }
+  Swal.close();
+  if (gagal > 0) showToast('error', `${sukses} anggota ditambahkan, ${gagal} gagal: ${pesanErr}`);
+  else showToast('success', `${sukses} anggota ditambahkan ke ${aktif}`);
+  const rinci = [];
+  if (sudahAnggota.length) rinci.push(`${sudahAnggota.length} sudah anggota`);
+  if (takDikenali.length) rinci.push(`${takDikenali.length} tidak dikenali: ${takDikenali.slice(0, 6).join(', ')}${takDikenali.length > 6 ? '…' : ''}`);
+  if (rinci.length) showToast('info', rinci.join(' · '));
+  renderTabEkskul();
+}
 /** [MULTI-SUB] Popup checklist untuk memilih Sub-Ekskul kandidat pada modal Tambah Anggota (di memori). */
 async function formPilihSubTambahAnggota(nis, namaLengkap) {
   const daftarSub = window.__taSubList || [];
