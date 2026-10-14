@@ -9247,9 +9247,9 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
-                            <!-- [REQ 2] Sinkronkan URL foto murid dari file Google Drive (khusus admin) -->
-                            ${isAdminAktif() ? `<button onclick="sinkronkanFotoDrive()" class="h-8 bg-teal-700 hover:bg-teal-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Auto-update foto siswa dari file Google Drive berformat \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Membaca folder terkonfigurasi & memperbarui url_foto yang berubah — khusus admin"><i class="fa-brands fa-google-drive"></i> <span class="hidden sm:inline">Sinkron Foto</span></button>` : ''}
-                            ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
+                            <!-- [REQ 2] Sinkronkan URL foto murid dari Google Drive (admin, guru/wali kelas, pembina ekskul) -->
+                            ${bisaImportMuridAktif() ? `<button onclick="sinkronkanFotoDrive()" class="h-8 bg-teal-700 hover:bg-teal-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Auto-update foto siswa dari file Google Drive berformat \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Membaca folder terkonfigurasi & memperbarui url_foto yang berubah — admin, wali kelas & pembina ekskul"><i class="fa-brands fa-google-drive"></i> <span class="hidden sm:inline">Sinkron Foto</span></button>` : ''}
+                            ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -10524,12 +10524,17 @@ async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
 }
 /**
- * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (khusus admin).
+ * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
  * Memanggil Edge Function `sinkron-foto-drive`: membaca folder DRIVE_FOLDER_ID,
  * mencocokkan nama file "{NISN} {Nama}.jpg" (fallback NIS) ke tabel akun, lalu
  * memperbarui url_foto yang berbeda. Hasil laporan ditampilkan lewat toast + ringkasan.
  */
 async function sinkronkanFotoDrive() {
+  // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
+  // hanya admin & guru (wali kelas/pembina) yg boleh; selain itu ditolak.
+  if (!bisaImportMuridAktif()) {
+    return showToast('error', 'Fitur Sinkron Foto khusus admin, wali kelas, atau pembina ekskul.');
+  }
   const u = (currentUser || {}).user || {};
   const pemanggil = {
     tipe: String((currentUser || {}).role || ''),
@@ -10565,9 +10570,17 @@ async function sinkronkanFotoDrive() {
       },
       body: JSON.stringify({ pemanggil })
     });
-    res = await fetchRes.json().catch(() => ({ status: 'error', message: 'Respons server tidak terbaca.' }));
+    if (fetchRes.status === 404) {
+      // Edge Function belum di-deploy ke project Supabase yang terhubung.
+      res = { status: 'error', message: 'Fungsi sinkron-foto-drive belum di-deploy pada project Supabase. Jalankan: `npx supabase functions deploy sinkron-foto-drive` (pastikan secret GOOGLE_SA_JSON & DRIVE_FOLDER_ID sudah diset).' };
+    } else if (fetchRes.status === 401 || fetchRes.status === 403) {
+      res = { status: 'error', message: 'Akses ditolak fungsi sinkron-foto-drive. Periksa izin (admin / wali kelas / pembina ekskul).' };
+    } else {
+      res = await fetchRes.json().catch(() => ({ status: 'error', message: `Respons server tidak terbaca (HTTP ${fetchRes.status}).` }));
+    }
   } catch (e) {
-    res = { status: 'error', message: 'Gagal terhubung ke server: ' + (e.message || '') };
+    // NetworkError (mis. fungsi tidak terjangkau / DNS / CSP / server mati).
+    res = { status: 'error', message: 'Gagal terhubung ke server sinkron-foto-drive: ' + (e.message || '') + '. Pastikan fungsi sudah di-deploy di Supabase.' };
   }
 
   if (!res || res.status !== 'success') {
@@ -10785,9 +10798,10 @@ function medsosTeks(medsosArr) {
  *  Hak akses: admin & guru (wali kelas/pembina) — sejalan dgn tombol Import (bisaImportMuridAktif). */
 let scanWajahMasalSedangProses = false;
 async function scanWajahMasal() {
-  // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol): murid dilarang bulk-registrasi.
-  if (((currentUser || {}).role) === 'murid') {
-    return showToast('error', 'Fitur Wajah Masal khusus admin/guru.'); // keamanan real tetap di RPC simpan_wajah_murid
+  // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
+  // hanya admin & guru (wali kelas/pembina) yg boleh; selain itu ditolak.
+  if (!bisaImportMuridAktif()) {
+    return showToast('error', 'Fitur Wajah Masal khusus admin, wali kelas, atau pembina ekskul.');
   }
   if (scanWajahMasalSedangProses) return showToast('info', 'Wajah masal sedang memproses…');
   const fw = window.FaceWajah;

@@ -38,7 +38,18 @@
   // ------------------------------------------------------------------
   // 0. Konstanta
   // ------------------------------------------------------------------
-  const MODELS_DIR = (document.baseURI || location.href).replace(/[^/]*$/, '') + 'models/';
+  const MODELS_DIR = (function () {
+    // Hitung dari URL skrip face.js sendiri (path relatif `js/face.js` di index.html
+    // selalu di-resolve browser ke lokasi asli `web/js/face.js`). Dari situ naik satu
+    // level ke `models/`. Jauh lebih andal daripada document.baseURI/location.href yang
+    // bisa memuat path filesistem (mis. server dev) → URL models 404.
+    try {
+      const s = (typeof document !== 'undefined' && document.currentScript) ||
+                (typeof document !== 'undefined' && document.querySelector('script[src*="face.js"]'));
+      if (s && s.src) return s.src.replace(/[^/]*$/, '') + '../models/';
+    } catch (e) { /* lanjut ke fallback */ }
+    return (document.baseURI || location.href).replace(/[^/]*$/, '') + 'models/';
+  })();
   const JARAK_COCOK = 0.5;          // ambang jarak Euclidean utk "Hadir" (FaceMatcher default 0.6)
   const JARAK_KENAL = 0.6;          // ambang utk membuat matcher (di luar ini dianggap tak dikenal)
   const COOLDOWN_MS = 2500;         // jeda antar-matching orang yang sama
@@ -405,9 +416,15 @@
   function pemanggilKini() {
     const cur = (typeof currentUser !== 'undefined') ? currentUser : null;
     if (!cur) return { nis: '', tipe: 'admin' };
+    const u = cur.user || {};
+    // Murid → NIS; guru → NIP / "ID Akun Guru"; fallback ke username.
+    const idPemanggil = String(
+      u['NIS'] || u.NIS || u['NIP'] || u.NIP || u['ID Akun Guru'] || u.nipGuru ||
+      cur.nis || cur.nipGuru || cur.username || ''
+    );
     return {
-      nis: String((cur.user && (cur.user['NIS'] || cur.user.NIS)) || cur.nis || cur.username || ''),
-      tipe: String(cur.role || ((cur.user && cur.user['Jabatan']) || '') || '')
+      nis: idPemanggil,
+      tipe: String(cur.role || u['Jabatan'] || '')
     };
   }
 
