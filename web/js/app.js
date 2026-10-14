@@ -10579,12 +10579,38 @@ async function sinkronkanFotoDrive() {
       res = await fetchRes.json().catch(() => ({ status: 'error', message: `Respons server tidak terbaca (HTTP ${fetchRes.status}).` }));
     }
   } catch (e) {
-    // NetworkError (mis. fungsi tidak terjangkau / DNS / CSP / server mati).
-    res = { status: 'error', message: 'Gagal terhubung ke server sinkron-foto-drive: ' + (e.message || '') + '. Pastikan fungsi sudah di-deploy di Supabase.' };
+    // NetworkError = request tidak pernah mendapat respons (bukan 404/401/403).
+    // Penyebab umum: fungsi belum di-deploy (di beberapa proxy 404 jadi NetworkError),
+    // URL server salah/konfigurasi lokal tersimpan di localStorage, blokir jaringan/CSP,
+    // atau SUPABASE_URL menunjuk non-HTTPS (mixed content).
+    res = {
+      status: 'error',
+      message:
+        'Gagal terhubung ke server sinkron-foto-drive (' + (e && e.name === 'TypeError' ? 'jaringan' : (e && e.message) || 'net::ERR') + ').\n\n' +
+        'URL yang dituju: ' + SUPABASE_URL + '/functions/v1/sinkron-foto-drive\n\n' +
+        'Kemungkinan penyebab & cara perbaiki:\n' +
+        '1. Fungsi BELUM di-deploy ke project ini → jalankan di terminal: npx supabase functions deploy sinkron-foto-drive --project-ref <PROJECT_REF> (PROJECT_REF bisa dilihat di Dashboard → Settings → Project reference), lalu set secret GOOGLE_SA_JSON & DRIVE_FOLDER_ID.\n' +
+        '2. URL di atas bukan https://...supabase.co (mis. http://localhost:54321) → buka menu ⚙️ Konfigurasi Server di layar login dan isi ulang URL/key yang benar.\n' +
+        '3. Koneksi/kesalahan jaringan atau firewall → pastikan device bisa mengakses URL di atas (buka langsung di browser).'
+    };
   }
 
   if (!res || res.status !== 'success') {
-    showToast('error', (res && res.message) || 'Sinkronisasi gagal.');
+    const pesan = (res && res.message) || 'Sinkronisasi gagal.';
+    // Pesan diagnostik multiline (mis. dari blok catch NetworkError) tidak pas di toast
+    // 2.5 dtk & `\n` tak dirender → tampilkan sebagai modal dengan pre-line.
+    if (pesan.indexOf('\n') !== -1) {
+      Swal.fire({
+        icon: 'error',
+        title: 'Sinkron Foto Gagal',
+        html: `<div style="text-align:left;white-space:pre-line;font-size:12px;line-height:1.6">${escapeHtml(pesan)}</div>`,
+        confirmButtonText: 'Mengerti',
+        confirmButtonColor: '#475569',
+        background: '#1e293b', color: '#fff'
+      });
+    } else {
+      showToast('error', pesan);
+    }
     return;
   }
   const l = res.laporan || {};
