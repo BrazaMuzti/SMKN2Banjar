@@ -1379,6 +1379,19 @@ async function renderDashboardMurid(container) {
   const nama = user["Nama Lengkap"] || '';
   const kelas = user["Tingkat/Kelas"] || '';
   const ekskulSaya = String(user["Ekstrakurikuler"] || '').split(',').map(e => e.trim()).filter(Boolean);
+  // [D2] Ambil foto profil murid untuk ID Card (dashboard + cetak).
+  let fotoSaya = user["URL Foto"] || user["url_foto"] || '';
+  try {
+    if (supaClient && nis) {
+      const { data: barisFoto } = await supaClient.from('akun').select('url_foto').eq('nis_nip', nis).maybeSingle();
+      if (barisFoto && barisFoto.url_foto) fotoSaya = String(barisFoto.url_foto);
+    }
+  } catch (e) { console.warn('renderDashboardMurid/foto:', e); }
+  window.__fotoIdCardSaya = fotoSaya;
+  window.__namaIdCardSaya = nama;
+  window.__nisIdCardSaya = nis;
+  window.__kelasIdCardSaya = kelas;
+
 
   if (cacheKalender.length === 0 || cacheLibur.length === 0) {
     try { await muatDataJadwalLibur(); } catch (e) { console.warn(e); }
@@ -1552,22 +1565,34 @@ async function renderDashboardMurid(container) {
         <h2 class="text-base font-extrabold text-white tracking-wider uppercase"><i class="fa-solid fa-chart-pie text-blue-400 mr-2"></i> Dashboard Murid</h2>
         <p class="text-[10px] text-slate-400">Tahun Pelajaran ${escapeHtml(tahun)} · Semester ${smt} · ${hariIni}, ${fmtTglKalender(isoHariIni)}</p>
       </div>
-      <div class="bg-white/5 border border-white/10 rounded-xl p-3 flex flex-col sm:flex-row items-center gap-4">
-        <div class="bg-white p-2 rounded-lg shrink-0"><img src="${qrUrl}" alt="QR NIS" class="w-28 h-28" onerror="this.parentElement.innerHTML='<div class=\\'w-28 h-28 flex items-center justify-center text-slate-400\\'><i class=\\'fa-solid fa-qrcode text-4xl\\'></i></div>'"></div>
+      <!-- [D2] ID CARD Siswa : foto kiri (klik preview), tombol cetak, QR kanan -->
+      <div class="id-card-murid p-4 flex flex-col sm:flex-row items-center gap-4">
+        <div class="w-24 rounded-xl overflow-hidden border-2 border-white/20 bg-slate-900 flex items-center justify-center shrink-0" style="height:128px;">
+          ${fotoSaya
+            ? `<img src="${escapeHtml(fotoSaya)}" alt="Foto" class="w-full h-full object-cover cursor-zoom-in" onclick="bukaPreviewFoto('${escapeHtml(fotoSaya)}')" title="Klik untuk perbesar" onerror="this.outerHTML='<div class=&quot;w-full h-full flex items-center justify-center text-3xl font-bold text-blue-300&quot;>${escapeHtml((nama || ' ').trim().charAt(0).toUpperCase())}</div>'">`
+            : `<div class="w-full h-full flex items-center justify-center text-3xl font-bold text-blue-300">${escapeHtml((nama || ' ').trim().charAt(0).toUpperCase())}</div>`}
+        </div>
         <div class="flex-1 text-center sm:text-left">
-          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">Kartu QR NIS Saya</div>
+          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold"><i class="fa-solid fa-id-card text-blue-400 mr-1"></i> ID CARD SISWA</div>
           <div class="text-lg font-extrabold text-white leading-tight">${escapeHtml(nama)}</div>
           <div class="text-[10px] text-slate-300">NIS: <span class="font-mono font-bold text-yellow-300">${escapeHtml(nis)}</span> · Kelas ${escapeHtml(kelas || '-')}</div>
           ${ekskulSaya.length ? `<div class="text-[9px] text-slate-400 mt-1"><i class="fa-solid fa-medal text-yellow-400 mr-1"></i>${ekskulSaya.map(escapeHtml).join(', ')}</div>` : ''}
-          <button onclick="cetakKartuQrMurid()" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"><i class="fa-solid fa-print"></i> Cetak Kartu QR</button>
-        </div>
-        <div class="flex-1 w-full">
-          <div class="flex items-center justify-between gap-2 mb-1 flex-wrap">
-            <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold">Absensi Hari Ini</div>
-            <button onclick="changeMenu('absen-mandiri', 'Absensi Hari Ini')" class="bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1.5" title="Buka menu Absen Mandiri Siswa (face scan / captcha)"><i class="fa-solid fa-user-check"></i> Absensi Hari Ini</button>
+          <div class="flex flex-wrap gap-1.5 justify-center sm:justify-start mt-2">
+            <button onclick="cetakIdCardMurid()" class="bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5"><i class="fa-solid fa-print"></i> Cetak ID Card</button>
+            <button onclick="cetakKartuQrMurid()" class="bg-white/10 hover:bg-white/20 text-white text-[10px] font-bold px-3 py-1.5 rounded-lg transition inline-flex items-center gap-1.5" title="Cetak QR Kartu Murid ukuran penuh"><i class="fa-solid fa-qrcode"></i> Cetak QR</button>
           </div>
-          <div class="flex flex-wrap gap-1">${chipHariIni || '<span class="text-[10px] text-slate-500 italic">Hari libur / belum ada sesi absen.</span>'}</div>
         </div>
+        <div class="bg-white rounded-lg p-1.5 shrink-0" style="width:96px;height:96px;">
+          <img src="${qrUrl}" alt="QR NIS" class="w-full h-full" onerror="this.style.display='none'">
+        </div>
+      </div>
+      <!-- [D3] Split: Absensi Hari Ini (chip) + tombol Absen Hari Ini (buka menu face scan / captcha) -->
+      <div class="bg-white/5 border border-white/10 rounded-xl p-3">
+        <div class="flex items-center justify-between gap-2 mb-1 flex-wrap">
+          <div class="text-[9px] uppercase tracking-wider text-slate-400 font-bold"><i class="fa-solid fa-user-check text-green-400 mr-1"></i> Absensi Hari Ini</div>
+          <button onclick="changeMenu('absen-mandiri', 'Absensi Hari Ini')" class="bg-green-600 hover:bg-green-700 text-white text-[9px] font-bold px-2.5 py-1 rounded-lg transition inline-flex items-center gap-1.5" title="Buka menu Absensi (face scan / captcha)"><i class="fa-solid fa-user-check"></i> Absen Hari Ini</button>
+        </div>
+        <div class="flex flex-wrap gap-1">${chipHariIni || '<span class="text-[10px] text-slate-500 italic">Hari libur / belum ada sesi absen.</span>'}</div>
       </div>
       <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
         ${kartu('fa-calendar-check', 'bg-green-600/20 text-green-400', 'Hari Efektif Bulan Ini', `${heBerjalan} / ${heTotal}`, 'berjalan / total')}
@@ -1635,6 +1660,71 @@ async function muatNotifikasiKasDashboard(nis, ekskulSaya) {
     box.querySelector('div').innerHTML = `<p class="text-[11px] text-red-400 italic">Gagal memuat notifikasi: ${escapeHtml(e.message || '')}</p>`;
   }
 }
+
+/** [D4] Cetak ID Card murid (berisi FOTO + QR + identitas). Data foto diambil dari
+ *  window.__fotoIdCardSaya (diset renderDashboardMurid) dengan fallback fetch. */
+async function cetakIdCardMurid() {
+  const user = (currentUser || {}).user || {};
+  const nis = user["NIS"] || '';
+  const nama = user["Nama Lengkap"] || '';
+  const kelas = user["Tingkat/Kelas"] || '';
+  const ekskul = String(user["Ekstrakurikuler"] || '');
+
+  let foto = window.__fotoIdCardSaya || '';
+  if (!foto && supaClient && nis) {
+    try {
+      const { data: b } = await supaClient.from('akun').select('url_foto').eq('nis_nip', nis).maybeSingle();
+      if (b && b.url_foto) foto = String(b.url_foto);
+    } catch (e) { /* biarkan kosong */ }
+  }
+
+  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=500x500&data=${encodeURIComponent(nis)}`;
+  const inisial = String(nama || ' ').trim().split(/\s+/).slice(0, 2).map(s => s.charAt(0)).join('').toUpperCase() || '?';
+  const win = window.open('', '_blank');
+  if (!win) { showToast('error', 'Popup diblokir browser.'); return; }
+  win.document.write(`<!DOCTYPE html><html><head><title>ID Card Murid — ${nama}</title>
+    <style>
+      body { font-family: Arial, sans-serif; display: flex; justify-content: center; padding: 24px; }
+      .kartu { width: 352px; border: 3px solid #1e3a8a; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+      .kartu .atas { background: linear-gradient(135deg, #1e3a8a, #3b82f6); color: #fff; padding: 14px; text-align: center; }
+      .kartu .atas h1 { margin: 0; font-size: 17px; letter-spacing: 1px; }
+      .kartu .atas p { margin: 2px 0 0; font-size: 10px; }
+      .kartu .isi { padding: 16px; display: flex; gap: 14px; align-items: center; }
+      .kartu .isi .kiri { flex: 1; }
+      .kartu .foto-wrap { width: 110px; height: 135px; border: 2px solid #cbd5e1; border-radius: 8px; overflow: hidden; background: #f1f5f9; display: flex; align-items: center; justify-content: center; }
+      .kartu .foto-wrap img { width: 100%; height: 100%; object-fit: cover; }
+      .kartu .foto-kosong { font-size: 34px; font-weight: bold; color: #94a3b8; }
+      .kartu .kanan { flex: 1; text-align: center; }
+      .kartu .kanan .qr { background: #fff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 6px; width: 130px; height: 130px; margin: 0 auto; }
+      .kartu .qr img { width: 100%; height: 100%; }
+      .kartu .nis { font-family: 'Courier New', monospace; font-size: 16px; font-weight: bold; letter-spacing: 1.5px; margin-top: 8px; }
+      .kartu .nama { font-size: 14px; font-weight: bold; margin-top: 6px; }
+      .kartu .kelas { font-size: 11px; color: #475569; margin-top: 3px; }
+      .kartu .ekskul { font-size: 10px; color: #64748b; margin-top: 3px; }
+      .kartu .bawah { background: #f1f5f9; padding: 8px; text-align: center; font-size: 9px; color: #475569; }
+    </style></head><body>
+    <div class="kartu">
+      <div class="atas"><h1>KARTU SISWA</h1><p>NIS: ${nis} · Kelas ${kelas}</p></div>
+      <div class="isi">
+        <div class="kiri">
+          <div class="foto-wrap">${foto ? `<img src="${foto}" alt="Foto">` : `<div class="foto-kosong">${inisial}</div>`}</div>
+        </div>
+        <div class="kanan">
+          <div class="qr"><img src="${qrUrl}" alt="QR"></div>
+          <div class="nis">${nis}</div>
+          <div class="nama">${nama}</div>
+          <div class="kelas">Kelas ${kelas}</div>
+          ${ekskul ? `<div class="ekskul">Ekskul: ${ekskul}</div>` : ''}
+        </div>
+      </div>
+      <div class="bawah">ID Card ini berisi foto &amp; QR NIS Anda — dibawa saat kegiatan sekolah &amp; absensi.</div>
+    </div>
+    <script>window.onload = () => setTimeout(() => window.print(), 400);<\/script>
+    </body></html>`);
+  win.document.close();
+}
+
+/** Cetak kartu QR NIS murid (pola cetakQRMuridTerfilter). */
 
 /** Cetak kartu QR NIS murid (pola cetakQRMuridTerfilter). */
 function cetakKartuQrMurid() {
@@ -1909,6 +1999,39 @@ function bukaGmapsSaya() {
   window.open(url, '_blank', 'noopener,noreferrer');
 }
 
+
+/** [D1] Perbesar foto (lightbox) — klik foto murid; tutup lewat tombol ×, klik latar, atau ESC. */
+function bukaPreviewFoto(url) {
+  if (!url) return;
+  const lama = document.getElementById('sisip-foto-preview');
+  if (lama) lama.remove();
+
+  const wrap = document.createElement('div');
+  wrap.id = 'sisip-foto-preview';
+  wrap.className = 'sisip-foto-preview-backdrop';
+  wrap.innerHTML = `
+    <button type="button" class="sisip-foto-preview-close" title="Tutup (Esc)"><i class="fa-solid fa-xmark"></i></button>
+    <img src="${escapeHtml(url)}" alt="Foto perbesar" onerror="this.alt='Gagal memuat foto';this.style.opacity='.4'">`;
+  wrap.addEventListener('click', (e) => { if (e.target === wrap) tutupPreviewFoto(); });
+  wrap.querySelector('.sisip-foto-preview-close').addEventListener('click', tutupPreviewFoto);
+
+  const onKey = (e) => {
+    if (e.key === 'Escape') { tutupPreviewFoto(); document.removeEventListener('keydown', onKey); }
+  };
+  document.addEventListener('keydown', onKey);
+  wrap._onKey = onKey;
+  document.body.appendChild(wrap);
+}
+
+function tutupPreviewFoto() {
+  const el = document.getElementById('sisip-foto-preview');
+  if (!el) return;
+  if (el._onKey) document.removeEventListener('keydown', el._onKey);
+  el.remove();
+}
+
+/** [REQ D1] render Akun Saya Murid — halaman "Data Akun Murid" / profil siswa. */
+
 async function renderAkunSayaMurid(container) {
   container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat Profil...</div>`;
   const user = (currentUser || {}).user || {};
@@ -1977,7 +2100,7 @@ async function renderAkunSayaMurid(container) {
       <div class="bg-white/5 border border-white/10 rounded-xl p-4 flex flex-col sm:flex-row items-center gap-4">
         <div class="w-24 rounded-lg overflow-hidden border border-white/15 bg-slate-800 flex items-center justify-center shrink-0" style="height:128px;">
           ${prof.url_foto
-            ? `<img src="${escapeHtml(prof.url_foto)}" alt="Foto" class="w-full h-full object-cover" onerror="this.outerHTML='<div class=&quot;w-full h-full flex items-center justify-center text-3xl font-bold text-slate-600&quot;>${escapeHtml((prof.nama_lengkap || ' ').trim().charAt(0).toUpperCase())}</div>'">`
+            ? `<img src="${escapeHtml(prof.url_foto)}" alt="Foto" class="w-full h-full object-cover cursor-zoom-in" onclick="bukaPreviewFoto('${escapeHtml(prof.url_foto)}')" title="Klik untuk perbesar" onerror="this.outerHTML='<div class=&quot;w-full h-full flex items-center justify-center text-3xl font-bold text-slate-600&quot;>${escapeHtml((prof.nama_lengkap || ' ').trim().charAt(0).toUpperCase())}</div>'">`
             : `<div class="w-full h-full flex items-center justify-center text-3xl font-bold text-slate-600">${escapeHtml((prof.nama_lengkap || ' ').trim().charAt(0).toUpperCase())}</div>`}
         </div>
         <div class="flex-1 text-center sm:text-left">
@@ -9231,6 +9354,13 @@ async function renderManajemenMurid(container, paksa = false) {
                                 ${STATUS_SISWA.map(s => `<option value="${escJs(s)}">${s}</option>`).join('')}
                             </select>
 
+                            <select id="filter-status-wajah" class="h-8 w-full sm:w-32 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()" title="Filter status registrasi wajah murid">
+                                <option value="ALL">Semua Wajah</option>
+                                <option value="aktif">Wajah Aktif</option>
+                                <option value="nonaktif">Wajah Nonaktif</option>
+                                <option value="belum">Wajah Belum</option>
+                            </select>
+
                             <div class="relative col-span-2">
                                 <span class="absolute left-2.5 top-1.5 text-slate-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass text-[10px]"></i></span>
                                 <input type="text" id="search-murid" placeholder="Cari NIS / Nama..." class="h-8 w-full bg-black/40 border border-white/20 rounded-lg pl-7 pr-2 text-[11px] text-white outline-none focus:border-blue-500" onkeyup="filterTabelMurid()">
@@ -9267,8 +9397,7 @@ async function renderManajemenMurid(container, paksa = false) {
                                 <th class="px-4 py-3 border-b border-white/10">Tahun Pelajaran</th>
                                 <th class="px-4 py-3 border-b border-white/10">Sub Ekskul</th>
                                 <th class="px-4 py-3 border-b border-white/10">Email Login</th>
-                                <th class="px-4 py-3 border-b border-white/10 text-center">Status Wajah</th>
-                                <th class="px-4 py-3 border-b border-white/10 text-center">Aksi</th>
+                                <th class="px-4 py-3 border-b border-white/10 text-center">Status Wajah &amp; Aksi</th>
                             </tr>
                         </thead>
                         <tbody id="tbody-murid" class="text-xs text-slate-200"></tbody>
@@ -9409,7 +9538,7 @@ function statusWajahBaris(petaWajah, nis) {
 }
 
 function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
-    if (!data || data.length === 0) return `<tr><td colspan="10" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
+    if (!data || data.length === 0) return `<tr><td colspan="8" class="p-6 text-center text-slate-500">Belum ada data murid yang tersimpan.</td></tr>`;
 
 
     return data.map((d, i) => {
@@ -9431,7 +9560,7 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
                 ? window.FaceWajah.htmlBadgeWajah(stWajah)
                 : '<span class="text-[9px] text-slate-500 uppercase tracking-wider">-</span>');
         const tombolWajah = window.FaceWajah && typeof window.FaceWajah.kelolaWajah === 'function'
-            ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="w-7 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-400' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-400'} hover:text-white rounded transition mr-1" title="${wajahAktif ? 'Kelola data wajah' : 'Registrasi data wajah'}"><i class="fa-solid fa-face-viewfinder"></i></button>`
+            ? `<button onclick="window.FaceWajah.kelolaWajah('${escJs(String(nis))}')" class="inline-flex items-center gap-1 h-7 ${wajahAktif ? 'bg-cyan-600/20 hover:bg-cyan-600 text-cyan-300' : stWajah === 'nonaktif' ? 'bg-amber-600/20 hover:bg-amber-600 text-amber-300' : 'bg-teal-600/20 hover:bg-teal-600 text-teal-300'} hover:text-white rounded px-1.5 transition mr-1 whitespace-nowrap" title="${wajahAktif ? 'Wajah terdaftar &amp; aktif — klik untuk kelola/registrasi ulang' : 'Registrasi data wajah (klik untuk memulai)'}">${badgeWajah}<span class="text-[9px] font-bold">${wajahAktif ? 'Wajah' : stWajah === 'nonaktif' ? 'Nonaktif' : 'Registrasi'}</span></button>`
             : '';
         // [AKSES] Edit & Reset Password SELALU tampil di kolom Aksi — tidak tergantung Status Wajah
         // maupun role (admin/guru/pembina/murid). Otorisasi sesungguhnya tetap di sisi server
@@ -9459,7 +9588,6 @@ function generateTbodyMurid(data, mulaiNo = 0, subLookup = {}, petaWajah = {}) {
                 <td class="px-4 py-3 text-[10px] text-slate-400 search-target">${escapeHtml(tahunData || '-')}</td>
                 <td class="px-4 py-3 text-[10px] text-slate-400">${subEkskulData ? escapeHtml(subEkskulData) : '<span class="italic text-slate-600">-</span>'}</td>
                 <td class="px-4 py-3"><div class="text-[10px] text-slate-400"><i class="fa-solid fa-envelope"></i> ${email}</div></td>
-                <td class="px-4 py-3 text-center sel-status-wajah" title="Status registrasi wajah">${badgeWajah}</td>
 
                 <td class="px-4 py-3 text-center whitespace-nowrap">
                     ${tombolWajah}
@@ -9528,11 +9656,26 @@ async function muridSubEkskulLookup(rows) {
     return hasil;
 }
 
-/** Render ulang tabel murid sesuai filter aktif (cari/tahun/kelas/ekskul/status) + pagination. */
+/** Render ulang tabel murid sesuai filter aktif (cari/tahun/kelas/ekskul/status/wajah) + pagination. */
 async function renderTabelMuridTerfilter() {
     const tbody = document.getElementById('tbody-murid');
     if (!tbody) return;
-    const cocok = muridTersaring(cacheAkunMurid);
+    let cocok = muridTersaring(cacheAkunMurid);
+
+    // [FILTER STATUS WAJAH] filter nilai select #filter-status-wajah (aktif/nonaktif/belum).
+    // Status wajah tidak ada di cache ringkas → ambil via window.FaceWajah.ambilStatusWajah
+    // utk SEMUA baris yang lolos filter lain (sebelum paginasi), lalu saring lagi.
+    const filtWajah = ((document.getElementById('filter-status-wajah') || {}).value || 'ALL').toLowerCase();
+    if (filtWajah !== 'all' && cocok.length && window.FaceWajah && typeof window.FaceWajah.ambilStatusWajah === 'function') {
+        try {
+            const nisWajah = cocok.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+            const petaW = await window.FaceWajah.ambilStatusWajah(nisWajah);
+            cocok = cocok.filter(r => {
+                const st = petaW[String(r.nis_nip || r.NIS || r.nis)] || 'belum';
+                return st === filtWajah;
+            });
+        } catch (e) { console.error('Gagal filter status wajah:', e); }
+    }
 
     const totalHalaman = Math.max(1, Math.ceil(cocok.length / ukuranHalamanMurid));
     if (halamanAktifMurid > totalHalaman) halamanAktifMurid = totalHalaman;
@@ -9579,17 +9722,11 @@ function filterTabelMurid() {
 }
 
 /** Hook dipanggil face.js setiap data wajah murid berubah (simpan / nonaktif / hapus).
- *  Perbarui sel "Status Wajah" baris terkait di tempat — tanpa render ulang seluruh tabel. */
+ *  Kolom status wajah kini tergabung ke tombol Registrasi Wajah → render ulang tabel
+ *  agar ikon status + label & filter status wajah konsisten. */
 window.FaceWajahOnTersimpan = (nis, status) => {
     try {
-        const aman = (typeof CSS !== 'undefined' && typeof CSS.escape === 'function')
-            ? CSS.escape(String(nis)) : String(nis).replace(/"/g, '');
-        const baris = document.querySelector(`#tbody-murid tr[data-nis="${aman}"]`);
-        const sel = baris && baris.querySelector('.sel-status-wajah');
-        const ikon = window.FaceWajah && typeof window.FaceWajah.ikonStatusWajah === 'function'
-            ? window.FaceWajah.ikonStatusWajah(status) : '';
-        if (sel && ikon) { sel.innerHTML = ikon; return; }
-        renderTabelMuridTerfilter(); // fallback: baris tak terlihat (beda halaman/filter)
+        renderTabelMuridTerfilter();
     } catch (e) {
         console.error('FaceWajahOnTersimpan:', e);
         try { renderTabelMuridTerfilter(); } catch (e2) { /* abaikan */ }
@@ -10522,7 +10659,127 @@ async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }
     body: JSON.stringify({ nis, nisn: String(nisn || ''), nama, tahun, kelas, foto: dataUrl || undefined, hapus: !!hapus, pemanggil })
   });
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
+
 }
+
+/** Unduh teks sebagai file .txt dari browser (untuk laporan log sinkron/wajah). */
+function unduhTeksSebagaiTxt(namaFile, isi) {
+  try {
+    const blob = new Blob([isi], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = namaFile;
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 400);
+  } catch (e) {
+    console.error('unduhTeksSebagaiTxt:', e);
+    showToast('error', 'Gagal mengunduh file log.');
+  }
+}
+
+/** Format daftar rincian laporan ({label, status}) menjadi teks .txt yang rapi. */
+function rincianKeTeks(baris) {
+  if (!Array.isArray(baris) || baris.length === 0) return '(tidak ada baris rincian)';
+  let teks = '';
+  baris.forEach((b, i) => {
+    const no = String(i + 1).padStart(3, '0');
+    const label = b.label != null ? b.label : '';
+    const status = b.status != null ? b.status : '';
+    teks += `${no}. [${status}] ${label}\n`;
+  });
+  return teks;
+}
+
+
+/**
+ * [REQ B4/C5] Modal pilihan "Timpah Semua / Lewati Semua / Pilih per siswa".
+ * Menampilkan daftar murid yang SUDAH punya data (foto / wajah) → user memutuskan
+ * apakah data lama boleh ditimpa atau dilewati.
+ * @param {Array<{nis:string,nama:string,kelas:string}>} daftar  murid yang sudah punya data
+ * @param {string} judul         judul modal
+ * @param {string} deskripsi     penjelasan singkat
+ * @returns {Promise<{hasil:'timpah'|'lewati'|'pilih', lewatiNis:Set<string>}|null>} null bila dibatalkan
+ */
+async function pilihTimpahLewati(daftar, judul, deskripsi) {
+  const n = (daftar || []).length;
+  if (!n) return { hasil: 'timpah', lewatiNis: new Set() };
+
+  let pilihan = 'timpah';           // state pilihan: timpah/lewati/pilih
+  const lewatiSet = new Set();      // bila 'pilih' → NIS yang dicentang = LEWATI
+
+  const html = `
+    <div class="text-left text-xs text-slate-300">
+      <p class="text-[10px] text-slate-400 mb-2">${deskripsi}</p>
+      <div class="space-y-1 mb-2">
+        <label class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 cursor-pointer">
+          <input type="radio" name="tl-mode" value="timpah" checked class="accent-emerald-500">
+          <span><b class="text-emerald-300">Timpah Semua</b> <span class="text-[9px] text-slate-400">— timpa data lama semua siswa berikut</span></span>
+        </label>
+        <label class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 cursor-pointer">
+          <input type="radio" name="tl-mode" value="lewati" class="accent-red-500">
+          <span><b class="text-red-300">Lewati Semua</b> <span class="text-[9px] text-slate-400">— pertahankan data lama semua siswa berikut</span></span>
+        </label>
+        <label class="flex items-center gap-2 bg-white/5 border border-white/10 rounded px-2 py-1.5 cursor-pointer">
+          <input type="radio" name="tl-mode" value="pilih" class="accent-indigo-500">
+          <span><b class="text-indigo-300">Pilih per Siswa</b> <span class="text-[9px] text-slate-400">— centang siswa yang data lamanya <u>tidak</u> boleh ditimpa</span></span>
+        </label>
+      </div>
+      <div id="tl-list" class="max-h-56 overflow-auto rounded-lg bg-slate-900 border border-white/10 p-2 space-y-1">
+        ${(daftar || []).map(r => `
+          <label class="flex items-center gap-2 text-[10px]">
+            <input type="checkbox" data-nis="${escJs(String(r.nis))}" class="tl-skip accent-red-500">
+            <span class="font-bold text-white">${escapeHtml(r.nama)}</span>
+            <span class="text-slate-400">· ${escapeHtml(r.nis || '-')}</span>
+            <span class="text-slate-500 ml-auto">${escapeHtml(r.kelas || '')}</span>
+          </label>`).join('')}
+      </div>
+      <p class="text-[9px] text-slate-500 mt-1">Siswa yang <b>tidak</b> dicentang pada mode per-siswa akan ditimpa.</p>
+    </div>`;
+
+  const hasil = await Swal.fire({
+    title: judul,
+    html,
+    icon: 'question',
+    showCancelButton: true,
+    confirmButtonText: 'Lanjutkan',
+    cancelButtonText: 'Batal',
+    confirmButtonColor: '#059669',
+    background: '#1e293b', color: '#fff',
+    didOpen: () => {
+      const list = document.getElementById('tl-list');
+      const ubahAktif = () => {
+        const mode = (document.querySelector('input[name="tl-mode"]:checked') || {}).value;
+        const cbx = list ? list.querySelectorAll('.tl-skip') : [];
+        cbx.forEach(c => { c.disabled = mode !== 'pilih'; });
+      };
+      document.querySelectorAll('input[name="tl-mode"]').forEach(r => r.addEventListener('change', ubahAktif));
+      const chk = list ? list.querySelectorAll('.tl-skip') : [];
+      if (list) {
+        const w = document.createElement('div');
+        w.className = 'mb-1 flex gap-3';
+        w.innerHTML = `<button type="button" class="underline text-slate-400 hover:text-white text-[9px]">pilih semua</button>
+                        <button type="button" class="underline text-slate-400 hover:text-white text-[9px]">kosongkan semua</button>`;
+        w.querySelectorAll('button')[0].onclick = () => chk.forEach(c => { c.checked = true; });
+        w.querySelectorAll('button')[1].onclick = () => chk.forEach(c => { c.checked = false; });
+        list.insertAdjacentElement('beforebegin', w);
+      }
+      ubahAktif();
+    },
+    preConfirm: () => {
+      pilihan = (document.querySelector('input[name="tl-mode"]:checked') || {}).value || 'timpah';
+      const cbx = document.querySelectorAll('.tl-skip');
+      cbx.forEach(c => { if (c.checked) lewatiSet.add(String(c.getAttribute('data-nis'))); });
+      if (pilihan === 'pilih' && lewatiSet.size === 0) {
+        Swal.showValidationMessage('Mode "Pilih per Siswa": centang setidaknya satu siswa yang TIDAK boleh ditimpa, atau pilih Timpah/Lewati Semua.');
+        return false;
+      }
+      return true;
+    }
+  });
+  if (hasil.isConfirmed) return { hasil: pilihan, lewatiNis: lewatiSet };
+  return null;
+}
+
 /**
  * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
  * Memanggil Edge Function `sinkron-foto-drive`: membaca folder DRIVE_FOLDER_ID,
@@ -10556,9 +10813,36 @@ async function sinkronkanFotoDrive() {
     if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
   } catch (e) { /* biarkan token aplikasi */ }
 
-  if (!window.confirm('Sinkronkan foto siswa dari Google Drive?\n\nFolder terkonfigurasi akan dipindai; URL foto yang berubah pada akun murid akan diperbarui otomatis.')) return;
+  // [B1] Sumber murid = cache halaman Data Akun Murid (sudah ter-filter by muridTersaring
+  // berdasarkan filter DOM). Fallback fetch penuh bila cache belum dimuat.
+  let rows = muridTersaring((cacheAkunMurid && Array.isArray(cacheAkunMurid)) ? cacheAkunMurid : []);
+  if (!rows.length) {
+    try {
+      const dat = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
+      rows = muridTersaring(dat || []);
+    } catch (e) { console.warn('sinkronkanFotoDrive/fetch:', e); }
+  }
+  const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+  if (!nisTarget.length) return showToast('error', 'Tidak ada murid hasil filter yang tersinkron.');
 
-  showToast('info', 'Menyinkronkan foto dari Drive...');
+  // [B4] Pilih "Timpah/Lewati" untuk murid yang SUDAH punya foto (url_foto ada).
+  const sudahFoto = (rows || []).filter(r => r.url_foto || r['URL Foto'] || r.url_foto).map(r => ({
+    nis: String(r.nis_nip || r.NIS || r.nis || ''),
+    nama: r.nama_lengkap || r['Nama Lengkap'] || r.Nama || r.nama || 'Tanpa Nama',
+    kelas: kelasSiswaTahun(r) || '-'
+  }));
+  const keputusan = await pilihTimpahLewati(sudahFoto, 'Sinkron Foto — Siswa Sudah Punya Foto', `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila ada file Drive baru yang cocok.`);
+  if (!keputusan) return; // dibatalkan user
+
+  let lewatiNis = [];
+  if (keputusan.hasil === 'lewati') {
+    lewatiNis = sudahFoto.map(r => r.nis).filter(Boolean);
+  } else if (keputusan.hasil === 'pilih') {
+    lewatiNis = Array.from(keputusan.lewatiNis || new Set());
+  }
+  lewatiNis = lewatiNis.filter(Boolean);
+
+  showToast('info', `Menyinkronkan foto dari Drive untuk ${nisTarget.length} murid...`);
   let res;
   try {
     const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
@@ -10568,7 +10852,7 @@ async function sinkronkanFotoDrive() {
         'Authorization': `Bearer ${token}`,
         'apikey': SUPABASE_ANON_KEY
       },
-      body: JSON.stringify({ pemanggil })
+      body: JSON.stringify({ pemanggil, nisTarget, lewatiNis })
     });
     if (fetchRes.status === 404) {
       // Edge Function belum di-deploy ke project Supabase yang terhubung.
@@ -10615,17 +10899,60 @@ async function sinkronkanFotoDrive() {
   }
   const l = res.laporan || {};
   showToast('success', res.message || 'Sinkronisasi selesai.');
+
+  // [B2] Bangun isi log rincian dari `l.rincian` (array {file,status,nis}).
+  const petaStatusLabel = {
+    'baru': ['Foto baru dipasang', 'text-emerald-300'],
+    'diperbarui': ['Foto diperbarui', 'text-cyan-300'],
+    'sama': ['Sudah sama', 'text-slate-400'],
+    'tidak-cocok': ['Tidak cocok dengan murid', 'text-amber-300'],
+    'tanpa-nomor': ['Tanpa nomor identitas', 'text-amber-300'],
+    'lewat-filter': ['Di luar filter (dilewati)', 'text-slate-500'],
+    'lewati': ['Foto lama dipertahankan', 'text-indigo-300'],
+    'gagal': ['Gagal', 'text-red-300']
+  };
+  const barisLog = (l.rincian || []).map(r => {
+    const labelWarna = petaStatusLabel[r.status] || [r.status || '?', 'text-slate-300'];
+    const identitas = r.file || String(r.nis || '');
+    return `<div class="text-[10px] leading-snug"><span class="${labelWarna[1]} font-bold">[${labelWarna[0]}]</span> <span class="text-slate-300">${escapeHtml(identitas)}</span>${r.nis && r.file ? ` <span class="text-slate-500">(NIS ${escapeHtml(String(r.nis))})</span>` : ''}</div>`;
+  }).join('');
+
+  const teksTxt =
+    'LAPORAN SINKRONISASI FOTO DRIVE\n' +
+    'Tanggal: ' + new Date().toLocaleString('id-ID') + '\n' +
+    `Dipindai: ${l.dipindai ?? 0} berkas\n` +
+    `Terpasang/diperbarui: ${l.terpasang ?? 0} (baru: ${l.terpasang - (l.diperbarui ?? 0)}, diperbarui: ${l.diperbarui ?? 0})\n` +
+    `Sudah sama: ${l.sama ?? 0}\n` +
+    `Tidak cocok: ${l.tidak_cocok ?? 0}\n` +
+    `Di luar filter: ${l.lewat_filter ?? 0}\n` +
+    `Dilewati (foto lama dipertahankan): ${l.lewati ?? 0}\n` +
+    `Gagal: ${l.gagal ?? 0}\n\n--- RINCIAN ---\n` +
+    rincianKeTeks((l.rincian || []).map(r => ({ label: (r.file || '') + (r.nis ? ` (NIS ${r.nis})` : ''), status: petaStatusLabel[r.status] ? petaStatusLabel[r.status][0] : (r.status || '?') })));
+
   Swal.fire({
     icon: 'success',
     title: 'Sinkronisasi Foto Selesai',
     html:
-      `<div class="text-left text-[12px] text-slate-300"><b>Dipindai:</b> ${l.dipindai ?? 0} berkas<br>` +
-      `<b>Terpasang/diperbarui:</b> <span class="text-emerald-300">${l.terpasang ?? 0}</span> (baru: ${l.terpasang - (l.diperbarui ?? 0)}, diperbarui: ${l.diperbarui ?? 0})<br>` +
-      `<b>Sudah sama:</b> ${l.sama ?? 0}<br>` +
-      `<b>Tidak cocok:</b> ${l.tidak_cocok ?? 0}<br>` +
-      `<b>Gagal:</b> ${l.gagal ?? 0}</div>`,
+      `<div class="text-left">` +
+      `<div class="text-[12px] text-slate-300 mb-2">` +
+      `<b>Dipindai:</b> ${l.dipindai ?? 0} berkas · ` +
+      `<b>Terpasang:</b> <span class="text-emerald-300">${l.terpasang ?? 0}</span> · ` +
+      `<b>Baru:</b> ${l.terpasang - (l.diperbarui ?? 0)} · ` +
+      `<b>Diperbarui:</b> ${l.diperbarui ?? 0}<br>` +
+      `<b>Sudah sama:</b> ${l.sama ?? 0} · ` +
+      `<b>Tidak cocok:</b> ${l.tidak_cocok ?? 0} · ` +
+      `<b>Di luar filter:</b> ${l.lewat_filter ?? 0} · ` +
+      `<b>Dilewati:</b> ${l.lewati ?? 0} · ` +
+      `<b>Gagal:</b> ${l.gagal ?? 0}</div>` +
+      `<div class="flex justify-end mb-1"><button id="export-log-btn" class="h-7 px-3 bg-slate-600 hover:bg-slate-500 text-white rounded text-[11px] font-bold transition">⬇ Export .txt</button></div>` +
+      `<div class="sisip-log-box custom-scrollbar" style="max-height:210px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;padding:.5rem .6rem">${barisLog || '<div class="text-[10px] text-slate-500">Tanpa rincian.</div>'}</div>` +
+      `</div>`,
     background: '#1e293b', color: '#fff',
-    confirmButtonText: 'OK'
+    confirmButtonText: 'OK',
+    didOpen: () => {
+      const btn = document.getElementById('export-log-btn');
+      if (btn) btn.onclick = () => unduhTeksSebagaiTxt('sinkron-foto-drive-log.txt', teksTxt);
+    }
   });
   // Muat ulang tabel + cache agar URL foto terbaru tampil
   invalidasiCacheAkun();
@@ -10841,24 +11168,59 @@ async function scanWajahMasal() {
   const nisList = rows.map(d => String(d.nis_nip || d.NIS || d.nis)).filter(Boolean);
   let statusMap = {};
   if (fw.ambilStatusWajah) { try { statusMap = await fw.ambilStatusWajah(nisList); } catch (e) { console.warn('scanWajahMasal status:', e); } }
-  const kandidat = rows.filter(d => {
+  const baruBelum = rows.filter(d => {
     const nis = String(d.nis_nip || d.NIS || d.nis);
     return d.url_foto && statusMap[nis] === 'belum';
   });
+  const sudahWajahInfo = rows.filter(d => {
+    const nis = String(d.nis_nip || d.NIS || d.nis);
+    return d.url_foto && (statusMap[nis] === 'nonaktif');
+  });
+  const sudahWajah = sudahWajahInfo.map(d => ({
+    nis: String(d.nis_nip || d.NIS || d.nis),
+    nama: d.nama_lengkap || 'Tanpa Nama',
+    kelas: kelasSiswaTahun(d) || '-'
+  }));
+  let kandidat = baruBelum;
+
+  // [C4] Murid ber-foto yang punya wajah NONAKTIF = "sudah punya data" → tanya Timpah/Lewati.
+  if (sudahWajah.length > 0) {
+    const keputusan = await pilihTimpahLewati(sudahWajah, 'Registrasi Wajah Masal — Wajah Nonaktif',
+      `Sebanyak ${sudahWajah.length} murid punya wajah nonaktif. Registrasi ulang wajahnya dari foto profil, atau pertahankan?`);
+    if (!keputusan) return;
+    if (keputusan.hasil === 'pilih') {
+      // Yang dicentang = LEWATI → dilepas dari daftar timpa; sisanya ikut daftar ulang.
+      kandidat = kandidat.concat(sudahWajahInfo.filter(r => !keputusan.lewatiNis.has(String(r.nis_nip || r.NIS || r.nis))));
+    } else if (keputusan.hasil === 'timpah') {
+      kandidat = kandidat.concat(sudahWajahInfo);
+    }
+    // hasil 'lewati' → sudahWajah dilewati seluruhnya (hanya kandidat baru).
+  }
+
   if (!kandidat.length) {
-    showToast('info', 'Tidak ada murid ber-foto yang belum punya wajah pada filter aktif.');
+    showToast('info', 'Tidak ada murid ber-foto yang layak didaftarkan wajahnya pada filter aktif.');
     return;
   }
-  const { value } = await Swal.fire({
-    title: 'Registrasi Wajah Masal',
-    html: `<b>${kandidat.length}</b> murid ber-foto tapi belum punya wajah akan didaftarkan otomatis dari foto profil.<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid. Kamu bisa membatalkan di tengah jalan.</span>`,
-    icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, lanjut', cancelButtonText: 'Batal',
-    background: '#1e293b', color: '#fff'
-  });
-  if (!value) return;
+  if (sudahWajah.length > 0) {
+    const { value } = await Swal.fire({
+      title: 'Registrasi Wajah Masal',
+      html: `<b>${kandidat.length}</b> murid akan didaftarkan ulang/dari foto profil (termasuk <b>${sudahWajah.filter(s => kandidat.some(k => String(k.nis_nip || k.NIS || k.nis) === s.nis)).length}</b> wajah nonaktif yang ditimpa).<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid. Kamu bisa membatalkan di tengah jalan.</span>`,
+      icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, lanjut', cancelButtonText: 'Batal',
+      background: '#1e293b', color: '#fff'
+    });
+    if (!value) return;
+  } else {
+    const { value } = await Swal.fire({
+      title: 'Registrasi Wajah Masal',
+      html: `<b>${kandidat.length}</b> murid ber-foto tapi belum punya wajah akan didaftarkan otomatis dari foto profil.<br><span class="text-xs text-slate-400">Butuh koneksi & sekitar 1–3 dtk per murid. Kamu bisa membatalkan di tengah jalan.</span>`,
+      icon: 'question', showCancelButton: true, confirmButtonText: 'Ya, lanjut', cancelButtonText: 'Batal',
+      background: '#1e293b', color: '#fff'
+    });
+    if (!value) return;
+  }
 
   scanWajahMasalSedangProses = true;
-  let ok = 0, gagal = 0; const errs = []; let berhenti = false;
+  let ok = 0, gagal = 0; const errs = []; const logBaris = []; let berhenti = false;
   let i = 0;
   // Modal progres (DIBUKA tanpa await — JANGAN menunggu resolve karena bisa termakan selamanya
   // bila user tidak menekan Batal; kita hanya memantau penutupan via promise untuk hentikan loop).
@@ -10878,24 +11240,50 @@ async function scanWajahMasal() {
     const nama = String(d.nama_lengkap || nis);
     try {
       const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, nama);
-      if (r && r.ok) ok++; else { gagal++; if (r && r.pesan) errs.push(nama + ': ' + r.pesan); }
-    } catch (e) { gagal++; errs.push(nama + ': ' + (e && e.message ? e.message : e)); }
+      if (r && r.ok) { ok++; logBaris.push({ label: nama + ' (NIS ' + nis + ')', status: 'Berhasil' }); }
+      else {
+        gagal++;
+        const pesan = (r && r.pesan) ? r.pesan : 'Gagal';
+        if (r && r.pesan) errs.push(nama + ': ' + r.pesan);
+        logBaris.push({ label: nama + ' (NIS ' + nis + ')', status: 'Gagal — ' + pesan });
+      }
+    } catch (e) {
+      gagal++; errs.push(nama + ': ' + (e && e.message ? e.message : e));
+      logBaris.push({ label: nama + ' (NIS ' + nis + ')', status: 'Gagal — ' + ((e && e.message) ? e.message : e) });
+    }
     const pb = document.getElementById('wajah-masal-progress');
     if (pb) pb.innerHTML = teksProgres();
   }
   Swal.close();
-  let pesanHasil = `Berhasil: <b class="text-green-400">${ok}</b> · Gagal: <b class="text-red-400">${gagal}</b>` + (berhenti ? ' · <i>Dihentikan pengguna</i>' : '');
-  if (errs.length) {
-    pesanHasil += `<div class="mt-2 text-left"><div class="text-[11px] text-slate-400 mb-1">Murid gagal (${errs.length}):</div><div class="max-h-40 overflow-auto custom-scrollbar rounded bg-slate-900 border border-white/10 p-2 text-[10px] text-red-300">${errs.map(e => `• ${escapeHtml(e)}`).join('<br>')}</div></div>`;
-  }
+  const pesanHasil = `Berhasil: <b class="text-green-400">${ok}</b> · Gagal: <b class="text-red-400">${gagal}</b>` + (berhenti ? ' · <i>Dihentikan pengguna</i>' : '');
+
+  // [C3] Bangun isi log rincian (sukses/gagal per murid) + Export .txt.
+  const barisLogW = logBaris.map(b => {
+    const okC = b.status.startsWith('Berhasil');
+    return `<div class="text-[10px] leading-snug"><span class="${okC ? 'text-emerald-300' : 'text-red-300'} font-bold">[${b.status}]</span> <span class="text-slate-300">${escapeHtml(b.label)}</span></div>`;
+  }).join('');
+  const teksTxtW =
+    'LAPORAN REGISTRASI WAJAH MASAL\n' +
+    'Tanggal: ' + new Date().toLocaleString('id-ID') + '\n' +
+    `Berhasil: ${ok} · Gagal: ${gagal}${berhenti ? ' · Dihentikan pengguna' : ''}\n\n--- RINCIAN ---\n` +
+    rincianKeTeks(logBaris);
+
   try { if (fw.muatPetaWajah) { await fw.muatPetaWajah(); } } catch (e) {}
   try { if (typeof renderManajemenMurid === 'function') renderManajemenMurid(document.getElementById('main-content')); } catch (e) {}
   scanWajahMasalSedangProses = false;
   return Swal.fire({
     icon: (gagal === 0 && !berhenti) ? 'success' : 'warning',
     title: berhenti ? 'Wajah masal dihentikan' : (gagal === 0 ? 'Wajah masal selesai' : 'Sebagian gagal'),
-    html: pesanHasil,
-    background: '#1e293b', color: '#fff'
+    html:
+      `<div class="text-left">` + pesanHasil +
+      `<div class="flex justify-end mt-2 mb-1"><button id="export-log-btn-w" class="h-7 px-3 bg-slate-600 hover:bg-slate-500 text-white rounded text-[11px] font-bold transition">⬇ Export .txt</button></div>` +
+      `<div class="sisip-log-box custom-scrollbar" style="max-height:210px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;padding:.5rem .6rem">${barisLogW || '<div class="text-[10px] text-slate-500">Tanpa rincian.</div>'}</div>` +
+      `</div>`,
+    background: '#1e293b', color: '#fff',
+    didOpen: () => {
+      const btn = document.getElementById('export-log-btn-w');
+      if (btn) btn.onclick = () => unduhTeksSebagaiTxt('registrasi-wajah-masal-log.txt', teksTxtW);
+    }
   });
 }
 
