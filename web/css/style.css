@@ -4031,6 +4031,13 @@
     -webkit-backdrop-filter: none;
   }
 }
+@-moz-document url-prefix() {
+  .glass-header {
+    background: rgb(15, 23, 42);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
 .glass-sidebar.collapsed {
   width: 5rem !important;
 }

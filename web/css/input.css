@@ -48,6 +48,17 @@
   }
 }
 
+/* Firefox melaporkan backdrop-filter didukung sehingga `@supports not` di atas
+   TIDAK terpicu, padahal bug paint-nya membuat elemen ber-blur tak ter-render
+   (header/top-bar hilang). Paksa background solid penuh khusus Firefox di sini. */
+@-moz-document url-prefix() {
+  .glass-header {
+    background: rgb(15, 23, 42);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+}
+
 /* Sidebar Collapsed Mode */
 .glass-sidebar.collapsed { width: 5rem !important; }
 .glass-sidebar.collapsed .sidebar-text { display: none !important; }
