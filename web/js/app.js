@@ -9247,6 +9247,8 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
+                            <!-- [REQ 2] Sinkronkan URL foto murid dari file Google Drive (khusus admin) -->
+                            ${isAdminAktif() ? `<button onclick="sinkronkanFotoDrive()" class="h-8 bg-teal-700 hover:bg-teal-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Auto-update foto siswa dari file Google Drive berformat \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Membaca folder terkonfigurasi & memperbarui url_foto yang berubah — khusus admin"><i class="fa-brands fa-google-drive"></i> <span class="hidden sm:inline">Sinkron Foto</span></button>` : ''}
                             ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
@@ -10521,6 +10523,76 @@ async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }
   });
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
 }
+/**
+ * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (khusus admin).
+ * Memanggil Edge Function `sinkron-foto-drive`: membaca folder DRIVE_FOLDER_ID,
+ * mencocokkan nama file "{NISN} {Nama}.jpg" (fallback NIS) ke tabel akun, lalu
+ * memperbarui url_foto yang berbeda. Hasil laporan ditampilkan lewat toast + ringkasan.
+ */
+async function sinkronkanFotoDrive() {
+  const u = (currentUser || {}).user || {};
+  const pemanggil = {
+    tipe: String((currentUser || {}).role || ''),
+    nisNip: String(u['NIS'] || u['NIP'] || u['ID Akun Guru'] || '')
+  };
+  // Fallback: ambil NIS/NIP admin dari tabel akun via email bila identitas belum tersimpan.
+  if (!pemanggil.nisNip && pemanggil.tipe === 'admin') {
+    try {
+      const em = String(u['Email'] || '').trim();
+      if (em && supaClient) {
+        const { data: baris } = await supaClient.from('akun').select('nis_nip').eq('email', em).maybeSingle();
+        if (baris && baris.nis_nip) pemanggil.nisNip = String(baris.nis_nip);
+      }
+    } catch (e) { /* biarkan kosong — Edge Function punya fallback JWT/email sendiri */ }
+  }
+  let token = getToken();
+  try {
+    const { data: sesi } = await supaClient.auth.getSession();
+    if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
+  } catch (e) { /* biarkan token aplikasi */ }
+
+  if (!window.confirm('Sinkronkan foto siswa dari Google Drive?\n\nFolder terkonfigurasi akan dipindai; URL foto yang berubah pada akun murid akan diperbarui otomatis.')) return;
+
+  showToast('info', 'Menyinkronkan foto dari Drive...');
+  let res;
+  try {
+    const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ pemanggil })
+    });
+    res = await fetchRes.json().catch(() => ({ status: 'error', message: 'Respons server tidak terbaca.' }));
+  } catch (e) {
+    res = { status: 'error', message: 'Gagal terhubung ke server: ' + (e.message || '') };
+  }
+
+  if (!res || res.status !== 'success') {
+    showToast('error', (res && res.message) || 'Sinkronisasi gagal.');
+    return;
+  }
+  const l = res.laporan || {};
+  showToast('success', res.message || 'Sinkronisasi selesai.');
+  Swal.fire({
+    icon: 'success',
+    title: 'Sinkronisasi Foto Selesai',
+    html:
+      `<div class="text-left text-[12px] text-slate-300"><b>Dipindai:</b> ${l.dipindai ?? 0} berkas<br>` +
+      `<b>Terpasang/diperbarui:</b> <span class="text-emerald-300">${l.terpasang ?? 0}</span> (baru: ${l.terpasang - (l.diperbarui ?? 0)}, diperbarui: ${l.diperbarui ?? 0})<br>` +
+      `<b>Sudah sama:</b> ${l.sama ?? 0}<br>` +
+      `<b>Tidak cocok:</b> ${l.tidak_cocok ?? 0}<br>` +
+      `<b>Gagal:</b> ${l.gagal ?? 0}</div>`,
+    background: '#1e293b', color: '#fff',
+    confirmButtonText: 'OK'
+  });
+  // Muat ulang tabel + cache agar URL foto terbaru tampil
+  invalidasiCacheAkun();
+  renderManajemenMurid(document.getElementById('main-content'), true);
+}
+
 
 // ---- Modal pemotongan foto (Cropper.js) ----
 let sisipCropper = { cropper: null, onDone: null };
@@ -15356,6 +15428,67 @@ function hakAksesEkskulUntuk(ekskul) {
 /** [REQ 1c] Cek cepat peran akses satu ekskul termasuk salah satu peran yang diberikan. */
 function ekskulAksesTermasukUntuk(ekskul, ...peran) { return peran.includes(hakAksesEkskulUntuk(ekskul)); }
 
+/**
+ * [REQ 1f/1g] "Manajer umum" ekskul: pengguna yang berhak melihat & mengelola SEMUA
+ * ekstrakurikuler. Admin selalu; guru WALI KELAS dianggap manajer umum (keputusan akses).
+ * Guru biasa (pembina tertentu / tanpa penugasan) TIDAK masuk sini.
+ */
+function ekskulManajerUmum() {
+  const role = (currentUser || {}).role || '';
+  if (role === 'admin') return true;
+  if (role === 'guru') return !!waliKelasAktif();
+  return false;
+}
+
+/** Guru/pembina mengampu ekskul tertentu (anggota kolom "ekstrakurikuler" miliknya). */
+function ekskulDiampuGuru(ekskul) {
+  return ekskulDiampuAktif().includes(String(ekskul || '').trim());
+}
+
+/**
+ * [REQ 1f] Boleh KELOLA ANGGOTA satu ekskul (Tambah/Import/Hapus/Export anggota).
+ * - Admin & guru wali kelas (manajer umum) → ya (semua ekskul).
+ * - Guru pembina → ya (hanya ekskul yang diampunya).
+ * - Murid yang MENJABAT (pengurus) pada ekskul tsb → ya.
+ * - Lainnya (guru tanpa penugasan, murid anggota) → tidak.
+ */
+function bolehKelolaAnggotaEkskul(ekskul) {
+  const role = (currentUser || {}).role || '';
+  if (role === 'admin') return true;
+  if (role === 'guru') return !!waliKelasAktif() || ekskulDiampuGuru(ekskul);
+  if (role === 'murid') return hakAksesEkskulUntuk(ekskul) === 'pengurus';
+  return false;
+}
+
+/**
+ * [REQ 1g] Boleh MEMBUAT ekskul BARU (form kosong). Hanya pengelola level manajer:
+ * admin & guru wali kelas. Pembina hanya boleh mengelola ekskul yang sudah ada.
+ */
+function bolehBuatEkskulBaru() {
+  return ekskulManajerUmum();
+}
+
+/**
+ * [REQ 1g] Daftar ekskul yang boleh terlihat pada dropdown "Ekskul-pilih" & daftar
+ * modul Ekstrakurikuler.
+ * - admin / guru wali kelas → semua ekskul.
+ * - guru pembina (non-wali-kelas) → hanya ekskul yang diampunya.
+ * - murid → hanya ekskul yang diikuti / dijabatnya (ekskulMilikMurid).
+ * - lainnya → semua (kosong / no-filter; menu tak seharusnya terbuka).
+ */
+function daftarEkskulTerlihat(daftar) {
+  const role = (currentUser || {}).role || '';
+  const semua = [...(daftar || [])];
+  if (role === 'admin' || role === 'guru') {
+    return ekskulManajerUmum() ? semua : semua.filter(e => ekskulDiampuGuru(e));
+  }
+  if (role === 'murid') {
+    const milik = ekskulMilikMurid();
+    return semua.filter(e => milik.includes(e));
+  }
+  return semua;
+}
+
 /** Deteksi apakah jabatan ekskul murid pada `ekskul` tsb adalah Bendahara (case-insensitive). */
 function apakahBendaharaEkskul(ekskul) {
   const jab = jabatanEkskulMapMurid();
@@ -15437,14 +15570,17 @@ async function renderEkstrakurikulerModule(container) {
     }
     const akses = hakAksesEkskul();
     let daftar = await ambilDaftarEkskul();
-    // [REQ 1c] Murid (pengurus/anggota) hanya melihat ekskul yang diikutinya / yang dijabatinya
-    if (akses === 'pengurus' || akses === 'anggota') {
-      const milik = ekskulMilikMurid();
-      daftar = daftar.filter(e => milik.includes(e));
-      if (daftar.length === 0) {
-        container.innerHTML = `<div class="glass-card p-8 rounded-2xl text-center text-slate-300"><i class="fa-solid fa-medal text-3xl text-yellow-400 mb-2"></i><p class="text-sm">Anda belum terdaftar sebagai anggota ekstrakurikuler manapun.</p></div>`;
-        return;
-      }
+    // [REQ 1g/1c] Saring daftar ekskul sesuai akses pengguna:
+    // murid → hanya ekskul yang diikuti/dijabatinya; guru pembina (non-wali-kelas) → hanya yang
+    // diampunya; admin & guru wali kelas (manajer umum) → semua.
+    daftar = daftarEkskulTerlihat(daftar);
+    if (daftar.length === 0 && (akses === 'pengurus' || akses === 'anggota')) {
+      container.innerHTML = `<div class="glass-card p-8 rounded-2xl text-center text-slate-300"><i class="fa-solid fa-medal text-3xl text-yellow-400 mb-2"></i><p class="text-sm">Anda belum terdaftar sebagai anggota ekstrakurikuler manapun.</p></div>`;
+      return;
+    }
+    if (daftar.length === 0) {
+      container.innerHTML = `<div class="glass-card p-8 rounded-2xl text-center text-slate-300"><i class="fa-solid fa-medal text-3xl text-slate-500 mb-2"></i><p class="text-sm">Tidak ada ekstrakurikuler yang dapat Anda akses.</p></div>`;
+      return;
     }
     window.__daftarEkskul = daftar;
     if (!window.__ekskulAktif || !daftar.includes(window.__ekskulAktif)) window.__ekskulAktif = daftar[0] || '';
@@ -15493,8 +15629,8 @@ function switchTabEkskul(tab) {
   renderEkstrakurikulerModule(document.getElementById('main-content'));
 }
 function pilihEkskulModul(ekskul) {
-  const akses = hakAksesEkskul();
-  if ((akses === 'pengurus' || akses === 'anggota') && !ekskulMilikMurid().includes(ekskul)) return showToast('error', 'Anda bukan anggota ekstrakurikuler tersebut.');
+  // [REQ 1g] Tolak pilihan di luar daftar ekskul yang dapat diakses pengguna (defense-in-depth).
+  if (!daftarEkskulTerlihat(window.__daftarEkskul || []).includes(ekskul)) return showToast('error', 'Anda tidak memiliki akses ke ekstrakurikuler tersebut.');
   window.__ekskulAktif = ekskul;
   const headerNama = document.getElementById('ekskul-header-nama');
   if (headerNama) headerNama.textContent = ekskul ? `- ${ekskul}` : '';
@@ -16672,7 +16808,13 @@ async function renderTabProfilEkskul() {
   const aktif = window.__ekskulAktif;
   const akses = hakAksesEkskulUntuk(aktif);
   const isAdminGuru = akses === 'admin' || akses === 'guru';
-  const bolehKelolaAnggota = isAdminGuru || akses === 'pengurus'; // Tambah Anggota (req 1f)
+  // [REQ 1g] Dropdown "Ekskul-pilih" hanya menampilkan ekskul yang dapat diakses (walikelas/admin
+  // → semua; pembina → yang diampu; murid → yang diikuti/dijabat).
+  const daftarTerlihat = daftarEkskulTerlihat(daftar);
+  // [REQ 1f] "Tambah/Ikut Anggota" (Tambah, Import, Hapus, Export): admin/walikelas selalu;
+  // pembina guru hanya utk ekskul yg diampunya; murid hanya bila MENJABAT (pengurus) ekskul tsb.
+  const bolehKelolaAnggota = bolehKelolaAnggotaEkskul(aktif);
+  // [REQ 1g] Buat ekskul baru hanya untuk admin & wali kelas (manajer umum).
   const row = (cacheEkstrakurikuler || []).find(e => e.nama_ekskul === aktif) || {};
   const guruRows = window.__cacheGuruEkskul || [];
   // [REQ B3] Sub-ekstrakurikuler + penandaan sub anggota
@@ -16696,10 +16838,10 @@ async function renderTabProfilEkskul() {
   box.innerHTML = `
     <div class="p-4 space-y-3">
       <div class="flex gap-2 items-center flex-wrap">
-        <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftar.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
+        <select id="ekskul-pilih" onchange="pilihEkskulModul(this.value)" class="bg-slate-700 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none">${daftarTerlihat.map(e => `<option value="${escJs(e)}" ${e === aktif ? 'selected' : ''}>${escapeHtml(e)}</option>`).join('')}</select>
         ${subs.length > 0 ? `<select id="filter-sub-profil" onchange="gantiFilterSubAnggotaProfil(this.value)" class="bg-indigo-900/40 border border-indigo-500/40 text-indigo-200 font-bold rounded-lg px-3 py-2 text-xs outline-none">${optFilterSub}</select>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formEkstrakurikuler('${escJs(aktif)}')" class="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-pen"></i> Edit Profil</button>` : ''}
-        ${isAdminGuru ? `<button onclick="formEkstrakurikuler('')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Tambah Ekskul</button>` : ''}
+        ${bolehBuatEkskulBaru() ? `<button onclick="formEkstrakurikuler('')" class="bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-plus"></i> Tambah Ekskul</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formTambahAnggotaEkskul()" class="bg-teal-600 hover:bg-teal-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-user-plus"></i> Tambah Anggota</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formImportAnggotaEkskul()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Import anggota massal — tempel daftar NIS / upload Excel/CSV"><i class="fa-solid fa-file-import"></i> Import Anggota</button>` : ''}
         ${bolehKelolaAnggota ? `<button onclick="formHapusAnggotaEkskul()" class="bg-orange-600 hover:bg-orange-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition" title="Hapus sementara — tidak tercetak di export, dapat diaktifkan kembali"><i class="fa-solid fa-user-minus"></i> Hapus Anggota</button>` : ''}
@@ -17067,7 +17209,8 @@ function renderDaftarTambahAnggota() {
 
 /** Modal Tambah Anggota: daftar siswa + filter ID Tahun & Kelas + ceklis (req 1b). */
 async function formTambahAnggotaEkskul() {
-  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  // [REQ 1f] Hanya admin/wali kelas (semua), pembina ekskul aktif, atau pengurus (menjabat).
+  if (!bolehKelolaAnggotaEkskul(window.__ekskulAktif)) return showToast('error', 'Akses tidak diizinkan.');
   const aktif = window.__ekskulAktif;
   if (!aktif) return showToast('error', 'Pilih ekstrakurikuler dulu.');
   const anggotaSaatIni = await ambilAnggotaEkskul(aktif);
@@ -17196,7 +17339,8 @@ async function ekstrakNisDariFile(file) {
 /** Modal "Import Anggota" (khusus admin/pembina): tempel daftar NIS ATAU upload Excel/CSV,
  *  lalu tambahkan massal ke ekskul aktif (lewati yang sudah menjadi anggota). [REQ 3] */
 async function formImportAnggotaEkskul() {
-  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  // [REQ 1f] Hanya admin/wali kelas (semua), pembina ekskul aktif, atau pengurus (menjabat).
+  if (!bolehKelolaAnggotaEkskul(window.__ekskulAktif)) return showToast('error', 'Akses tidak diizinkan.');
   const aktif = window.__ekskulAktif;
   if (!aktif) return showToast('error', 'Pilih ekstrakurikuler dulu.');
   const anggotaSaatIni = await ambilAnggotaEkskul(aktif);
@@ -17333,7 +17477,8 @@ function pilihSemuaHapusAnggota(pilih) {
 
 /** Modal Hapus Anggota: hapus sementara (tidak tercetak di export, bisa diaktifkan kembali) — req 1c. */
 async function formHapusAnggotaEkskul() {
-  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  // [REQ 1f] Hanya admin/wali kelas (semua), pembina ekskul aktif, atau pengurus (menjabat).
+  if (!bolehKelolaAnggotaEkskul(window.__ekskulAktif)) return showToast('error', 'Akses tidak diizinkan.');
   const aktif = window.__ekskulAktif;
   if (!aktif) return showToast('error', 'Pilih ekstrakurikuler dulu.');
   const anggota = await ambilAnggotaEkskul(aktif);
@@ -17438,7 +17583,8 @@ function getExportHTMLAnggotaEkskul(anggota, subMap = {}, daftarSub = []) {
 }
 
 async function exportAnggotaEkskulExcel() {
-  if (!ekskulAksesTermasukUntuk(window.__ekskulAktif, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
+  // [REQ 1f] Hanya admin/wali kelas (semua), pembina ekskul aktif, atau pengurus (menjabat).
+  if (!bolehKelolaAnggotaEkskul(window.__ekskulAktif)) return showToast('error', 'Akses tidak diizinkan.');
   const aktif = window.__ekskulAktif || '';
   const anggota = await ambilAnggotaEkskul(aktif);
   if (!anggota.length) return showToast('error', 'Belum ada anggota untuk diexport.');
@@ -17451,6 +17597,8 @@ async function exportAnggotaEkskulExcel() {
 }
 
 async function exportAnggotaEkskulPDF() {
+  // [REQ 1f] Hanya admin/wali kelas (semua), pembina ekskul aktif, atau pengurus (menjabat).
+  if (!bolehKelolaAnggotaEkskul(window.__ekskulAktif)) return showToast('error', 'Akses tidak diizinkan.');
   const aktif = window.__ekskulAktif || '';
   const anggota = await ambilAnggotaEkskul(aktif);
   if (!anggota.length) return showToast('error', 'Belum ada anggota untuk dicetak.');
@@ -17679,11 +17827,12 @@ async function cetakAnggotaPerSub() {
 }
 
 function formEkstrakurikuler(namaLama) {
-  // [REQ 1c] Edit profil ekskul miliknya boleh oleh pengurus; buat ekskul baru hanya admin/guru
+  // [REQ 1f/1g] Edit profil ekskul: admin/wali kelas/pembina ekskul tsb/pengurus (menjabat).
+  //             Buat ekskul BARU: hanya admin & guru wali kelas (manajer umum).
   if (namaLama) {
-    if (!ekskulAksesTermasukUntuk(namaLama, 'admin', 'guru', 'pengurus')) return showToast('error', 'Akses tidak diizinkan.');
-  } else if (!ekskulAksesTermasuk('admin', 'guru')) {
-    return showToast('error', 'Akses khusus pembina/guru.');
+    if (!bolehKelolaAnggotaEkskul(namaLama)) return showToast('error', 'Akses tidak diizinkan.');
+  } else if (!bolehBuatEkskulBaru()) {
+    return showToast('error', 'Akses khusus admin/wali kelas.');
   }
   const isEdit = !!namaLama;
   const row = (cacheEkstrakurikuler || []).find(e => e.nama_ekskul === namaLama) || { deskripsi: '', pembina_nip: '', jadwal: '', logo_url: '' };
