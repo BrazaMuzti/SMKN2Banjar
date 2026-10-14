@@ -25,10 +25,10 @@ create table if not exists jadwal_pelajaran (
   id uuid primary key default gen_random_uuid(),
   "ID Akun Guru" text default '',
   "ID Jadwal Murid" text default '',
-  Tahun text default '',
-  Semester text default '',
-  Waktu text default '',
-  Mapel text default '',
+  "Tahun" text default '',
+  "Semester" text default '',
+  "Waktu" text default '',
+  "Mapel" text default '',
   "Tingkat/Kelas" text default '',
   created_at timestamptz not null default now()
 );
@@ -36,10 +36,10 @@ create table if not exists jadwal_pelajaran (
 alter table jadwal_pelajaran
   add column if not exists "ID Akun Guru" text default '',
   add column if not exists "ID Jadwal Murid" text default '',
-  add column if not exists Tahun text default '',
-  add column if not exists Semester text default '',
-  add column if not exists Waktu text default '',
-  add column if not exists Mapel text default '',
+  add column if not exists "Tahun" text default '',
+  add column if not exists "Semester" text default '',
+  add column if not exists "Waktu" text default '',
+  add column if not exists "Mapel" text default '',
   add column if not exists "Tingkat/Kelas" text default '',
   add column if not exists created_at timestamptz default now();
 
