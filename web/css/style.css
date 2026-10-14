@@ -4553,3 +4553,95 @@ table {
     }
   }
 }
+
+/* ============================================================
+   [AKU] ID CARD MURID — Dashboard siswa (disalin manual dari
+   input.css; penuh otomatis via `npm run build:css`)
+   ============================================================ */
+.id-card-murid {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.18), rgba(30, 41, 59, 0.6));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.35);
+}
+.id-card-murid::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(115deg, transparent 40%, rgba(255, 255, 255, 0.22) 50%, transparent 60%);
+  animation: idCardFlash 4.5s linear infinite;
+}
+@keyframes idCardFlash {
+  0%   { transform: translateX(-120%); }
+  60%  { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+.id-card-foto {
+  border-radius: 0.5rem;
+  border: 2px solid rgba(255, 255, 255, 0.2);
+  background: #0f172a;
+  object-fit: cover;
+}
+.id-card-qr {
+  background: #fff;
+  border-radius: 0.5rem;
+  padding: 0.4rem;
+}
+
+/* ============================================================
+   [AKU] Preview perbesar foto (lightbox) — klik foto murid
+   ============================================================ */
+.sisip-foto-preview-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.88);
+  z-index: 100000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  cursor: zoom-out;
+}
+.sisip-foto-preview-backdrop img {
+  max-width: 92vw;
+  max-height: 88vh;
+  border-radius: 12px;
+  box-shadow: 0 25px 60px rgba(0, 0, 0, 0.7);
+  cursor: default;
+}
+.sisip-foto-preview-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: #fff;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.sisip-foto-preview-close:hover { background: rgba(255, 255, 255, 0.25); }
+
+/* Box log hasil pemindaian (Sinkron Foto / Wajah Masal) — scroll */
+.sisip-log-box {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(2, 6, 23, 0.55);
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px;
+  text-align: left;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
