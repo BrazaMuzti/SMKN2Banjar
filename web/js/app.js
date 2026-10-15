@@ -10853,6 +10853,9 @@ async function sinkronkanFotoDrive() {
     if (fetchRes.status === 404) {
       // Edge Function belum di-deploy ke project Supabase yang terhubung.
       res = { status: 'error', message: 'Fungsi sinkron-foto-drive belum di-deploy pada project Supabase. Jalankan: `npx supabase functions deploy sinkron-foto-drive` (pastikan secret GOOGLE_SA_JSON & DRIVE_FOLDER_ID sudah diset).' };
+    } else if (fetchRes.status === 503) {
+      // Konfigurasi secret server (GOOGLE_SA_JSON / DRIVE_FOLDER_ID) belum diset.
+      res = { status: 'error', message: 'Sinkronisasi Drive belum dikonfigurasi admin.\n\nCara perbaiki (sekali saja, lalu deploy ulang):\n1. Buka dashboard Supabase project yang dipakai web aplikasi ini.\n2. Project Settings → Edge Functions → Secrets.\n3. Set GOOGLE_SA_JSON = isi JSON service account (sama seperti yang dipakai unggah-foto-murid).\n4. Set DRIVE_FOLDER_ID = ID folder Google Shared Drive berisi foto murid (format nama "{NISN} {Nama}.jpg").\n5. Jalankan: npx supabase functions deploy sinkron-foto-drive --project-ref <PROJECT_REF>\n\nCatatan: folder Drive juga harus dibagikan ke email service account (peran Content Manager), dan file foto dibagikan "siapa saja → lihat" agar URL thumbnail-nya dapat ditampilkan.' };
     } else if (fetchRes.status === 401 || fetchRes.status === 403) {
       res = { status: 'error', message: 'Akses ditolak fungsi sinkron-foto-drive. Periksa izin (admin / wali kelas / pembina ekskul).' };
     } else {
