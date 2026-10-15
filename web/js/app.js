@@ -774,7 +774,12 @@ function changeMenu(menuId, menuText) {
   else if (menuId === 'nilai') renderNilaiModule(mainContent);
   // TAMBAHKAN DUA BARIS INI:
   else if (menuId === 'akun-admin') renderManajemenAdmin(mainContent);
-  else if (menuId === 'akun-murid') renderManajemenMurid(mainContent);
+  else if (menuId === 'akun-murid') {
+    renderManajemenMurid(mainContent);
+    // [AUTO-ISI FOTO] Sekali per sesi: isi url_foto kosong dari Drive + daftar wajah otomatis.
+    // Best-effort (dijalankan fire-and-forget) — lihat autoIsiFotoKosongSekaliSesi().
+    try { if (typeof autoIsiFotoKosongSekaliSesi === 'function') autoIsiFotoKosongSekaliSesi(); } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi trigger:', e); }
+  }
   else if (menuId === 'akun-guru') renderManajemenGuru(mainContent);
   else if (menuId === 'jadwal-libur') renderJadwalLiburModule(mainContent);
   else if (menuId === 'administrasi-guru') renderAdministrasiGuru(mainContent);
@@ -10950,6 +10955,154 @@ async function sinkronkanFotoDrive() {
   // Muat ulang tabel + cache agar URL foto terbaru tampil
   invalidasiCacheAkun();
   renderManajemenMurid(document.getElementById('main-content'), true);
+
+  // [CHAIN OTOMATIS] Setelah foto selesai di-sinkronkan dari Drive, daftarkan wajah
+  // secara otomatis untuk murid yang foto-nya BARU terpasang tapi belum punya wajah.
+  // Best-effort & non-mengganggu: berjalan di latar, hasilnya ditampilkan via toast.
+  autoDaftarWajahDariFotoBaru(res.laporan ? res.laporan.rincian : []);
+}
+
+
+// ============================================================================
+// [REQ 2b] Auto-isi foto kosong + daftar wajah otomatis dari foto baru (kepala, bukan MI)
+// ----------------------------------------------------------------------------
+// Fitur otomatis pelengkap "Sinkron Foto" manual:
+//   1) autoIsiFotoKosongSekaliSesi() — saat menu "Data Akun Murid" pertama kali dibuka
+//      dalam satu sesi, otomatis memanggil sinkron-foto-drive mode "hanya-kosong" untuk
+//      mengisi url_foto murid yang MASIH KOSONG dari Google Drive. Tidak menimpa foto
+//      yang sudah ada, tanpa modal, best-effort, dipanggil sekali per sesi.
+//   2) autoDaftarWajahDariFotoBaru(rincian) — setelah foto baru dipasang (baik dari
+//      auto-isi maupun sinkron manual), mendaftarkan wajah murid yang baru ber-foto tapi
+//      wajahnya masih "belum", memakai face.js (registrasiOtomatisDariFoto). Best-effort.
+// ============================================================================
+
+/** Kunci sesi agar auto-isi foto kosong hanya berjalan SATU KALI per sesi browser. */
+let autoIsiFotoKosongSekaliSesiJalan = false;
+let autoIsiFotoKosongSekaliSesiSelesai = false;
+
+/**
+ * Sinkron foto kosong dari Google Drive otomatis (sekali per sesi).
+ * Wajib admin / wali kelas / pembina ekskul; non-aktif bila modul wajah belum siap.
+ */
+async function autoIsiFotoKosongSekaliSesi() {
+  // 1) Hanya sekali per sesi
+  if (autoIsiFotoKosongSekaliSesiJalan || autoIsiFotoKosongSekaliSesiSelesai) return;
+  // 2) Hak akses sama dengan tombol Sinkron Foto / Wajah Masal
+  if (!bisaImportMuridAktif()) return;
+  // 3) Butuh face.js untuk tahap daftar wajah (tahap foto boleh jalan sendiri)
+  const fw = window.FaceWajah;
+  if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function') return;
+
+  autoIsiFotoKosongSekaliSesiJalan = true;
+  try {
+    // Pemanggil identik dengan sinkronkanFotoDrive()
+    const u = (currentUser || {}).user || {};
+    const pemanggil = {
+      tipe: String((currentUser || {}).role || ''),
+      nisNip: String(u['NIS'] || u['NIP'] || u['ID Akun Guru'] || '')
+    };
+    if (!pemanggil.nisNip && pemanggil.tipe === 'admin') {
+      try {
+        const em = String(u['Email'] || '').trim();
+        if (em && supaClient) {
+          const { data: baris } = await supaClient.from('akun').select('nis_nip').eq('email', em).maybeSingle();
+          if (baris && baris.nis_nip) pemanggil.nisNip = String(baris.nis_nip);
+        }
+      } catch (e) { /* biarkan kosong — Edge Function punya fallback JWT/email */ }
+    }
+    let token = getToken();
+    try {
+      const { data: sesi } = await supaClient.auth.getSession();
+      if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
+    } catch (e) { /* biarkan token aplikasi */ }
+
+    // Hanya isi yang KOSONG: mode="hanya-kosong", tanpa nisTarget/lewatiNis
+    const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'apikey': SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ pemanggil, mode: 'hanya-kosong' })
+    });
+    if (!fetchRes.ok) return; // diam — ini best-effort, jangan ganggu pengguna
+    let res;
+    try { res = await fetchRes.json(); } catch (e) { res = null; }
+    if (!res || res.status !== 'success') return;
+
+    const l = res.laporan || {};
+    const baru = (l.rincian || []).filter(r => r.status === 'baru' && r.nis);
+    const info = [`Foto otomatis terpasang untuk ${l.terpasang ?? 0} murid.`];
+    if (baru.length) info.push(`${baru.length} murid ber-foto baru, mendaftarkan wajah…`);
+    showToast('info', info.join(' '));
+    if (baru.length) {
+      // Jangan menunggu — biarkan daftar wajah berjalan di latar
+      autoDaftarWajahDariFotoBaru(baru).catch(() => {});
+    }
+  } catch (e) {
+    console.error('autoIsiFotoKosongSekaliSesi:', e);
+  } finally {
+    autoIsiFotoKosongSekaliSesiJalan = false;
+    autoIsiFotoKosongSekaliSesiSelesai = true;
+  }
+}
+
+/** Kunci anti-bentrok registrasi wajah otomatis (hindari tabrakan dgn Wajah Masal). */
+let autoDaftarWajahSedangProses = false;
+
+/**
+ * Daftarkan wajah otomatis untuk murid yang baru ber-foto tapi wajahnya masih "belum".
+ * @param {Array<{nis?: string, status?: string}>} rincian  rincian laporan sinkron foto.
+ */
+async function autoDaftarWajahDariFotoBaru(rincian) {
+  const fw = window.FaceWajah;
+  if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function') return 0;
+  if (autoDaftarWajahSedangProses) return 0;
+  autoDaftarWajahSedangProses = true;
+
+  // Ambil daftar NIS yang baru ber-foto (dari rincian laporan)
+  const nisBaru = (rincian || [])
+    .filter(r => r && r.nis && (!r.status || r.status === 'baru'))
+    .map(r => String(r.nis));
+  if (!nisBaru.length) { autoDaftarWajahSedangProses = false; return 0; }
+
+  let statusMap = {};
+  try { statusMap = await fw.ambilStatusWajah(nisBaru); }
+  catch (e) { console.warn('autoDaftarWajah ambilStatusWajah:', e); }
+
+  // Data kebutuhan untuk face.js: url_foto & nama_lengkap dari tabel akun
+  let peta = {};   // nis -> {url_foto, nama}
+  try {
+    const src = await supaAmbilSemua(
+      supaClient.from('akun').select('nis_nip, url_foto, nama_lengkap')
+        .eq('tipe', 'murid').in('nis_nip', nisBaru)
+    );
+    (src || []).forEach(d => { peta[String(d.nis_nip)] = { url_foto: d.url_foto, nama: d.nama_lengkap }; });
+  } catch (e) { console.warn('autoDaftarWajah fetch akun:', e); }
+
+  let ok = 0, gagal = 0;
+  for (const nis of nisBaru) {
+    const st = statusMap[nis] || 'belum';
+    if (st !== 'belum') continue;          // sudah punya wajah -> lewati
+    const info = peta[nis] || {};
+    if (!info.url_foto) continue;          // tak ada foto -> tak bisa daftar
+    try {
+      const r = await fw.registrasiOtomatisDariFoto(nis, info.url_foto, info.nama || nis);
+      if (r && r.ok) ok++; else gagal++;
+    } catch (e) { gagal++; console.warn('autoDaftarWajah:', nis, e); }
+  }
+
+  try { if (fw.muatPetaWajah) await fw.muatPetaWajah(); } catch (e) {}
+  try { if (typeof renderTabelMuridTerfilter === 'function') renderTabelMuridTerfilter(); } catch (e) {}
+
+  const total = ok + gagal;
+  if (total > 0) {
+    showToast(ok > 0 && gagal === 0 ? 'success' : (gagal > 0 && ok > 0 ? 'info' : 'error'),
+      `Wajah otomatis: ${ok} berhasil${gagal ? `, ${gagal} gagal` : ''}.`);
+  }
+  autoDaftarWajahSedangProses = false;
+  return ok;
 }
 
 
