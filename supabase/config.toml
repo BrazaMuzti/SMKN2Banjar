@@ -8,3 +8,18 @@ verify_jwt = true
 # di dalam fungsi + RPC simpan_foto_murid (security definer).
 [functions.unggah-foto-murid]
 verify_jwt = false
+
+# ambil-foto-drive: verify_jwt=false karena dipanggil fetch anonim (tanpa cookie
+# Google / tanpa sesi Auth) dari halaman untuk membaca foto murid. Hanya GET
+# read-only via service account; file yang bisa diambil cuma yang publik "siapa
+# saja" atau milik SA/Shared Drive aplikasi.
+[functions.ambil-foto-drive]
+verify_jwt = false
+
+# sinkron-foto-drive: verify_jwt=false karena admin/guru "lokal" (login aplikasi
+# NIS+NIP+password) punya token sesi yang tidak diverifikasi sebagai JWT Supabase.
+# Otorisasi dipastikan di dalam fungsi (JWT ATAU klaim pemanggil diverifikasi ke
+# tabel akun) sebelum menulis; hanya admin / guru (wali kelas / pembina ekskul)
+# yang boleh memicu sinkronisasi foto.
+[functions.sinkron-foto-drive]
+verify_jwt = false
