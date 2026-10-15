@@ -10874,9 +10874,78 @@ async function autoIsiFotoKosongSekaliSesi() {
         invalidasiCacheAkun();
         renderManajemenMurid(document.getElementById('main-content'), true);
       } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi/refresh:', e); }
+      // [OPTION A] Setelah url_foto terisi dari Google Drive, daftarkan wajah otomatis
+      // (sekali per sesi) bagi murid yang BARU dapat foto namun belum punya wajah —
+      // tanpa dialog/klik, memakai helper face.js registrasiOtomatisDariFoto.
+      try {
+        const nisBaru = (l.rincian || [])
+          .filter(r => r && r.status === 'baru' && r.nis)
+          .map(r => String(r.nis));
+        if (nisBaru.length && typeof autoDaftarWajahDariFotoBaru === 'function') {
+          autoDaftarWajahDariFotoBaru(nisBaru); // fire-and-forget — tidak memblokir render
+        }
+      } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi/face:', e); }
     }
   }
   // Gagal → flag false tetap; dicoba lagi pada pembukaan menu berikutnya.
+}
+
+// ===== [OPTION A] Otomatis daftarkan wajah dari foto yang barusan diisi (sekali per sesi) =====
+// Setelah sinkron otomatis mengisi url_foto (mode 'hanya-kosong'), beberapa murid yang semula
+// tanpa foto kini punya foto profil. Bila murid tersebut belum punya data wajah (status 'belum'),
+// kita daftarkan wajahnya otomatis dari foto Drive itu — memakai helper yang SAMA dengan tombol
+// "Wajah Masal" (face.js registrasiOtomatisDariFoto → RPC simpan_wajah_murid, status 'aktif'),
+// tapi TANPA dialog konfirmasi. Berjalan SEKALI per sesi browser; best-effort & non-blocking.
+let autoDaftarWajahSesi = false; // true setelah dicoba/selesai sekali per sesi
+async function autoDaftarWajahDariFotoBaru(nisBaru) {
+  if (autoDaftarWajahSesi || !nisBaru || !nisBaru.length) return;
+  const fw = window.FaceWajah;
+  if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function' ||
+      typeof fw.ambilStatusWajah !== 'function') return; // modul wajah belum siap → lewati
+  if (!bisaImportMuridAktif()) return; // hanya admin/guru yang berhak (sejalan tombol Wajah Masal)
+
+  let barisFresh = [];
+  try {
+    barisFresh = await supaAmbilSemua(
+      supaClient.from('akun').select(KOLOM_EXPORT_MURID)
+        .eq('tipe', 'murid').in('nis_nip', nisBaru)
+    );
+  } catch (e) { console.warn('autoDaftarWajahDariFotoBaru/fetch:', e); }
+  if (!barisFresh.length) return;
+
+  // Hanya murid yang punya url_foto (baru terisi) & belum punya wajah.
+  let statusMap = {};
+  try { statusMap = await fw.ambilStatusWajah(barisFresh.map(d => String(d.nis_nip || d.NIS || d.nis))); }
+  catch (e) { console.warn('autoDaftarWajahDariFotoBaru/status:', e); }
+
+  const kandidat = barisFresh.filter(d => {
+    const nis = String(d.nis_nip || d.NIS || d.nis);
+    return d.url_foto && statusMap[nis] === 'belum';
+  });
+  if (!kandidat.length) { autoDaftarWajahSesi = true; return; }
+
+  autoDaftarWajahSesi = true;
+  showToast('info', `${kandidat.length} wajah murid akan didaftarkan otomatis dari foto Drive…`);
+  let ok = 0, gagal = 0; const errs = [];
+  for (const d of kandidat) {
+    const nis = String(d.nis_nip || d.NIS || d.nis);
+    const nama = String(d.nama_lengkap || nis);
+    try {
+      const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, nama);
+      if (r && r.ok) ok++;
+      else { gagal++; if (r && r.pesan) errs.push(nama + ': ' + r.pesan); }
+    } catch (e) { gagal++; errs.push(nama + ': ' + ((e && e.message) ? e.message : e)); }
+  }
+  if (kandidat.length > 1) {
+    showToast(gagal === 0 ? 'success' : 'warning',
+      `Wajah otomatis selesai: ${ok} berhasil, ${gagal} gagal.` + (errs.length ? ' — ' + errs.slice(0, 3).join('; ') : ''));
+  } else if (kandidat.length === 1) {
+    showToast(ok ? 'success' : 'error', ok ? `${kandidat[0].nama_lengkap || 'Murid'}: wajah terdaftar dari foto.`
+      : `Gagal mendaftarkan wajah: ${(errs[0] || 'tidak diketahui')}`);
+  }
+  try { if (fw.muatPetaWajah) await fw.muatPetaWajah(); } catch (e) {}
+  try { invalidasiCacheAkun(); renderManajemenMurid(document.getElementById('main-content'), true); }
+  catch (e) { console.warn('autoDaftarWajahDariFotoBaru/refresh:', e); }
 }
 
 
