@@ -9285,6 +9285,33 @@ const KOLOM_LIST_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kela
 // Kolom penuh utk export Excel/PDF (fetch on-demand saat tombol export diklik)
 const KOLOM_EXPORT_MURID = 'id, user_id, nis_nip, nisn, nama_lengkap, tingkat_kelas, riwayat_kelas, jenis_kelamin, tgl_lahir, agama, golongan_darah, ekstrakurikuler, jabatan, jabatan_ekskul, nama_ayah, pekerjaan_ayah, nama_ibu, pekerjaan_ibu, nama_wali, alamat, no_telepon, email, catatan_khusus, tahun_pelajaran, semester, url_foto, alamat_maps, media_sosial';
 
+// ===== Persistensi filter "Data Akun Murid" =====
+// Simpan pilihan filter + kolom cari + halaman agar tetap terjaga saat renderManajemenMurid()
+// membangun ulang DOM (setelah simpan/edit/hapus/import/kenaikan/sinkron foto/refresh).
+let sFilterMurid = { tahun: 'ALL', kelas: 'ALL', ekskul: 'ALL', status: 'ALL', wajah: 'ALL', cari: '', halaman: 1 };
+
+/** Baca nilai filter tabel murid dari DOM (bila elemen tersedia) ke sFilterMurid. */
+function simpanStateFilterMurid() {
+    const ambil = (id) => { const el = document.getElementById(id); return el ? String(el.value || '') : null; };
+    const cariEl = document.getElementById('search-murid');
+    const t = ambil('filter-tahun-murid');
+    const k = ambil('filter-kelas-murid');
+    const e = ambil('filter-ekskul-murid');
+    const s = ambil('filter-status-murid');
+    const w = ambil('filter-status-wajah');
+    // Hanya simpan bila bukan buka-pertama (semua null berarti belum ada DOM → jangan timpa default ALL).
+    if (t !== null) sFilterMurid.tahun = t;
+    if (k !== null) sFilterMurid.kelas = k;
+    if (e !== null) sFilterMurid.ekskul = e;
+    if (s !== null) sFilterMurid.status = s;
+    if (w !== null) sFilterMurid.wajah = w;
+    if (cariEl) sFilterMurid.cari = String(cariEl.value || '');
+    sFilterMurid.halaman = halamanAktifMurid;
+};
+
+// Urutan NIS murid hasil filter tabel aktif (untuk navigasi wajah di modal — dibaca face.js).
+let mrdNavNis = [];
+
 /** Kosongkan cache akun (murid) + cache dashboard — dipanggil setiap CRUD akun. */
 function invalidasiCacheAkun() {
   cacheAkunMurid = [];
@@ -9293,6 +9320,8 @@ function invalidasiCacheAkun() {
 }
 
 async function renderManajemenMurid(container, paksa = false) {
+    // Pertahankan pilihan filter + cari + halaman yang aktif (bila ada) sebelum DOM dibangun ulang.
+    simpanStateFilterMurid();
     container.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat Data Akun Murid...</div>`;
     
     try {
@@ -9324,9 +9353,10 @@ async function renderManajemenMurid(container, paksa = false) {
         const listEkskul = urutAz(denganSto([...new Set(masterDataCache.map(m => mdVal(m, "Ekstrakurikuler", "ekstrakurikuler")).filter(Boolean))]));
         const listKelasMurid = urutAz([...new Set((cacheAkunMurid || []).map(m => m.tingkat_kelas || m["Tingkat/Kelas"]).filter(Boolean))]);
         
-        const tahunOptions = listTahun.map(t => `<option value="${t}">${t}</option>`).join('');
-        const ekskulOptions = listEkskul.map(e => `<option value="${e}">${e}</option>`).join('');
-        const kelasOptions = listKelasMurid.map(k => `<option value="${escJs(k)}">${escapeHtml(k)}</option>`).join('');
+        const awal = sFilterMurid || { tahun: 'ALL', kelas: 'ALL', ekskul: 'ALL' };
+        const tahunOptions = listTahun.map(t => `<option value="${t}"${String(t) === String(awal.tahun) ? ' selected' : ''}>${t}</option>`).join('');
+        const ekskulOptions = listEkskul.map(e => `<option value="${e}"${String(e) === String(awal.ekskul) ? ' selected' : ''}>${e}</option>`).join('');
+        const kelasOptions = listKelasMurid.map(k => `<option value="${escJs(k)}"${String(k) === String(awal.kelas) ? ' selected' : ''}>${escapeHtml(k)}</option>`).join('');
 
         container.innerHTML = `
             <div class="glass-card rounded-2xl overflow-hidden shadow-2xl border border-white/10 flex flex-col h-[85vh]">
@@ -9337,38 +9367,38 @@ async function renderManajemenMurid(container, paksa = false) {
                         <!-- Baris 1: Filter Tahun / Kelas / Ekskul / Status / Cari (grid 2 kolom rapat di mobile) -->
                         <div class="grid grid-cols-2 sm:flex sm:gap-2 gap-1.5 items-center">
                             <select id="filter-tahun-murid" class="h-8 w-full sm:w-32 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()">
-                                <option value="ALL">Semua Tahun</option>
+                                <option value="ALL"${awal.tahun === 'ALL' ? ' selected' : ''}>Semua Tahun</option>
                                 ${tahunOptions}
                             </select>
 
                             <select id="filter-kelas-murid" class="h-8 w-full sm:w-28 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()">
-                                <option value="ALL">Semua Kelas</option>
-                                <option value="GRP:X">Semua Kelas X</option>
-                                <option value="GRP:XI">Semua Kelas XI</option>
-                                <option value="GRP:XII">Semua Kelas XII</option>
+                                <option value="ALL"${awal.kelas === 'ALL' ? ' selected' : ''}>Semua Kelas</option>
+                                <option value="GRP:X"${awal.kelas === 'GRP:X' ? ' selected' : ''}>Semua Kelas X</option>
+                                <option value="GRP:XI"${awal.kelas === 'GRP:XI' ? ' selected' : ''}>Semua Kelas XI</option>
+                                <option value="GRP:XII"${awal.kelas === 'GRP:XII' ? ' selected' : ''}>Semua Kelas XII</option>
                                 ${kelasOptions}
                             </select>
 
                             <select id="filter-ekskul-murid" class="h-8 w-full sm:w-36 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()">
-                                <option value="ALL">Semua Ekskul</option>
+                                <option value="ALL"${awal.ekskul === 'ALL' ? ' selected' : ''}>Semua Ekskul</option>
                                 ${ekskulOptions}
                             </select>
 
                             <select id="filter-status-murid" class="h-8 w-full sm:w-32 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()" title="Status siswa pada TA terpilih">
-                                <option value="ALL">Semua Status</option>
-                                ${STATUS_SISWA.map(s => `<option value="${escJs(s)}">${s}</option>`).join('')}
+                                <option value="ALL"${awal.status === 'ALL' ? ' selected' : ''}>Semua Status</option>
+                                ${STATUS_SISWA.map(s => `<option value="${escJs(s)}"${String(s) === String(awal.status) ? ' selected' : ''}>${s}</option>`).join('')}
                             </select>
 
                             <select id="filter-status-wajah" class="h-8 w-full sm:w-32 bg-slate-700 border border-white/20 rounded-lg px-1.5 text-[10px] sm:text-[11px] text-white outline-none focus:border-blue-500 cursor-pointer" onchange="filterTabelMurid()" title="Filter status registrasi wajah murid">
-                                <option value="ALL">Semua Wajah</option>
-                                <option value="aktif">Wajah Aktif</option>
-                                <option value="nonaktif">Wajah Nonaktif</option>
-                                <option value="belum">Wajah Belum</option>
+                                <option value="ALL"${awal.wajah === 'ALL' ? ' selected' : ''}>Semua Wajah</option>
+                                <option value="aktif"${awal.wajah === 'aktif' ? ' selected' : ''}>Wajah Aktif</option>
+                                <option value="nonaktif"${awal.wajah === 'nonaktif' ? ' selected' : ''}>Wajah Nonaktif</option>
+                                <option value="belum"${awal.wajah === 'belum' ? ' selected' : ''}>Wajah Belum</option>
                             </select>
 
                             <div class="relative col-span-2">
                                 <span class="absolute left-2.5 top-1.5 text-slate-400 pointer-events-none"><i class="fa-solid fa-magnifying-glass text-[10px]"></i></span>
-                                <input type="text" id="search-murid" placeholder="Cari NIS / Nama..." class="h-8 w-full bg-black/40 border border-white/20 rounded-lg pl-7 pr-2 text-[11px] text-white outline-none focus:border-blue-500" onkeyup="filterTabelMurid()">
+                                <input type="text" id="search-murid" placeholder="Cari NIS / Nama..." value="${escJs(sFilterMurid.cari || '')}" class="h-8 w-full bg-black/40 border border-white/20 rounded-lg pl-7 pr-2 text-[11px] text-white outline-none focus:border-blue-500" onkeyup="filterTabelMurid()">
                             </div>
                         </div>
 
@@ -9411,6 +9441,7 @@ async function renderManajemenMurid(container, paksa = false) {
                 <div id="pag-murid" class="bg-slate-800/80 border-t border-white/10 px-4 py-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-300"></div>
             </div>
         `;
+        halamanAktifMurid = Math.max(1, Number(sFilterMurid.halaman) || 1);
         renderTabelMuridTerfilter();
     } catch(e) {
         console.error("Error renderManajemenMurid:", e);
@@ -9682,6 +9713,11 @@ async function renderTabelMuridTerfilter() {
         } catch (e) { console.error('Gagal filter status wajah:', e); }
     }
 
+    // [NAV URGENT/WAJAH] Populasi mrdNavNis = urutan NIS hasil filter LENGKAP (termasuk status
+    // wajah & cari). Dipakai kelolaWajah() (face.js) utk nav sebelumnya/berikutnya di modal wajah
+    // agar mengikuti filter tabel yang sedang aktif, bukan seluruh cacheAkunMurid.
+    mrdNavNis = cocok.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+
     const totalHalaman = Math.max(1, Math.ceil(cocok.length / ukuranHalamanMurid));
     if (halamanAktifMurid > totalHalaman) halamanAktifMurid = totalHalaman;
     const mulai = (halamanAktifMurid - 1) * ukuranHalamanMurid;
@@ -9708,7 +9744,7 @@ async function renderTabelMuridTerfilter() {
                 <div class="flex items-center gap-1.5">
                     <button onclick="gantiHalamanMurid(-1)" ${halamanAktifMurid <= 1 ? 'disabled' : ''} class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition" title="Halaman Sebelumnya"><i class="fa-solid fa-chevron-left"></i></button>
                     <button onclick="gantiHalamanMurid(1)" ${halamanAktifMurid >= totalHalaman ? 'disabled' : ''} class="px-2 py-1 rounded bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40 disabled:cursor-not-allowed transition" title="Halaman Berikutnya"><i class="fa-solid fa-chevron-right"></i></button>
-                    <select onchange="ukuranHalamanMurid = Number(this.value); halamanAktifMurid = 1; renderTabelMuridTerfilter();" class="bg-slate-700 border border-white/10 rounded px-1 py-1 text-white outline-none cursor-pointer">${ukuranOpts}</select>
+                    <select onchange="ukuranHalamanMurid = Number(this.value); halamanAktifMurid = 1; sFilterMurid.halaman = 1; renderTabelMuridTerfilter();" class="bg-slate-700 border border-white/10 rounded px-1 py-1 text-white outline-none cursor-pointer">${ukuranOpts}</select>
                 </div>`;
         }
     }
@@ -9717,12 +9753,15 @@ async function renderTabelMuridTerfilter() {
 /** Ganti halaman tabel murid (arah: -1 = sebelumnya, 1 = berikutnya). */
 function gantiHalamanMurid(arah) {
     halamanAktifMurid = Math.max(1, halamanAktifMurid + arah);
+    sFilterMurid.halaman = halamanAktifMurid;
     renderTabelMuridTerfilter();
 }
 
 /** Terapkan ulang filter tabel murid (reset ke halaman pertama). */
 function filterTabelMurid() {
+    simpanStateFilterMurid(); // simpan pilihan filter + cari agar terbawa bila DOM dibangun ulang
     halamanAktifMurid = 1;
+    sFilterMurid.halaman = 1;
     renderTabelMuridTerfilter();
 }
 
@@ -10816,8 +10855,20 @@ async function sinkronkanFotoDrive() {
     if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
   } catch (e) { /* biarkan token aplikasi */ }
 
-  const sumber = (typeof KOLOM_EXPORT_MURID === 'object' && Array.isArray(KOLOM_EXPORT_MURID)) ? KOLOM_EXPORT_MURID : [];
-  const rows = muridTersaring(sumber);
+  // Gunakan cache daftar murid (bukan string nama kolom) agar nisTarget berisi murid
+  // hasil filter tabel aktif — sesuai filter yang dipilih (export Excel/PDF memakai jalur yang sama).
+  let rows = muridTersaring(cacheAkunMurid);
+
+  // Filter status wajah (aktif/nonaktif/belum) — sinkron mengikuti seluruh 5 filter + pencarian.
+  const filtWajah = (((document.getElementById('filter-status-wajah') || {}).value) || 'ALL').toLowerCase();
+  if (filtWajah !== 'all' && rows.length && window.FaceWajah && typeof window.FaceWajah.ambilStatusWajah === 'function') {
+    try {
+      const nisWajah = rows.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+      const petaW = await window.FaceWajah.ambilStatusWajah(nisWajah);
+      rows = rows.filter(r => (petaW[String(r.nis_nip || r.NIS || r.nis)] || 'belum') === filtWajah);
+    } catch (e) { console.error('Gagal filter status wajah (sinkron foto):', e); }
+  }
+
   const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
   if (!nisTarget.length) return showToast('error', 'Tidak ada murid hasil filter yang tersinkron.');
 

@@ -966,10 +966,15 @@
     const nama = murid.nama_lengkap || '';
     const kelas = murid.tingkat_kelas || '';
     // [B4] Navegasi prev/next antar murid di modal registrasi wajah (sesi admin/guru).
-    // Rehaza urutan cache admin bila ada; self-service (tanpa cache) → tak ada nav.
+    // Prioritas: mrdNavNis = urutan NIS hasil filter tabel aktif (diisi app.js renderTabelMuridTerfilter)
+    // → navigasi mengikuti filter yang sedang dipilih (tahun/kelas/ekskul/status/cari/pencarian).
+    // Fallback: seluruh cache admin bila mrdNavNis kosong/tak ada (mis. sesi self-service).
     let daftarNav = [];
     let idxNav = -1;
-    if (typeof cacheAkunMurid !== 'undefined' && Array.isArray(cacheAkunMurid) && cacheAkunMurid.length > 1) {
+    if (typeof mrdNavNis !== 'undefined' && Array.isArray(mrdNavNis) && mrdNavNis.length > 1) {
+      daftarNav = mrdNavNis.slice();
+      idxNav = daftarNav.indexOf(String(nis));
+    } else if (typeof cacheAkunMurid !== 'undefined' && Array.isArray(cacheAkunMurid) && cacheAkunMurid.length > 1) {
       daftarNav = cacheAkunMurid
         .filter(m => String(m.tipe || '') === 'murid' || (m.nis_nip || m.NIS || m.nis))
         .map(m => String(m.nis_nip || m.NIS || m.nis));
