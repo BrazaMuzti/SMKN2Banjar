@@ -9407,6 +9407,9 @@ async function renderManajemenMurid(container, paksa = false) {
             </div>
         `;
         renderTabelMuridTerfilter();
+        // [OTOMATIS] Isi URL Foto kosong dari Google Drive sekali per sesi (tanpa dialog/klik).
+        // Fire-and-forget — tidak memblokir render halaman.
+        if (typeof autoIsiFotoKosongSekaliSesi === 'function') autoIsiFotoKosongSekaliSesi();
     } catch(e) {
         console.error("Error renderManajemenMurid:", e);
         container.innerHTML = `<div class="p-6 text-center text-red-400">Gagal memuat data akun murid. Periksa koneksi jaringan.</div>`;
@@ -10779,6 +10782,103 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
   if (hasil.isConfirmed) return { hasil: pilihan, lewatiNis: lewatiSet };
   return null;
 }
+
+// ===== Otomatis isi URL Foto kosong (sekali per sesi browser) =====
+// Saat menu "Data Akun Murid" dibuka, bila di database kolom "URL Foto" (akun.url_foto)
+// masih KOSONG dan file foto murid yang cocok SUDAH ada di Google Drive, otomatis diisi
+// dengan URL thumbnail Drive (seperti "meng-upload foto" → menghasilkan data url_foto),
+// contoh: "https://drive.google.com/thumbnail?id=<FILE_ID>&sz=w1000".
+// Mode 'hanya-kosong' on Edge Function sinkron-foto-drive → TIDAK menimpa yang sudah ada.
+// Berjalan SEKALI per sesi browser (tanpa dialog/klik) agar ringan & tidak berisik berulang.
+let autoIsiFotoKosongSesi = false; // true setelah dicoba/sukses sekali per sesi
+
+/** Siapkan payload (pemanggil + token + nisTarget + rows) utk sinkron-foto-drive.
+ *  Kembalikan { ok:false, alasan } bila tak berhak / tak ada murid hasil filter. */
+async function siapkanSinkronFotoDrive() {
+  // [HAK AKSES] hanya admin & guru (wali kelas / pembina ekskul) yang boleh.
+  if (!bisaImportMuridAktif()) return { ok: false, alasan: 'akses' };
+  const u = (currentUser || {}).user || {};
+  const pemanggil = {
+    tipe: String((currentUser || {}).role || ''),
+    nisNip: String(u['NIS'] || u['NIP'] || u['ID Akun Guru'] || '')
+  };
+  // Fallback: NIS/NIP admin dari tabel akun via email bila identitas belum tersimpan.
+  if (!pemanggil.nisNip && pemanggil.tipe === 'admin') {
+    try {
+      const em = String(u['Email'] || '').trim();
+      if (em && supaClient) {
+        const { data: baris } = await supaClient.from('akun').select('nis_nip').eq('email', em).maybeSingle();
+        if (baris && baris.nis_nip) pemanggil.nisNip = String(baris.nis_nip);
+      }
+    } catch (e) { /* biarkan kosong — Edge Function punya fallback JWT/email sendiri */ }
+  }
+  let token = getToken();
+  try {
+    const sesi = await supaClient.auth.getSession();
+    if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
+  } catch (e) { /* biarkan token aplikasi */ }
+
+  // Sumber murid = cache halaman Data Akun Murid (ter-filter by muridTersaring).
+  // (Manual sinkronkanFotoDrive menjaga jalurnya sendiri; helper ini khusus jalur otomatis.)
+  let rows = muridTersaring((cacheAkunMurid && Array.isArray(cacheAkunMurid)) ? cacheAkunMurid : []);
+  if (!rows.length) {
+    try {
+      const dat = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
+      rows = muridTersaring(dat || []);
+    } catch (e) { console.warn('siapkanSinkronFotoDrive/fetch:', e); }
+  }
+  const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+  if (!nisTarget.length) return { ok: false, alasan: 'kosong' };
+  return { ok: true, pemanggil, token, nisTarget, rows };
+}
+
+/** [OTOMATIS] Isi URL Foto kosong dari Google Drive, SEKALI per sesi browser.
+ *  Fire-and-forget (tidak memblokir render halaman). Mode 'hanya-kosong' → hanya mengisi
+ *  yang kosong, TIDAK pernah menimpa foto yang sudah ada. Bila berhasil & ada terpasang → 
+ *  toast ringan + refresh tabel. Bila belum berhasil → flag sesi tetap false agar dicoba
+ *  lagi pada pembukaan menu berikutnya. */
+async function autoIsiFotoKosongSekaliSesi() {
+  if (autoIsiFotoKosongSesi) return;
+  const siap = await siapkanSinkronFotoDrive();
+  if (!siap.ok) { autoIsiFotoKosongSesi = true; return; }
+
+  let res;
+  try {
+    const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${siap.token}`,
+        'apikey': SUPABASE_ANON_KEY
+      },
+      body: JSON.stringify({ pemanggil: siap.pemanggil, nisTarget: siap.nisTarget, mode: 'hanya-kosong', lewatiNis: [] })
+    });
+    if (fetchRes.status === 404) {
+      res = { status: 'error', message: 'belum-deploy' };
+    } else if (fetchRes.status === 401 || fetchRes.status === 403) {
+      res = { status: 'error', message: 'ditolak' };
+    } else {
+      res = await fetchRes.json().catch(() => ({ status: 'error', message: 'tak-terbaca' }));
+    }
+  } catch (e) {
+    res = { status: 'error', message: 'jaringan' };
+  }
+
+  if (res && res.status === 'success') {
+    autoIsiFotoKosongSesi = true; // sesi dianggap selesai (sukses ataupun tak ada yang kosong)
+    const l = res.laporan || {};
+    const n = l.terpasang || 0;
+    if (n > 0) {
+      showToast('success', `${n} foto murid otomatis diisi dari Google Drive.`);
+      try {
+        invalidasiCacheAkun();
+        renderManajemenMurid(document.getElementById('main-content'), true);
+      } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi/refresh:', e); }
+    }
+  }
+  // Gagal → flag false tetap; dicoba lagi pada pembukaan menu berikutnya.
+}
+
 
 /**
  * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
