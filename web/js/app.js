@@ -10664,6 +10664,7 @@ async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }
     body: JSON.stringify({ nis, nisn: String(nisn || ''), nama, tahun, kelas, foto: dataUrl || undefined, hapus: !!hapus, pemanggil })
   });
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
+}
 
 /** Unduh teks sebagai file .txt dari browser (untuk laporan log sinkron/wajah). */
 function unduhTeksSebagaiTxt(namaFile, isi) {
@@ -10732,8 +10733,14 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
           <label class="flex items-center gap-2 text-[10px]">
             <input type="checkbox" data-nis="${escJs(String(r.nis))}" class="tl-skip accent-red-500">
             <span class="font-bold text-white">${escapeHtml(r.nama)}</span>
+            <span class="text-slate-400">· ${escapeHtml(r.nis || '-')}</span>
+            <span class="text-slate-500 ml-auto">${escapeHtml(r.kelas || '')}</span>
+          </label>`).join('')}
+      </div>
+      <p class="text-[9px] text-slate-500 mt-1">Siswa yang <b>tidak</b> dicentang pada mode per-siswa akan ditimpa.</p>
+    </div>`;
 
-  const hasil = await Swal.fire({
+const hasil = await Swal.fire({
     title: judul,
     html,
     icon: 'question',
@@ -10775,15 +10782,6 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
   });
   if (hasil.isConfirmed) return { hasil: pilihan, lewatiNis: lewatiSet };
   return null;
-}
-
-            <span class="text-slate-400">· ${escapeHtml(r.nis || '-')}</span>
-            <span class="text-slate-500 ml-auto">${escapeHtml(r.kelas || '')}</span>
-          </label>`).join('')}
-      </div>
-      <p class="text-[9px] text-slate-500 mt-1">Siswa yang <b>tidak</b> dicentang pada mode per-siswa akan ditimpa.</p>
-    </div>`;
-
 }
 /**
  * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
