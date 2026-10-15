@@ -8,7 +8,7 @@ const INFO_APLIKASI = {
   namaPanjang: 'Sistem Informasi Sekolah Indonesia Pintar',
   versi: '1.0.0',
   deskripsi: 'Aplikasi administrasi sekolah: absensi, penilaian, jadwal, kalender pendidikan & laporan — berbasis web, multi-peran (admin, guru, murid).',
-  pengembang: 'Tim Pengembang SISIP : Indra Nur Muhammad, S.Pd., M.Pd. <br> Yusman, S.Ip.',
+  pengembang: 'Tim Pengembang SISIP : Indra Nur Muhammad, S.Pd., M.Pd., Yusman, S.Ip.',
   kontak: {
     
     wa: '6281320682233',          // contoh: '6281234567890' (62 di depan, tanpa +)
@@ -9407,9 +9407,6 @@ async function renderManajemenMurid(container, paksa = false) {
             </div>
         `;
         renderTabelMuridTerfilter();
-        // [OTOMATIS] Isi URL Foto kosong dari Google Drive sekali per sesi (tanpa dialog/klik).
-        // Fire-and-forget — tidak memblokir render halaman.
-        if (typeof autoIsiFotoKosongSekaliSesi === 'function') autoIsiFotoKosongSekaliSesi();
     } catch(e) {
         console.error("Error renderManajemenMurid:", e);
         container.innerHTML = `<div class="p-6 text-center text-red-400">Gagal memuat data akun murid. Periksa koneksi jaringan.</div>`;
@@ -10663,8 +10660,6 @@ async function unggahFotoMurid({ nis, nisn, nama, tahun, kelas, dataUrl, hapus }
   });
   return res.json().catch(() => ({ status: 'error', message: 'Gagal membaca respons server.' }));
 
-}
-
 /** Unduh teks sebagai file .txt dari browser (untuk laporan log sinkron/wajah). */
 function unduhTeksSebagaiTxt(namaFile, isi) {
   try {
@@ -10732,12 +10727,6 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
           <label class="flex items-center gap-2 text-[10px]">
             <input type="checkbox" data-nis="${escJs(String(r.nis))}" class="tl-skip accent-red-500">
             <span class="font-bold text-white">${escapeHtml(r.nama)}</span>
-            <span class="text-slate-400">· ${escapeHtml(r.nis || '-')}</span>
-            <span class="text-slate-500 ml-auto">${escapeHtml(r.kelas || '')}</span>
-          </label>`).join('')}
-      </div>
-      <p class="text-[9px] text-slate-500 mt-1">Siswa yang <b>tidak</b> dicentang pada mode per-siswa akan ditimpa.</p>
-    </div>`;
 
   const hasil = await Swal.fire({
     title: judul,
@@ -10783,180 +10772,19 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
   return null;
 }
 
-// ===== Otomatis isi URL Foto kosong (sekali per sesi browser) =====
-// Saat menu "Data Akun Murid" dibuka, bila di database kolom "URL Foto" (akun.url_foto)
-// masih KOSONG dan file foto murid yang cocok SUDAH ada di Google Drive, otomatis diisi
-// dengan URL thumbnail Drive (seperti "meng-upload foto" → menghasilkan data url_foto),
-// contoh: "https://drive.google.com/thumbnail?id=<FILE_ID>&sz=w1000".
-// Mode 'hanya-kosong' on Edge Function sinkron-foto-drive → TIDAK menimpa yang sudah ada.
-// Berjalan SEKALI per sesi browser (tanpa dialog/klik) agar ringan & tidak berisik berulang.
-let autoIsiFotoKosongSesi = false; // true setelah dicoba/sukses sekali per sesi
+            <span class="text-slate-400">· ${escapeHtml(r.nis || '-')}</span>
+            <span class="text-slate-500 ml-auto">${escapeHtml(r.kelas || '')}</span>
+          </label>`).join('')}
+      </div>
+      <p class="text-[9px] text-slate-500 mt-1">Siswa yang <b>tidak</b> dicentang pada mode per-siswa akan ditimpa.</p>
+    </div>`;
 
-/** Siapkan payload (pemanggil + token + nisTarget + rows) utk sinkron-foto-drive.
- *  Kembalikan { ok:false, alasan } bila tak berhak / tak ada murid hasil filter. */
-async function siapkanSinkronFotoDrive() {
-  // [HAK AKSES] hanya admin & guru (wali kelas / pembina ekskul) yang boleh.
-  if (!bisaImportMuridAktif()) return { ok: false, alasan: 'akses' };
-  const u = (currentUser || {}).user || {};
-  const pemanggil = {
-    tipe: String((currentUser || {}).role || ''),
-    nisNip: String(u['NIS'] || u['NIP'] || u['ID Akun Guru'] || '')
-  };
-  // Fallback: NIS/NIP admin dari tabel akun via email bila identitas belum tersimpan.
-  if (!pemanggil.nisNip && pemanggil.tipe === 'admin') {
-    try {
-      const em = String(u['Email'] || '').trim();
-      if (em && supaClient) {
-        const { data: baris } = await supaClient.from('akun').select('nis_nip').eq('email', em).maybeSingle();
-        if (baris && baris.nis_nip) pemanggil.nisNip = String(baris.nis_nip);
-      }
-    } catch (e) { /* biarkan kosong — Edge Function punya fallback JWT/email sendiri */ }
-  }
-  let token = getToken();
-  try {
-    const sesi = await supaClient.auth.getSession();
-    if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
-  } catch (e) { /* biarkan token aplikasi */ }
-
-  // Sumber murid = cache halaman Data Akun Murid (ter-filter by muridTersaring).
-  // (Manual sinkronkanFotoDrive menjaga jalurnya sendiri; helper ini khusus jalur otomatis.)
-  let rows = muridTersaring((cacheAkunMurid && Array.isArray(cacheAkunMurid)) ? cacheAkunMurid : []);
-  if (!rows.length) {
-    try {
-      const dat = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
-      rows = muridTersaring(dat || []);
-    } catch (e) { console.warn('siapkanSinkronFotoDrive/fetch:', e); }
-  }
-  const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
-  if (!nisTarget.length) return { ok: false, alasan: 'kosong' };
-  return { ok: true, pemanggil, token, nisTarget, rows };
 }
-
-/** [OTOMATIS] Isi URL Foto kosong dari Google Drive, SEKALI per sesi browser.
- *  Fire-and-forget (tidak memblokir render halaman). Mode 'hanya-kosong' → hanya mengisi
- *  yang kosong, TIDAK pernah menimpa foto yang sudah ada. Bila berhasil & ada terpasang → 
- *  toast ringan + refresh tabel. Bila belum berhasil → flag sesi tetap false agar dicoba
- *  lagi pada pembukaan menu berikutnya. */
-async function autoIsiFotoKosongSekaliSesi() {
-  if (autoIsiFotoKosongSesi) return;
-  const siap = await siapkanSinkronFotoDrive();
-  if (!siap.ok) { autoIsiFotoKosongSesi = true; return; }
-
-  let res;
-  try {
-    const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${siap.token}`,
-        'apikey': SUPABASE_ANON_KEY
-      },
-      body: JSON.stringify({ pemanggil: siap.pemanggil, nisTarget: siap.nisTarget, mode: 'hanya-kosong', lewatiNis: [] })
-    });
-    if (fetchRes.status === 404) {
-      res = { status: 'error', message: 'belum-deploy' };
-    } else if (fetchRes.status === 401 || fetchRes.status === 403) {
-      res = { status: 'error', message: 'ditolak' };
-    } else {
-      res = await fetchRes.json().catch(() => ({ status: 'error', message: 'tak-terbaca' }));
-    }
-  } catch (e) {
-    res = { status: 'error', message: 'jaringan' };
-  }
-
-  if (res && res.status === 'success') {
-    autoIsiFotoKosongSesi = true; // sesi dianggap selesai (sukses ataupun tak ada yang kosong)
-    const l = res.laporan || {};
-    const n = l.terpasang || 0;
-    if (n > 0) {
-      showToast('success', `${n} foto murid otomatis diisi dari Google Drive.`);
-      try {
-        invalidasiCacheAkun();
-        renderManajemenMurid(document.getElementById('main-content'), true);
-      } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi/refresh:', e); }
-      // [OPTION A] Setelah url_foto terisi dari Google Drive, daftarkan wajah otomatis
-      // (sekali per sesi) bagi murid yang BARU dapat foto namun belum punya wajah —
-      // tanpa dialog/klik, memakai helper face.js registrasiOtomatisDariFoto.
-      try {
-        const nisBaru = (l.rincian || [])
-          .filter(r => r && r.status === 'baru' && r.nis)
-          .map(r => String(r.nis));
-        if (nisBaru.length && typeof autoDaftarWajahDariFotoBaru === 'function') {
-          autoDaftarWajahDariFotoBaru(nisBaru); // fire-and-forget — tidak memblokir render
-        }
-      } catch (e) { console.warn('autoIsiFotoKosongSekaliSesi/face:', e); }
-    }
-  }
-  // Gagal → flag false tetap; dicoba lagi pada pembukaan menu berikutnya.
-}
-
-// ===== [OPTION A] Otomatis daftarkan wajah dari foto yang barusan diisi (sekali per sesi) =====
-// Setelah sinkron otomatis mengisi url_foto (mode 'hanya-kosong'), beberapa murid yang semula
-// tanpa foto kini punya foto profil. Bila murid tersebut belum punya data wajah (status 'belum'),
-// kita daftarkan wajahnya otomatis dari foto Drive itu — memakai helper yang SAMA dengan tombol
-// "Wajah Masal" (face.js registrasiOtomatisDariFoto → RPC simpan_wajah_murid, status 'aktif'),
-// tapi TANPA dialog konfirmasi. Berjalan SEKALI per sesi browser; best-effort & non-blocking.
-let autoDaftarWajahSesi = false; // true setelah dicoba/selesai sekali per sesi
-async function autoDaftarWajahDariFotoBaru(nisBaru) {
-  if (autoDaftarWajahSesi || !nisBaru || !nisBaru.length) return;
-  const fw = window.FaceWajah;
-  if (!fw || typeof fw.registrasiOtomatisDariFoto !== 'function' ||
-      typeof fw.ambilStatusWajah !== 'function') return; // modul wajah belum siap → lewati
-  if (!bisaImportMuridAktif()) return; // hanya admin/guru yang berhak (sejalan tombol Wajah Masal)
-
-  let barisFresh = [];
-  try {
-    barisFresh = await supaAmbilSemua(
-      supaClient.from('akun').select(KOLOM_EXPORT_MURID)
-        .eq('tipe', 'murid').in('nis_nip', nisBaru)
-    );
-  } catch (e) { console.warn('autoDaftarWajahDariFotoBaru/fetch:', e); }
-  if (!barisFresh.length) return;
-
-  // Hanya murid yang punya url_foto (baru terisi) & belum punya wajah.
-  let statusMap = {};
-  try { statusMap = await fw.ambilStatusWajah(barisFresh.map(d => String(d.nis_nip || d.NIS || d.nis))); }
-  catch (e) { console.warn('autoDaftarWajahDariFotoBaru/status:', e); }
-
-  const kandidat = barisFresh.filter(d => {
-    const nis = String(d.nis_nip || d.NIS || d.nis);
-    return d.url_foto && statusMap[nis] === 'belum';
-  });
-  if (!kandidat.length) { autoDaftarWajahSesi = true; return; }
-
-  autoDaftarWajahSesi = true;
-  showToast('info', `${kandidat.length} wajah murid akan didaftarkan otomatis dari foto Drive…`);
-  let ok = 0, gagal = 0; const errs = [];
-  for (const d of kandidat) {
-    const nis = String(d.nis_nip || d.NIS || d.nis);
-    const nama = String(d.nama_lengkap || nis);
-    try {
-      const r = await fw.registrasiOtomatisDariFoto(nis, d.url_foto, nama);
-      if (r && r.ok) ok++;
-      else { gagal++; if (r && r.pesan) errs.push(nama + ': ' + r.pesan); }
-    } catch (e) { gagal++; errs.push(nama + ': ' + ((e && e.message) ? e.message : e)); }
-  }
-  if (kandidat.length > 1) {
-    showToast(gagal === 0 ? 'success' : 'warning',
-      `Wajah otomatis selesai: ${ok} berhasil, ${gagal} gagal.` + (errs.length ? ' — ' + errs.slice(0, 3).join('; ') : ''));
-  } else if (kandidat.length === 1) {
-    showToast(ok ? 'success' : 'error', ok ? `${kandidat[0].nama_lengkap || 'Murid'}: wajah terdaftar dari foto.`
-      : `Gagal mendaftarkan wajah: ${(errs[0] || 'tidak diketahui')}`);
-  }
-  try { if (fw.muatPetaWajah) await fw.muatPetaWajah(); } catch (e) {}
-  try { invalidasiCacheAkun(); renderManajemenMurid(document.getElementById('main-content'), true); }
-  catch (e) { console.warn('autoDaftarWajahDariFotoBaru/refresh:', e); }
-}
-
-
 /**
  * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
  * Memanggil Edge Function `sinkron-foto-drive`: membaca folder DRIVE_FOLDER_ID,
  * mencocokkan nama file "{NISN} {Nama}.jpg" (fallback NIS) ke tabel akun, lalu
- * memperbarui url_foto yang berbeda. Didahului modal pilihan MODE: "Hanya isi yang
- * kosong" (isi URL Foto murid yang masih kosong saja, tanpa menimpa/modal tambahan)
- * ATAU "Timpah / Pilih per Siswa" (perilaku lama — modal pilihTimpahLewati). Hasil
- * laporan ditampilkan lewat toast + ringkasan.
+ * memperbarui url_foto yang berbeda. Hasil laporan ditampilkan lewat toast + ringkasan.
  */
 async function sinkronkanFotoDrive() {
   // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
@@ -10985,71 +10813,29 @@ async function sinkronkanFotoDrive() {
     if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
   } catch (e) { /* biarkan token aplikasi */ }
 
-  // [REQ A] Pilih mode sinkron: (A) hanya isi URL Foto yang KOSONG — tanpa menimpa yang
-  // sudah ada & tanpa modal interaktif; (B) timpa semua / pilih per siswa (perilaku lama,
-  // memunculkan modal pilihTimpahLewati). Batu dihapus = dibatalkan, tabel tak berubah.
-  let mode = 'timpah';
-  const pilihMode = await Swal.fire({
-    title: 'Sinkron Foto — Pilih Mode',
-    html:
-      `<div class="text-left text-xs text-slate-300">` +
-      `Pilih bagaimana memperlakukan <b>URL Foto</b> murid hasil filter aktif ini:<br><br>` +
-      `<div class="bg-white/5 border border-white/10 rounded-lg p-2.5 mb-2">` +
-      `<div class="font-bold text-emerald-300 text-[11px] mb-1"><i class="fa-solid fa-circle-plus mr-1"></i> Hanya isi yang kosong</div>` +
-      `<div class="text-[10px] text-slate-400">Cocokkan file Drive lalu <b>hanya mengisi URL Foto murid yang masih kosong</b>. Foto yang sudah ada TIDAK disentuh.</div>` +
-      `</div>` +
-      `<div class="bg-white/5 border border-white/10 rounded-lg p-2.5">` +
-      `<div class="font-bold text-indigo-300 text-[11px] mb-1"><i class="fa-solid fa-arrows-rotate mr-1"></i> Timpa semua / pilih per siswa</div>` +
-      `<div class="text-[10px] text-slate-400">Timpa URL Foto yang berubah (dengan konfirmasi murid yang foto lamanya dipertahankan).</div>` +
-      `</div>` +
-      `</div>`,
-    icon: 'question',
-    showDenyButton: true,
-    confirmButtonText: 'Timpah / Pilih per Siswa',
-    denyButtonText: 'Hanya Isi Foto Kosong',
-    denyButtonColor: '#0d9488',
-    showCloseButton: true,
-    background: '#1e293b', color: '#fff'
-  });
-  if (pilihMode.isDenied) {
-    mode = 'hanya-kosong';
-  } else if (!pilihMode.isConfirmed) {
-    return; // dibatalkan user (dismiss / close)
-  }
-
-  // [B1] Sumber murid = cache halaman Data Akun Murid (sudah ter-filter by muridTersaring
-  // berdasarkan filter DOM). Fallback fetch penuh bila cache belum dimuat.
-  let rows = muridTersaring((cacheAkunMurid && Array.isArray(cacheAkunMurid)) ? cacheAkunMurid : []);
-  if (!rows.length) {
-    try {
-      const dat = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
-      rows = muridTersaring(dat || []);
-    } catch (e) { console.warn('sinkronkanFotoDrive/fetch:', e); }
-  }
+  const sumber = (typeof KOLOM_EXPORT_MURID === 'object' && Array.isArray(KOLOM_EXPORT_MURID)) ? KOLOM_EXPORT_MURID : [];
+  const rows = muridTersaring(sumber);
   const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
   if (!nisTarget.length) return showToast('error', 'Tidak ada murid hasil filter yang tersinkron.');
 
-  // [B4] Hanya pada mode "timpah": pilih "Timpah/Lewati" untuk murid yang SUDAH punya foto
-  // (url_foto ada). Mode "hanya-kosong" tidak menimpa → tanpa modal interaktif.
+  // [B4] Pilih "Timpah/Lewati" untuk murid yang SUDAH punya foto (url_foto ada).
+  const sudahFoto = (rows || []).filter(r => r.url_foto || r['URL Foto'] || r.url_foto).map(r => ({
+    nis: String(r.nis_nip || r.NIS || r.nis || ''),
+    nama: r.nama_lengkap || r['Nama Lengkap'] || r.Nama || r.nama || 'Tanpa Nama',
+    kelas: kelasSiswaTahun(r) || '-'
+  }));
+  const keputusan = await pilihTimpahLewati(sudahFoto, 'Sinkron Foto — Siswa Sudah Punya Foto', `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila ada file Drive baru yang cocok.`);
+  if (!keputusan) return; // dibatalkan user
+
   let lewatiNis = [];
-  if (mode === 'timpah') {
-    const sudahFoto = (rows || []).filter(r => r.url_foto || r['URL Foto'] || r.url_foto).map(r => ({
-      nis: String(r.nis_nip || r.NIS || r.nis || ''),
-      nama: r.nama_lengkap || r['Nama Lengkap'] || r.Nama || r.nama || 'Tanpa Nama',
-      kelas: kelasSiswaTahun(r) || '-'
-    }));
-    const keputusan = await pilihTimpahLewati(sudahFoto, 'Sinkron Foto — Siswa Sudah Punya Foto', `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila ada file Drive baru yang cocok.`);
-    if (!keputusan) return; // dibatalkan user
-
-    if (keputusan.hasil === 'lewati') {
-      lewatiNis = sudahFoto.map(r => r.nis).filter(Boolean);
-    } else if (keputusan.hasil === 'pilih') {
-      lewatiNis = Array.from(keputusan.lewatiNis || new Set());
-    }
-    lewatiNis = lewatiNis.filter(Boolean);
+  if (keputusan.hasil === 'lewati') {
+    lewatiNis = sudahFoto.map(r => r.nis).filter(Boolean);
+  } else if (keputusan.hasil === 'pilih') {
+    lewatiNis = Array.from(keputusan.lewatiNis || new Set());
   }
+  lewatiNis = lewatiNis.filter(Boolean);
 
-  showToast('info', `Menyinkronkan foto dari Drive untuk ${nisTarget.length} murid${mode === 'hanya-kosong' ? ' (hanya isi URL Foto kosong)' : ''}...`);
+  showToast('info', `Menyinkronkan foto dari Drive untuk ${nisTarget.length} murid...`);
   let res;
   try {
     const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
@@ -11059,7 +10845,7 @@ async function sinkronkanFotoDrive() {
         'Authorization': `Bearer ${token}`,
         'apikey': SUPABASE_ANON_KEY
       },
-      body: JSON.stringify({ pemanggil, nisTarget, mode, lewatiNis })
+      body: JSON.stringify({ pemanggil, nisTarget, lewatiNis })
     });
     if (fetchRes.status === 404) {
       // Edge Function belum di-deploy ke project Supabase yang terhubung.
@@ -11116,7 +10902,6 @@ async function sinkronkanFotoDrive() {
     'tanpa-nomor': ['Tanpa nomor identitas', 'text-amber-300'],
     'lewat-filter': ['Di luar filter (dilewati)', 'text-slate-500'],
     'lewati': ['Foto lama dipertahankan', 'text-indigo-300'],
-    'sudah-ada': ['URL Foto sudah ada', 'text-slate-500'],
     'gagal': ['Gagal', 'text-red-300']
   };
   const barisLog = (l.rincian || []).map(r => {
@@ -11134,7 +10919,6 @@ async function sinkronkanFotoDrive() {
     `Tidak cocok: ${l.tidak_cocok ?? 0}\n` +
     `Di luar filter: ${l.lewat_filter ?? 0}\n` +
     `Dilewati (foto lama dipertahankan): ${l.lewati ?? 0}\n` +
-    `Sudah ada (tidak disentuh): ${l.sudah_ada ?? 0}\n` +
     `Gagal: ${l.gagal ?? 0}\n\n--- RINCIAN ---\n` +
     rincianKeTeks((l.rincian || []).map(r => ({ label: (r.file || '') + (r.nis ? ` (NIS ${r.nis})` : ''), status: petaStatusLabel[r.status] ? petaStatusLabel[r.status][0] : (r.status || '?') })));
 
@@ -11152,7 +10936,6 @@ async function sinkronkanFotoDrive() {
       `<b>Tidak cocok:</b> ${l.tidak_cocok ?? 0} · ` +
       `<b>Di luar filter:</b> ${l.lewat_filter ?? 0} · ` +
       `<b>Dilewati:</b> ${l.lewati ?? 0} · ` +
-      `<b>Sudah ada:</b> ${l.sudah_ada ?? 0} · ` +
       `<b>Gagal:</b> ${l.gagal ?? 0}</div>` +
       `<div class="flex justify-end mb-1"><button id="export-log-btn" class="h-7 px-3 bg-slate-600 hover:bg-slate-500 text-white rounded text-[11px] font-bold transition">⬇ Export .txt</button></div>` +
       `<div class="sisip-log-box custom-scrollbar" style="max-height:210px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;padding:.5rem .6rem">${barisLog || '<div class="text-[10px] text-slate-500">Tanpa rincian.</div>'}</div>` +
@@ -11382,11 +11165,10 @@ async function scanWajahMasal() {
     const nis = String(d.nis_nip || d.NIS || d.nis);
     return d.url_foto && statusMap[nis] === 'belum';
   });
-  const sudahWajahInfo = rows.filter(d => {
+  const sudahWajah = rows.filter(d => {
     const nis = String(d.nis_nip || d.NIS || d.nis);
     return d.url_foto && (statusMap[nis] === 'nonaktif');
-  });
-  const sudahWajah = sudahWajahInfo.map(d => ({
+  }).map(d => ({
     nis: String(d.nis_nip || d.NIS || d.nis),
     nama: d.nama_lengkap || 'Tanpa Nama',
     kelas: kelasSiswaTahun(d) || '-'
@@ -11400,9 +11182,9 @@ async function scanWajahMasal() {
     if (!keputusan) return;
     if (keputusan.hasil === 'pilih') {
       // Yang dicentang = LEWATI → dilepas dari daftar timpa; sisanya ikut daftar ulang.
-      kandidat = kandidat.concat(sudahWajahInfo.filter(r => !keputusan.lewatiNis.has(String(r.nis_nip || r.NIS || r.nis))));
+      kandidat = kandidat.concat(sudahWajah.filter(r => !keputusan.lewatiNis.has(r.nis)));
     } else if (keputusan.hasil === 'timpah') {
-      kandidat = kandidat.concat(sudahWajahInfo);
+      kandidat = kandidat.concat(sudahWajah);
     }
     // hasil 'lewati' → sudahWajah dilewati seluruhnya (hanya kandidat baru).
   }
