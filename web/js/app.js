@@ -10784,7 +10784,10 @@ async function pilihTimpahLewati(daftar, judul, deskripsi) {
  * [REQ 2] Sinkronkan URL foto siswa dari file Google Drive (admin, wali kelas, pembina ekskul).
  * Memanggil Edge Function `sinkron-foto-drive`: membaca folder DRIVE_FOLDER_ID,
  * mencocokkan nama file "{NISN} {Nama}.jpg" (fallback NIS) ke tabel akun, lalu
- * memperbarui url_foto yang berbeda. Hasil laporan ditampilkan lewat toast + ringkasan.
+ * memperbarui url_foto yang berbeda. Didahului modal pilihan MODE: "Hanya isi yang
+ * kosong" (isi URL Foto murid yang masih kosong saja, tanpa menimpa/modal tambahan)
+ * ATAU "Timpah / Pilih per Siswa" (perilaku lama — modal pilihTimpahLewati). Hasil
+ * laporan ditampilkan lewat toast + ringkasan.
  */
 async function sinkronkanFotoDrive() {
   // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
@@ -10813,6 +10816,38 @@ async function sinkronkanFotoDrive() {
     if (sesi && sesi.session && sesi.session.access_token) token = sesi.session.access_token;
   } catch (e) { /* biarkan token aplikasi */ }
 
+  // [REQ A] Pilih mode sinkron: (A) hanya isi URL Foto yang KOSONG — tanpa menimpa yang
+  // sudah ada & tanpa modal interaktif; (B) timpa semua / pilih per siswa (perilaku lama,
+  // memunculkan modal pilihTimpahLewati). Batu dihapus = dibatalkan, tabel tak berubah.
+  let mode = 'timpah';
+  const pilihMode = await Swal.fire({
+    title: 'Sinkron Foto — Pilih Mode',
+    html:
+      `<div class="text-left text-xs text-slate-300">` +
+      `Pilih bagaimana memperlakukan <b>URL Foto</b> murid hasil filter aktif ini:<br><br>` +
+      `<div class="bg-white/5 border border-white/10 rounded-lg p-2.5 mb-2">` +
+      `<div class="font-bold text-emerald-300 text-[11px] mb-1"><i class="fa-solid fa-circle-plus mr-1"></i> Hanya isi yang kosong</div>` +
+      `<div class="text-[10px] text-slate-400">Cocokkan file Drive lalu <b>hanya mengisi URL Foto murid yang masih kosong</b>. Foto yang sudah ada TIDAK disentuh.</div>` +
+      `</div>` +
+      `<div class="bg-white/5 border border-white/10 rounded-lg p-2.5">` +
+      `<div class="font-bold text-indigo-300 text-[11px] mb-1"><i class="fa-solid fa-arrows-rotate mr-1"></i> Timpa semua / pilih per siswa</div>` +
+      `<div class="text-[10px] text-slate-400">Timpa URL Foto yang berubah (dengan konfirmasi murid yang foto lamanya dipertahankan).</div>` +
+      `</div>` +
+      `</div>`,
+    icon: 'question',
+    showDenyButton: true,
+    confirmButtonText: 'Timpah / Pilih per Siswa',
+    denyButtonText: 'Hanya Isi Foto Kosong',
+    denyButtonColor: '#0d9488',
+    showCloseButton: true,
+    background: '#1e293b', color: '#fff'
+  });
+  if (pilihMode.isDenied) {
+    mode = 'hanya-kosong';
+  } else if (!pilihMode.isConfirmed) {
+    return; // dibatalkan user (dismiss / close)
+  }
+
   // [B1] Sumber murid = cache halaman Data Akun Murid (sudah ter-filter by muridTersaring
   // berdasarkan filter DOM). Fallback fetch penuh bila cache belum dimuat.
   let rows = muridTersaring((cacheAkunMurid && Array.isArray(cacheAkunMurid)) ? cacheAkunMurid : []);
@@ -10825,24 +10860,27 @@ async function sinkronkanFotoDrive() {
   const nisTarget = (rows || []).map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
   if (!nisTarget.length) return showToast('error', 'Tidak ada murid hasil filter yang tersinkron.');
 
-  // [B4] Pilih "Timpah/Lewati" untuk murid yang SUDAH punya foto (url_foto ada).
-  const sudahFoto = (rows || []).filter(r => r.url_foto || r['URL Foto'] || r.url_foto).map(r => ({
-    nis: String(r.nis_nip || r.NIS || r.nis || ''),
-    nama: r.nama_lengkap || r['Nama Lengkap'] || r.Nama || r.nama || 'Tanpa Nama',
-    kelas: kelasSiswaTahun(r) || '-'
-  }));
-  const keputusan = await pilihTimpahLewati(sudahFoto, 'Sinkron Foto — Siswa Sudah Punya Foto', `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila ada file Drive baru yang cocok.`);
-  if (!keputusan) return; // dibatalkan user
-
+  // [B4] Hanya pada mode "timpah": pilih "Timpah/Lewati" untuk murid yang SUDAH punya foto
+  // (url_foto ada). Mode "hanya-kosong" tidak menimpa → tanpa modal interaktif.
   let lewatiNis = [];
-  if (keputusan.hasil === 'lewati') {
-    lewatiNis = sudahFoto.map(r => r.nis).filter(Boolean);
-  } else if (keputusan.hasil === 'pilih') {
-    lewatiNis = Array.from(keputusan.lewatiNis || new Set());
-  }
-  lewatiNis = lewatiNis.filter(Boolean);
+  if (mode === 'timpah') {
+    const sudahFoto = (rows || []).filter(r => r.url_foto || r['URL Foto'] || r.url_foto).map(r => ({
+      nis: String(r.nis_nip || r.NIS || r.nis || ''),
+      nama: r.nama_lengkap || r['Nama Lengkap'] || r.Nama || r.nama || 'Tanpa Nama',
+      kelas: kelasSiswaTahun(r) || '-'
+    }));
+    const keputusan = await pilihTimpahLewati(sudahFoto, 'Sinkron Foto — Siswa Sudah Punya Foto', `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila ada file Drive baru yang cocok.`);
+    if (!keputusan) return; // dibatalkan user
 
-  showToast('info', `Menyinkronkan foto dari Drive untuk ${nisTarget.length} murid...`);
+    if (keputusan.hasil === 'lewati') {
+      lewatiNis = sudahFoto.map(r => r.nis).filter(Boolean);
+    } else if (keputusan.hasil === 'pilih') {
+      lewatiNis = Array.from(keputusan.lewatiNis || new Set());
+    }
+    lewatiNis = lewatiNis.filter(Boolean);
+  }
+
+  showToast('info', `Menyinkronkan foto dari Drive untuk ${nisTarget.length} murid${mode === 'hanya-kosong' ? ' (hanya isi URL Foto kosong)' : ''}...`);
   let res;
   try {
     const fetchRes = await fetch(`${SUPABASE_URL}/functions/v1/sinkron-foto-drive`, {
@@ -10852,7 +10890,7 @@ async function sinkronkanFotoDrive() {
         'Authorization': `Bearer ${token}`,
         'apikey': SUPABASE_ANON_KEY
       },
-      body: JSON.stringify({ pemanggil, nisTarget, lewatiNis })
+      body: JSON.stringify({ pemanggil, nisTarget, mode, lewatiNis })
     });
     if (fetchRes.status === 404) {
       // Edge Function belum di-deploy ke project Supabase yang terhubung.
@@ -10909,6 +10947,7 @@ async function sinkronkanFotoDrive() {
     'tanpa-nomor': ['Tanpa nomor identitas', 'text-amber-300'],
     'lewat-filter': ['Di luar filter (dilewati)', 'text-slate-500'],
     'lewati': ['Foto lama dipertahankan', 'text-indigo-300'],
+    'sudah-ada': ['URL Foto sudah ada', 'text-slate-500'],
     'gagal': ['Gagal', 'text-red-300']
   };
   const barisLog = (l.rincian || []).map(r => {
@@ -10926,6 +10965,7 @@ async function sinkronkanFotoDrive() {
     `Tidak cocok: ${l.tidak_cocok ?? 0}\n` +
     `Di luar filter: ${l.lewat_filter ?? 0}\n` +
     `Dilewati (foto lama dipertahankan): ${l.lewati ?? 0}\n` +
+    `Sudah ada (tidak disentuh): ${l.sudah_ada ?? 0}\n` +
     `Gagal: ${l.gagal ?? 0}\n\n--- RINCIAN ---\n` +
     rincianKeTeks((l.rincian || []).map(r => ({ label: (r.file || '') + (r.nis ? ` (NIS ${r.nis})` : ''), status: petaStatusLabel[r.status] ? petaStatusLabel[r.status][0] : (r.status || '?') })));
 
@@ -10943,6 +10983,7 @@ async function sinkronkanFotoDrive() {
       `<b>Tidak cocok:</b> ${l.tidak_cocok ?? 0} · ` +
       `<b>Di luar filter:</b> ${l.lewat_filter ?? 0} · ` +
       `<b>Dilewati:</b> ${l.lewati ?? 0} · ` +
+      `<b>Sudah ada:</b> ${l.sudah_ada ?? 0} · ` +
       `<b>Gagal:</b> ${l.gagal ?? 0}</div>` +
       `<div class="flex justify-end mb-1"><button id="export-log-btn" class="h-7 px-3 bg-slate-600 hover:bg-slate-500 text-white rounded text-[11px] font-bold transition">⬇ Export .txt</button></div>` +
       `<div class="sisip-log-box custom-scrollbar" style="max-height:210px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;padding:.5rem .6rem">${barisLog || '<div class="text-[10px] text-slate-500">Tanpa rincian.</div>'}</div>` +
