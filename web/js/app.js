@@ -9412,9 +9412,11 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
+                            <button onclick="cetakKartuPelajar()" class="h-8 bg-indigo-600 hover:bg-indigo-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak kartu pelajar (ID Card) siswa — mengikuti filter tabel aktif"><i class="fa-solid fa-id-card"></i> <span class="hidden sm:inline">Kartu</span></button>
                             <!-- [REQ 2] Sinkronkan URL foto murid dari Google Drive (admin, guru/wali kelas, pembina ekskul) -->
                             ${bisaImportMuridAktif() ? `<button onclick="sinkronkanFotoDrive()" class="h-8 bg-teal-700 hover:bg-teal-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Auto-update foto siswa dari file Google Drive berformat \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Membaca folder terkonfigurasi & memperbarui url_foto yang berubah — admin, wali kelas & pembina ekskul"><i class="fa-brands fa-google-drive"></i> <span class="hidden sm:inline">Sinkron Foto</span></button>` : ''}
                             ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
+                            ${bisaImportMuridAktif() ? `<button onclick="openUploadFotoMasal()" class="h-8 bg-sky-600 hover:bg-sky-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Upload foto siswa sekaligus (massal) — mengikuti filter aktif (Tahun / Kelas / Ekskul / Status / Status Wajah). Cocokkan nama file dengan format &quot;{NISN} {Nama siswa}.jpg&quot; (fallback NIS). Admin, wali kelas & pembina ekskul."><i class="fa-solid fa-images"></i> <span class="hidden sm:inline">Upload Foto</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -10105,7 +10107,7 @@ async function openFormAkunMurid(isNew, data = {}) {
             <div class="sm:col-span-2"><label class="${lbl}">Nama Lengkap *</label><input id="f_nama" value="${escJs(namaV)}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1 mt-0.5 text-white outline-none focus:border-blue-500"></div>
 
             ${sec('Foto Siswa')}
-            <div class="sm:col-span-2 flex flex-wrap items-center gap-3 bg-black/20 p-2 rounded border border-white/10">
+            <div class="sm:col-span-2 flex flex-wrap items-center gap-3 bg-black/20 p-2 rounded border border-white/10" ondragover="seretFotoFormEv(document.getElementById('foto-pratinjau-form'),event)" ondragleave="keluarFotoFormEv(document.getElementById('foto-pratinjau-form'),event)" ondrop="dropFotoMuridForm(this,event)">
                 <div id="foto-pratinjau-form" onclick="pilihFotoMuridForm()" title="Klik untuk memilih / seret foto ke kotak ini" ondragover="seretFotoFormEv(this,event)" ondragleave="keluarFotoFormEv(this,event)" ondrop="dropFotoMuridForm(this,event)" class="w-16 rounded-md overflow-hidden border border-white/20 bg-slate-800 flex items-center justify-center cursor-pointer" style="height:80px;">${fotoPratinjauHtml(fotoV)}</div>
                 <div class="space-y-1.5 min-w-[200px] flex-1">
                     <div class="flex flex-wrap gap-1.5">
@@ -11189,9 +11191,13 @@ function siapkanModalCropper() {
       <div class="flex items-center gap-2 mt-3 flex-wrap">
         <button type="button" onclick="rotasiCropperFoto(-90)" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9 rounded-lg" title="Putar ke kiri"><i class="fa-solid fa-rotate-left"></i></button>
         <button type="button" onclick="rotasiCropperFoto(90)" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9 rounded-lg" title="Putar ke kanan"><i class="fa-solid fa-rotate-right"></i></button>
+        <div class="flex rounded-lg bg-slate-800 overflow-hidden" title="Balik (flip)">
+          <button type="button" onclick="flipCropperFoto('x')" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9" title="Balik horizontal"><i class="fa-solid fa-arrows-left-right"></i></button>
+          <button type="button" onclick="flipCropperFoto('y')" class="bg-slate-700 hover:bg-slate-600 text-white w-9 h-9 border-l border-white/10" title="Balik vertikal"><i class="fa-solid fa-arrows-up-down"></i></button>
+        </div>
         <div class="flex-1 rounded-lg bg-slate-800 px-2 py-1" style="min-width:150px;display:flex;align-items:center;gap:8px;">
           <i class="fa-solid fa-magnifying-glass-minus text-slate-400 text-[10px]"></i>
-          <input type="range" id="sisip-crop-zoom" min="0.2" max="3" step="0.01" value="1" oninput="aturZoomCropperFoto()">
+          <input type="range" id="sisip-crop-zoom" min="0.1" max="10" step="0.01" value="1" oninput="aturZoomCropperFoto()">
           <i class="fa-solid fa-magnifying-glass-plus text-slate-400 text-[10px]"></i>
         </div>
         <button type="button" onclick="terapkanCropperFoto()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-sm"><i class="fa-solid fa-check mr-1"></i> Gunakan</button>
@@ -11206,6 +11212,7 @@ function siapkanModalCropper() {
 function bukaCropperFoto(dataUrl, cb) {
   if (!siapkanModalCropper()) return;
   sisipCropper.onDone = cb;
+  sisipCropper.flipX = false; sisipCropper.flipY = false;
   const bd = document.getElementById('sisip-cropper-backdrop');
   bd.style.display = 'flex';
   const img = document.getElementById('sisip-crop-img');
@@ -11232,6 +11239,14 @@ function aturZoomCropperFoto() {
 
 function rotasiCropperFoto(derajat) {
   if (sisipCropper.cropper) sisipCropper.cropper.rotate(derajat);
+}
+
+// [REQ B2] Balik (flip) horizontal/vertikal — toggel agar sekali klik membalik, sekali lagi mengembalikan.
+function flipCropperFoto(sumbu) {
+  const c = sisipCropper.cropper;
+  if (!c) return;
+  if (sumbu === 'x') { sisipCropper.flipX = !sisipCropper.flipX; c.scaleX(sisipCropper.flipX ? -1 : 1); }
+  else if (sumbu === 'y') { sisipCropper.flipY = !sisipCropper.flipY; c.scaleY(sisipCropper.flipY ? -1 : 1); }
 }
 
 function terapkanCropperFoto() {
@@ -11484,6 +11499,220 @@ async function scanWajahMasal() {
   });
 }
 
+
+/** Upload foto siswa secara MASSAL (banyak file sekaligus) — mengikuti filter tabel aktif.
+ *  Cocokkan nama tiap file dengan murid hasil filter memakai format nama file Drive:
+ *  "{NISN} {Nama siswa}.jpg" (fallback NIS). Setiap pasangan file→murid dikirim ke
+ *  Edge Function unggah-foto-murid (1 request per NIS), URL disimpan ke akun.url_foto.
+ *  Hanya admin & guru (wali kelas / pembina ekskul) yang boleh. */
+async function openUploadFotoMasal() {
+  // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
+  if (!bisaImportMuridAktif()) {
+    return showToast('error', 'Fitur Upload Foto Masal khusus admin, wali kelas, atau pembina ekskul.');
+  }
+
+  // 1. Ambil murid hasil filter aktif (tahun/kelas/ekskul/status/cari) + status wajah.
+  let sumber;
+  try { sumber = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid')); }
+  catch (e) { console.warn('openUploadFotoMasal fetch:', e); sumber = cacheAkunMurid || []; }
+  let rows = muridTersaring(sumber);
+  const filtWajah = (((document.getElementById('filter-status-wajah') || {}).value) || 'ALL').toLowerCase();
+  if (filtWajah !== 'all' && rows.length && window.FaceWajah && typeof window.FaceWajah.ambilStatusWajah === 'function') {
+    try {
+      const nisList = rows.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
+      const petaW = await window.FaceWajah.ambilStatusWajah(nisList);
+      rows = rows.filter(r => (petaW[String(r.nis_nip || r.NIS || r.nis)] || 'belum') === filtWajah);
+    } catch (e) { console.warn('Gagal filter status wajah (upload foto):', e); }
+  }
+  const daftarMurid = rows || [];
+  if (!daftarMurid.length) {
+    return showToast('info', 'Tidak ada murid yang cocok dengan filter aktif.');
+  }
+
+  // 2. Modal pilih banyak file foto + info jumlah murid + petunjuk format nama.
+  //    File dibaca via preConfirm (masih dalam DOM modal) — pola sama dgn Import Murid.
+  const { value: terpilih } = await Swal.fire({
+    title: 'Upload Foto Masal',
+    html:
+      `<div class="text-left text-sm">
+         <p class="text-xs text-slate-300 mb-2"><b class="text-sky-300">${daftarMurid.length}</b> murid sesuai filter aktif akan dipasangi foto.</p>
+         <p class="text-[10px] text-slate-400 mb-3">Pilih banyak file gambar sekaligus (Ctrl/Shift untuk multi-pilih). Nama file mengikuti format Google Drive: <code class="px-1 py-0.5 bg-black/40 rounded text-emerald-300">NISN Nama.jpg</code> — fallback bila tanpa NISN: <code class="px-1 py-0.5 bg-black/40 rounded text-emerald-300">NIS.jpg</code>. Nomor identitas yang cocok menentukan murid tujuannya.</p>
+         <input type="file" id="upload-foto-masal-input" multiple accept="image/*" class="block w-full text-sm text-slate-200 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-sky-600 file:text-white file:text-sm file:font-bold hover:file:bg-sky-700 cursor-pointer">
+         <p class="text-[9px] text-slate-500 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>File maksimal 5 MB per foto. Foto yang nama-filenya tidak cocok dengan murid hasil filter akan dicatat di log.</p>
+       </div>`,
+    showCancelButton: true, confirmButtonText: 'Mulai Upload', cancelButtonText: 'Batal',
+    confirmButtonColor: '#0284c7', background: '#1e293b', color: '#fff',
+    preConfirm: () => {
+      const inp = document.getElementById('upload-foto-masal-input');
+      const daftarFile = inp ? Array.from(inp.files || []) : [];
+      if (!daftarFile.length) { Swal.showValidationMessage('Pilih minimal satu file foto terlebih dahulu!'); return false; }
+      return daftarFile;
+    }
+  });
+  if (!terpilih || !terpilih.length) return;
+
+
+  // 3. Normalisasi nama → murid (format "{NISN} {Nama}.jpg" fallback "{NIS}.jpg").
+  const norm = (s) => String(s || '').toLowerCase().replace(/[_\-.]+/g, ' ').replace(/\s+/g, ' ').trim();
+  // Peta per nomor identitas → daftar murid (bisa lebih dari satu bila NISN/NIS sama).
+  const byNisNisn = new Map();
+  daftarMurid.forEach(m => {
+    const nisn = String(m.nisn || m.NISN || '').trim();
+    const nis = String(m.nis_nip || m.NIS || m.nis || '').trim();
+    const nama = norm(m.nama_lengkap || m['Nama Lengkap'] || m.Nama || '');
+    if (nisn) { if (!byNisNisn.has(nisn)) byNisNisn.set(nisn, []); byNisNisn.get(nisn).push({ m, nama }); }
+    if (nis) { if (!byNisNisn.has(nis)) byNisNisn.set(nis, []); byNisNisn.get(nis).push({ m, nama }); }
+  });
+
+  // Bangun rencana upload: { file, dataUrl, murid|null, kataKunci } (murid null = tidak cocok).
+  const rencana = [];
+  for (const f of terpilih) {
+    const base = String(f.name || '').replace(/\.[^.]+$/, '');
+    const baseNorm = norm(base);
+    // Token pertama (hingga separator pertama) = calon nomor identitas.
+    const tokenPertama = base.split(/[\s_\-\.]+/)[0] || '';
+    const pasangan = byNisNisn.get(tokenPertama) || null;
+    if (pasangan && pasangan.length > 0) {
+      if (pasangan.length === 1) {
+        rencana.push({ file: f, murid: pasangan[0].m, kataKunci: tokenPertama });
+      } else {
+        const byNama = pasangan.find(p => p.nama && baseNorm.includes(p.nama));
+        rencana.push({ file: f, murid: (byNama || pasangan[0]).m, kataKunci: tokenPertama });
+      }
+      continue;
+    }
+    // Fallback: cari murid yang nama lengkapnya muncul dalam nama file.
+    const byNamaLengkap = daftarMurid.filter(m => norm(m.nama_lengkap || '') && baseNorm.includes(norm(m.nama_lengkap || '')));
+    if (byNamaLengkap.length === 1) {
+      rencana.push({ file: f, murid: byNamaLengkap[0], kataKunci: norm(byNamaLengkap[0].nama_lengkap || '') });
+      continue;
+    }
+    rencana.push({ file: f, murid: null, kataKunci: base });
+  }
+
+  const cocok = rencana.filter(r => r.murid);
+  const takCocok = rencana.filter(r => !r.murid);
+  if (!cocok.length) {
+    return Swal.fire({ icon: 'warning', title: 'Tidak Ada File Cocok',
+      html: `<p class="text-xs text-slate-300">Tidak ada file yang cocok dengan murid pada filter aktif.<br><span class="text-[10px] text-slate-400">Periksa format nama file: <code class="text-emerald-300">NISN Nama.jpg</code> (fallback NIS).</span></p>`,
+      background: '#1e293b', color: '#fff' });
+  }
+
+  // 4. Pisahkan murid yang SUDAH punya foto (url_foto ada) → tanya Timpah/Lewati.
+  const sudahFoto = cocok.filter(r => r.murid && (r.murid.url_foto || r.murid['URL Foto'])).map(r => ({
+    nis: String(r.murid.nis_nip || r.murid.NIS || r.murid.nis || ''),
+    nama: r.murid.nama_lengkap || r.murid['Nama Lengkap'] || r.murid.Nama || 'Tanpa Nama',
+    kelas: (r.murid && kelasSiswaTahun(r.murid)) || r.murid.tingkat_kelas || '-'
+  }));
+  let keputusan = null;
+  if (sudahFoto.length > 0) {
+    keputusan = await pilihTimpahLewati(sudahFoto, 'Upload Foto Masal — Siswa Sudah Punya Foto',
+      `Sebanyak ${sudahFoto.length} siswa sudah memiliki foto. Tentukan cara menangani foto lamanya bila file baru cocok.`);
+    if (!keputusan) return; // dibatalkan user
+  }
+  const lewatiNis = new Set();
+  if (keputusan && keputusan.hasil === 'lewati') {
+    sudahFoto.forEach(s => lewatiNis.add(s.nis));
+  } else if (keputusan && keputusan.hasil === 'pilih') {
+    Array.from(keputusan.lewatiNis || new Set()).forEach(n => lewatiNis.add(n));
+  }
+
+  const antrean = cocok.filter(r => {
+    const nis = String(r.murid.nis_nip || r.murid.NIS || r.murid.nis || '');
+    return !lewatiNis.has(nis);
+  });
+  if (!antrean.length) {
+    return showToast('info', 'Semua foto yang cocok dilewati / sudah punya foto.');
+  }
+
+
+  // 5. Proses bertahap dengan modal progress — kirim tiap file ke unggah-foto-murid.
+  let ok = 0, gagal = 0;
+  const logBaris = [];
+  const errs = [];
+  let berhenti = false, i = 0;
+  const promProgres = Swal.fire({
+    title: 'Mengunggah Foto Masal…',
+    html: `<div id="upload-foto-masal-progress" class="text-sm">0/${antrean.length} · menyiapkan…</div>`,
+    allowOutsideClick: false, showCancelButton: true, cancelButtonText: 'Batal',
+    didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff'
+  });
+  promProgres.then(() => { berhenti = true; }).catch(() => { berhenti = true; });
+  const teksProgres = () =>
+    `${Math.min(i + 1, antrean.length)}/${antrean.length} · <span class="text-green-400">✓${ok}</span> <span class="text-red-400">✗${gagal}</span>${antrean[i] ? ' — ' + escapeHtml(String(antrean[i].murid.nama_lengkap || antrean[i].murid.NIS || 'NIS ' + antrean[i].murid.nis_nip || '')) : ''}`;
+
+  const bacaDataUrl = (f) => new Promise((resolve, reject) => {
+    if (f.size > 5 * 1024 * 1024) return reject(new Error('File > 5 MB'));
+    const rd = new FileReader();
+    rd.onload = () => resolve(rd.result);
+    rd.onerror = () => reject(new Error('Gagal membaca file'));
+    rd.readAsDataURL(f);
+  });
+
+  for (i = 0; i < antrean.length; i++) {
+    if (berhenti) break;
+    const it = antrean[i];
+    const m = it.murid;
+    const nis = String(m.nis_nip || m.NIS || m.nis || '');
+    const nama = String(m.nama_lengkap || nis);
+    const label = nama + ' (NIS ' + nis + ')';
+    let dataUrl;
+    try { dataUrl = await bacaDataUrl(it.file); }
+    catch (e) { gagal++; errs.push(nama + ': ' + ((e && e.message) || e)); logBaris.push({ label, status: 'Gagal — ' + ((e && e.message) || e) }); }
+    if (!dataUrl) continue;
+    try {
+      const res = await unggahFotoMurid({
+        nis,
+        nisn: String(m.nisn || m.NISN || ''),
+        nama,
+        tahun: String(m.tahun_pelajaran || m['ID Tahun Pelajaran'] || currentTahun || ''),
+        kelas: String(m.tingkat_kelas || m['Tingkat/Kelas'] || ''),
+        dataUrl, hapus: false
+      });
+      if (res && res.status === 'success') { ok++; logBaris.push({ label, status: 'Berhasil' }); }
+      else { gagal++; const pesan = (res && res.message) || 'Gagal upload'; errs.push(nama + ': ' + pesan); logBaris.push({ label, status: 'Gagal — ' + pesan }); }
+    } catch (e) {
+      gagal++; errs.push(nama + ': ' + ((e && e.message) ? e.message : e));
+      logBaris.push({ label, status: 'Gagal — ' + ((e && e.message) ? e.message : e) });
+    }
+    const pb = document.getElementById('upload-foto-masal-progress');
+    if (pb) pb.innerHTML = teksProgres();
+  }
+  Swal.close();
+
+  // 6. Selesaikan: invalidasi cache + rerender + laporan rincian.
+  invalidasiCacheAkun();
+  try { renderManajemenMurid(document.getElementById('main-content')); } catch (e) {}
+
+  const pesanHasil = `Berhasil: <b class="text-green-400">${ok}</b> · Gagal: <b class="text-red-400">${gagal}</b>${berhenti ? ' · <i>Dihentikan pengguna</i>' : ''}`;
+  const barisLog = logBaris.map(b => {
+    const okC = b.status.startsWith('Berhasil');
+    return `<div class="text-[10px] leading-snug"><span class="${okC ? 'text-emerald-300' : 'text-red-300'} font-bold">[${b.status}]</span> <span class="text-slate-300">${escapeHtml(b.label)}</span></div>`;
+  }).join('');
+  const teksTxt =
+    'LAPORAN UPLOAD FOTO MASSAL\n' +
+    'Tanggal: ' + new Date().toLocaleString('id-ID') + '\n' +
+    `Jumlah file dipilih: ${terpilih.length} · Cocok: ${cocok.length} · Di luar filter: ${takCocok.length} · Diproses: ${antrean.length}\n` +
+    `Berhasil: ${ok} · Gagal: ${gagal}${berhenti ? ' · Dihentikan pengguna' : ''}\n\n--- RINCIAN ---\n` +
+    rincianKeTeks(logBaris) +
+    (takCocok.length ? '\n\n--- FILE DI LUAR FILTER / TIDAK COCOK ---\n' + takCocok.map((t, idx) => `${String(idx + 1).padStart(3, '0')}. [Tidak cocok] ${t.file.name || '(tanpa nama)'}`).join('\n') : '');
+
+  return Swal.fire({
+    icon: (gagal === 0 && !berhenti) ? 'success' : 'warning',
+    title: berhenti ? 'Upload foto dihentikan' : (gagal === 0 ? 'Upload foto selesai' : 'Sebagian gagal'),
+    html:
+      `<div class="text-left">` + pesanHasil +
+      `<div class="flex justify-end mt-2 mb-1"><button id="export-log-btn-ufm" class="h-7 px-3 bg-slate-600 hover:bg-slate-500 text-white rounded text-[11px] font-bold transition">⬇ Export .txt</button></div>` +
+      `<div class="sisip-log-box custom-scrollbar" style="max-height:210px;overflow:auto;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.1);border-radius:.5rem;padding:.5rem .6rem">${barisLog || '<div class="text-[10px] text-slate-500">Tanpa rincian.</div>'}</div>` +
+      `</div>`,
+    background: '#1e293b', color: '#fff',
+    didOpen: () => {
+      const btn = document.getElementById('export-log-btn-ufm');
+      if (btn) btn.onclick = () => unduhTeksSebagaiTxt('upload-foto-masal-log.txt', teksTxt);
+    }
+  });
+}
+
 /** Cetak lembar foto siswa (A4 portrait, 4 kolom × 6 baris per halaman) — ikut filter tabel aktif. */
 async function cetakFotoSiswa() {
   Swal.fire({ title: 'Menyiapkan Lembar Foto...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
@@ -11559,7 +11788,112 @@ async function cetakFotoSiswa() {
   setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 1200);
 }
 
-/** Simpan tambah/edit murid via RPC (hash password ditangani server). */
+/** [REQ E] Cetak Kartu Pelajar (ID Card) siswa — mengikuti filter tabel aktif (persis pola cetakFotoSiswa).
+ *  A4 potret, kartu 90×55mm disusun grid. Menampilkan logo, identitas sekolah, foto, NISN, NIS,
+ *  nama, kelas (dengan jurusan bila didefinisikan di master_data), QR NIS & kolom tanda tangan. */
+async function cetakKartuPelajar() {
+  Swal.fire({ title: 'Menyiapkan Kartu Pelajar...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
+  let sumber;
+  try {
+    sumber = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid'));
+  } catch (e) {
+    console.error('cetakKartuPelajar:', e);
+    sumber = cacheAkunMurid || [];
+  }
+  Swal.close();
+  const rows = muridTersaring(sumber);
+  if (rows.length === 0) return showToast('error', 'Tidak ada siswa pada filter aktif.');
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak kartu pelajar.', background: '#1e293b', color: '#fff' });
+
+  const esc = (v) => escapeHtml(v ?? '');
+  const idn = barisIdentitasMaster();
+  const logo = (idn["URL LOGO 1"] || '').trim() || (idn["URL LOGO 2"] || '').trim() || '';
+  const namaSekolah = String(idn["Nama Sekolah"] || '').trim();
+  const dinas = String(idn["Nama Dinas"] || '').trim();
+  const ketDinas = String(idn["Ket. Nama Dinas"] || '').trim();
+  // [REQ A] Peta singkatan jurusan → nama lengkap (dari Master Data Daftar), utk menampilkan jurusan kartu.
+  const jurusanMap = {};
+  (masterDataCache || []).forEach(m => {
+    const sg = String(m["Jurusan"] || '').trim(), lg = String(m["Jurusan Lengkap"] || '').trim();
+    if (sg && lg) jurusanMap[sg.toUpperCase()] = lg;
+  });
+  const jurusanKelas = (kls) => {
+    if (!kls) return '';
+    const kata = String(kls).split(/\s+/).filter(Boolean);
+    const sing = kata.find(k => jurusanMap[String(k).toUpperCase()]);
+    return sing ? `${jurusanMap[String(sing).toUpperCase()]} (${sing})` : '';
+  };
+  const qr = (nis) => `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(String(nis || ''))}`;
+
+  const kartu = rows.map(d => {
+    const nama = String(d.nama_lengkap || d.Nama || 'Tanpa Nama');
+    const nis = String(d.nis_nip || d.NIS || d.nis || '');
+    const nisn = String(d.nisn || d.NISN || '');
+    const kelas = kelasSiswaTahun(d) || d.tingkat_kelas || '';
+    const jur = jurusanKelas(kelas);
+    const inisial = nama.split(/\s+/).filter(Boolean).slice(0, 2).map(s => s.charAt(0)).join('').toUpperCase();
+    return `<div class="kartu">
+      <div class="banner">
+        ${logo ? `<img src="${esc(logo)}" alt="logo" class="logo">` : ''}
+        <div class="judul"><div class="dinas">${esc(ketDinas || dinas)}</div><div class="sekolah">${esc(namaSekolah)}</div></div>
+      </div>
+      <div class="isi">
+        <div class="foto">${d.url_foto ? `<img src="${esc(d.url_foto)}" alt="">` : `<div class="ini">${esc(inisial)}</div>`}</div>
+        <div class="data">
+          <div class="nama">${esc(nama)}</div>
+          <div class="baris"><span>NISN</span><b>${esc(nisn || '-')}</b></div>
+          <div class="baris"><span>NIS</span><b>${esc(nis || '-')}</b></div>
+          <div class="baris"><span>Kelas</span><b>${esc(kelas || '-')}${jur ? ' · ' + esc(jur) : ''}</b></div>
+          <div class="qr"><img src="${qr(nis)}" alt="QR"><span class="nisqr">${esc(nis)}</span></div>
+        </div>
+      </div>
+      <div class="bawah">
+        <div class="ttd"><div class="garis"></div><div class="teks">Kepala Sekolah</div></div>
+      </div>
+    </div>`;
+  }).join('');
+
+printWindow.document.write(`
+    <html><head><title>Kartu Pelajar</title>
+    <style>
+      @page { size: A4 portrait; margin: 10mm; }
+      body { font-family: Arial, sans-serif; color: #000; background: #fff; margin: 0; }
+      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5mm; }
+      .kartu { width: 90mm; height: 55mm; border: 1.6px solid #000; border-radius: 7px; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
+      .banner { background: #1e3a8a; color: #fff; padding: 2mm 3mm; display: flex; align-items: center; gap: 3mm; }
+      .banner .logo { max-height: 10mm; max-width: 10mm; background: #fff; border-radius: 2px; }
+      .banner .judul { flex: 1; line-height: 1.15; }
+      .banner .dinas { font-size: 6.5px; text-transform: uppercase; }
+      .banner .sekolah { font-size: 9px; font-weight: bold; text-transform: uppercase; }
+      .isi { flex: 1; display: flex; gap: 3mm; padding: 2.5mm 3mm; }
+      .foto { width: 24mm; height: 30mm; border: 1px solid #666; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .foto img { width: 100%; height: 100%; object-fit: cover; }
+      .foto .ini { font-size: 14px; font-weight: bold; color: #94a3b8; }
+      .data { flex: 1; display: flex; flex-direction: column; }
+      .data .nama { font-size: 9.5px; font-weight: bold; text-transform: uppercase; line-height: 1.1; }
+      .baris { font-size: 7.5px; margin-top: 1mm; display: flex; gap: 2mm; }
+      .baris span { color: #475569; min-width: 9mm; }
+      .baris b { font-family: 'Courier New', monospace; }
+      .qr { margin-top: auto; display: flex; align-items: center; gap: 2mm; }
+      .qr img { width: 13mm; height: 13mm; }
+      .qr .nisqr { font-size: 6.5px; font-family: 'Courier New', monospace; letter-spacing: 0.5px; }
+      .bawah { border-top: 1px solid #cbd5e1; padding: 2mm 3mm 2.5mm; display: flex; justify-content: flex-end; }
+      .ttd { text-align: center; }
+      .ttd .garis { width: 26mm; border-top: 1px solid #000; height: 8mm; }
+      .ttd .teks { font-size: 6.5px; color: #475569; }
+    </style></head><body>
+      <div class="grid">${kartu}</div>
+    </body></html>
+  `);
+  printWindow.document.close();
+  let sudahPrint = false;
+  const cetakSekali = () => { if (sudahPrint) return; sudahPrint = true; printWindow.focus(); printWindow.print(); };
+  printWindow.onload = cetakSekali;
+  setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 1200);
+}
+  /** Simpan tambah/edit murid via RPC (hash password ditangani server). */
 async function simpanAkunMurid(formData, isNew) {
   Swal.fire({ title: 'Menyimpan Data...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
 
@@ -12710,7 +13044,29 @@ const MASTER_JADWAL_SECTIONS = [
 ];
 
 const MASTER_KOLOM_DAFTAR = [...MASTER_DAFTAR_SECTIONS, ...MASTER_JADWAL_SECTIONS].map(s => s.kolom);
+// [REQ A] Kolom penyimpan pasangan "singkatan → nama lengkap" jurusan (disimpan satu baris bersama "Jurusan").
+const MASTER_KOLOM_JURUSAN_LENGKAP = "Jurusan Lengkap";
+// jadikan bagian dari daftar kolom agar logika hapus/cleanup baris (hapusMasterDaftar) tetap benar
+MASTER_KOLOM_DAFTAR.push(MASTER_KOLOM_JURUSAN_LENGKAP);
 const MASTER_KOLOM_IDENTITAS = ["Nama Dinas", "Nama Sekolah", "URL LOGO 1", "URL LOGO 2", "Ket. Nama Dinas", "Alamat Sekolah"];
+
+// [REQ A] Singkatan jurusan yang umum dikenal → untuk mencocokkan "isi singkatan" saat menambah jurusan.
+const DAFTAR_SINGKATAN_JURUSAN = ['RPL', 'TKJ', 'TBSM', 'TKR', 'AP', 'AKL', 'OTKP', 'TB', 'TITL', 'TOI', 'MM', 'DKV', 'SIJA', 'PPLG', 'TKRO', 'TPTU', 'DPIB', 'TKI', 'ANO', 'KI', 'PH', 'MPLB', 'KLN', 'BD', 'IU', 'SIM', 'AI', 'RMIB', 'TE', 'GE', 'KLH', 'KJ', 'UPW', 'AVI', 'NKN'];
+// kata bantu: bila input jurusan hanya kata-kata pendek ini, anggap singkatan (menampilkan kolom nama lengkap)
+const KATA_PENDEK_JURUSAN = new Set(['x', 'kelas', 'industri', 'bisnis', 'manajemen']);
+
+// Helper [REQ A]: apakah nilai jurusan dianggap "singkatan" (≤3 huruf/angka non-spasi, atau ada di daftar singkatan umum, atau bukan nama panjang)?
+function jurusanAdalahSingkatan(v) {
+  const s = String(v || '').trim();
+  if (!s) return false;
+  const kata = s.split(/[\s-]+/).filter(Boolean);
+  if (s.length <= 3) return true;
+  if (DAFTAR_SINGKATAN_JURUSAN.includes(s.toUpperCase())) return true;
+  // bila semua kata pendek / dikenal → anggap singkatan
+  if (kata.length === 1) return true;
+  if (kata.every(k => k.length <= 3)) return true;
+  return false;
+}
 
 function renderMasterDataModule(container) {
     const tabBtn = (id, label, icon) => `
@@ -12851,11 +13207,36 @@ async function renderMasterDaftarUI(containerId, sections) {
         const sectionHTML = sections.map(s => {
             const items = rows
               .filter(r => (r[s.kolom] || '').trim() !== '')
-              .map(r => ({ id: r.id, val: (r[s.kolom] || '').trim() }))
-              .sort((a, b) => masterSortDir[s.kolom] === 'desc'
-                  ? b.val.localeCompare(a.val, { sensitivity: 'base' })
-                  : a.val.localeCompare(b.val, { sensitivity: 'base' }));
+              .map(r => ({ id: r.id, val: (r[s.kolom] || '').trim(), lengkap: (r[MASTER_KOLOM_JURUSAN_LENGKAP] || '').trim() }))
+              .sort((a, b) => {
+                  const ax = (a.val + ' ' + a.lengkap), bx = (b.val + ' ' + b.lengkap);
+                  return masterSortDir[s.kolom] === 'desc'
+                      ? bx.localeCompare(ax, { sensitivity: 'base' })
+                      : ax.localeCompare(bx, { sensitivity: 'base' });
+              });
             const idInput = 'mi_' + s.kolom.replace(/[^A-Za-z]/g, '');
+            // [REQ A] Bagian Jurusan: form dua-field (Singkatan + Nama Jurusan Lengkap) agar
+            // singkatan seperti "RPL" dapat dipasangkan dengan nama lengkap "Rekayasa Perangkat Lunak".
+            const isJurusan = s.kolom === 'Jurusan';
+            let formBaris;
+            if (isJurusan) {
+              formBaris = `
+                <div class="flex gap-2 mb-2">
+                  <input id="${idInput}" placeholder="Singkatan / nama — ${s.ph}" onkeyup="cekFormJurusanLengkap()" onkeydown="if(event.key==='Enter')tambahMasterDaftarJurusan()" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none focus:border-purple-500">
+                  <button onclick="tambahMasterDaftarJurusan()" class="bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-plus"></i></button>
+                </div>
+                <div id="jurusan-lengkap-row" class="hidden mb-2">
+                  <input id="mi_jurusan_lengkap" placeholder="Nama Jurusan Lengkap (contoh: Rekayasa Perangkat Lunak)" onkeydown="if(event.key==='Enter')tambahMasterDaftarJurusan()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none focus:border-emerald-500">
+                  <p class="text-[9px] text-slate-500 mt-0.5"><i class="fa-solid fa-circle-info mr-1"></i>Nilai tampak singkatan — isi nama lengkap agar tampil di dokumen/kartu ID.</p>
+                </div>`;
+              // tampilkan langsung bila ada nilai awal yang diketik (dari state sesi)
+            } else {
+              formBaris = `
+                <div class="flex gap-2 mb-2">
+                  <input id="${idInput}" placeholder="${s.ph}" onkeydown="if(event.key==='Enter')tambahMasterDaftar('${escJs(s.kolom)}')" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none focus:border-purple-500">
+                  <button onclick="tambahMasterDaftar('${escJs(s.kolom)}')" class="bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-plus"></i></button>
+                </div>`;
+            }
             return `
                 <div class="bg-white/5 border border-white/10 rounded-xl p-3">
                     <div class="flex items-center justify-between mb-2">
@@ -12864,15 +13245,14 @@ async function renderMasterDaftarUI(containerId, sections) {
                             <i class="fa-solid ${masterSortDir[s.kolom] === 'desc' ? 'fa-arrow-up-a-z' : 'fa-arrow-down-a-z'} text-[10px]"></i>
                         </button>
                     </div>
-                    <div class="flex gap-2 mb-2">
-                        <input id="${idInput}" placeholder="${s.ph}" onkeydown="if(event.key==='Enter')tambahMasterDaftar('${escJs(s.kolom)}')" class="flex-1 bg-black/40 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none focus:border-purple-500">
-                        <button onclick="tambahMasterDaftar('${escJs(s.kolom)}')" class="bg-purple-600 hover:bg-purple-700 text-white px-3 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-plus"></i></button>
-                    </div>
+                    ${formBaris}
                     ${items.length === 0
                       ? `<p class="text-[10px] text-slate-500 italic">Belum ada data.</p>`
                       : `<div class="flex flex-wrap gap-1.5">${items.map(it => `
                             <span class="inline-flex items-center gap-1.5 bg-slate-800 border border-white/10 rounded-full pl-2.5 pr-1 py-1 text-[10px] text-slate-200">
-                                ${escapeHtml(it.val)}
+                                ${isJurusan && it.lengkap
+                                  ? `${escapeHtml(it.lengkap)}<span class="text-emerald-400">(${escapeHtml(it.val)})</span>`
+                                  : escapeHtml(it.val)}
                                 <button onclick="hapusMasterDaftar('${r_id(it.id)}', '${escJs(s.kolom)}')" class="w-4 h-4 flex items-center justify-center bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-full" title="Hapus"><i class="fa-solid fa-xmark text-[8px]"></i></button>
                             </span>`).join('')}
                         </div>`}
@@ -13080,7 +13460,44 @@ async function tambahMasterDaftar(kolom) {
     }
 }
 
-async function hapusMasterDaftar(rowId, kolom) {
+// [REQ A] Tampilkan/sembunyikan kolom "Nama Jurusan Lengkap" pada bagian Jurusan secara dinamis
+// berdasarkan nilai singkatan yang diketik.
+function cekFormJurusanLengkap() {
+    const row = document.getElementById('jurusan-lengkap-row');
+    if (!row) return;
+    const nilai = (document.getElementById('mi_Jurusan')?.value || '').trim();
+    row.classList.toggle('hidden', !jurusanAdalahSingkatan(nilai));
+}
+
+// [REQ A] Tambah jurusan: simpan singkatan (kolom "Jurusan") + nama lengkap (kolom "Jurusan Lengkap")
+// pada baris master_data yang sama. Bila input dianggap singkatan, boleh (tidak wajib) diisi nama lengkap.
+async function tambahMasterDaftarJurusan() {
+    const sing = (document.getElementById('mi_Jurusan')?.value || '').trim();
+    if (!sing) { showToast('error', 'Isi singkatan/nama jurusan terlebih dahulu.'); return; }
+    const lengkap = (document.getElementById('mi_jurusan_lengkap')?.value || '').trim();
+    const dup = (masterDataCache || []).some(r =>
+        ((r['Jurusan'] || '').trim().toLowerCase() === sing.toLowerCase()));
+    if (dup) { showToast('error', `"${sing}" sudah ada di Jurusan.`); return; }
+    Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
+    try {
+        // Hemat baris: cari baris kosong (bukan identitas) sebelum insert baru.
+        const target = (masterDataCache || []).find(r =>
+            !(r['Jurusan'] || '').trim() && !(r['Jurusan Lengkap'] || '').trim() &&
+            !MASTER_KOLOM_IDENTITAS.some(k => (r[k] || '').trim() !== ''));
+        const payload = { 'Jurusan': sing };
+        // simpan nama lengkap hanya bila diisi (hindari mengosongkan lengkap yg mungkin tersedia)
+        if (lengkap) payload[MASTER_KOLOM_JURUSAN_LENGKAP] = lengkap;
+        const { error } = target
+          ? await supaClient.from('master_data').update(payload).eq('id', target.id)
+          : await supaClient.from('master_data').insert(payload);
+        if (error) throw error;
+        await ambilMasterData();
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Ditambahkan!', showConfirmButton: false, timer: 1200, background: '#1e293b', color: '#fff' });
+        refreshMasterUI();
+    } catch (e) {
+        Swal.fire({ icon: 'error', title: 'Gagal', text: e.message, background: '#1e293b', color: '#fff' });
+    }
+}
     const konf = await Swal.fire({
         title: 'Hapus data ini?',
         text: `"${kolom}" akan dihapus permanen dari database.`,
@@ -13098,8 +13515,12 @@ async function hapusMasterDaftar(rowId, kolom) {
         // Jika baris masih dipakai kategori lain, kosongkan kolom ini saja; hapus baris hanya jika sudah kosong
         const row = (masterDataCache || []).find(r => String(r.id) === String(rowId));
         let error;
-        if (row && MASTER_KOLOM_DAFTAR.some(k => k !== kolom && (row[k] || '').trim() !== '')) {
-            ({ error } = await supaClient.from('master_data').update({ [kolom]: null }).eq('id', rowId));
+        // [REQ A] Hapus jurusan juga membersihkan kolom "Jurusan Lengkap" padanannya pada baris yang sama.
+        const updatePadan = kolom === 'Jurusan';
+        if (row && MASTER_KOLOM_DAFTAR.some(k => k !== kolom && k !== MASTER_KOLOM_JURUSAN_LENGKAP && (row[k] || '').trim() !== '')) {
+            const up = { [kolom]: null };
+            if (updatePadan) up[MASTER_KOLOM_JURUSAN_LENGKAP] = null;
+            ({ error } = await supaClient.from('master_data').update(up).eq('id', rowId));
         } else {
             ({ error } = await supaClient.from('master_data').delete().eq('id', rowId));
         }
@@ -13353,16 +13774,18 @@ async function renderManajemenGuru(container) {
         cacheAkunGuru = data || [];
 
         const isAdmin = (currentUser || {}).role === 'admin';
-        if (!isAdmin) currentTabAkunGuru = 'wali'; // guru: hanya tab Daftar Wali Kelas
+        // [REQ C] Guru kini juga dapat membuka tab "Daftar Guru" (baca) + mengedit profilnya sendiri.
+        if (!isAdmin && currentTabAkunGuru !== 'wali') currentTabAkunGuru = 'guru';
 
         const tabBtn = (id, label, icon) => `
             <button onclick="gantiTabAkunGuru('${id}')" class="px-3 py-1.5 rounded-lg text-[11px] font-bold transition ${currentTabAkunGuru === id ? 'bg-green-600 text-white shadow-md' : 'bg-white/10 text-slate-300 hover:bg-white/20'}">
                 <i class="fa-solid ${icon} mr-1"></i> ${label}
             </button>`;
-        const headerControls = currentTabAkunGuru === 'guru' ? `
-                        <input type="text" id="search-guru" placeholder="Cari NIP / Nama / Email..." class="w-full sm:w-48 bg-black/40 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-green-500" onkeyup="filterTabelGuru()">
-                        <button onclick="salinPenugasanMassal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition shadow-md whitespace-nowrap" title="Salin penugasan guru dari satu tahun pelajaran ke tahun lain (massal)"><i class="fa-solid fa-copy mr-1"></i> Salin Penugasan</button>
-                        <button onclick="openFormAkunGuru(true)" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition shadow-md whitespace-nowrap"><i class="fa-solid fa-plus"></i> Tambah Guru</button>`
+        const headerControls = currentTabAkunGuru === 'guru'
+          ? `${isAdmin
+              ? `<button onclick="salinPenugasanMassal()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-xs font-bold transition shadow-md whitespace-nowrap" title="Salin penugasan guru dari satu tahun pelajaran ke tahun lain (massal)"><i class="fa-solid fa-copy mr-1"></i> Salin Penugasan</button>
+                 <button onclick="openFormAkunGuru(true)" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition shadow-md whitespace-nowrap"><i class="fa-solid fa-plus"></i> Tambah Guru</button>` : ''}
+              <input type="text" id="search-guru" placeholder="Cari NIP / Nama / Email..." class="w-full sm:w-48 bg-black/40 border border-white/20 rounded-lg px-3 py-2 text-xs text-white outline-none focus:border-green-500" onkeyup="filterTabelGuru()">`
           : `<select id="wk-tahun" onchange="renderTabWaliKelas()" class="bg-black/40 border border-white/20 rounded-lg px-2 py-2 text-[11px] text-white outline-none max-w-[130px]" title="Tahun Ajaran">
                 ${(() => {
                     const list = [...new Set((masterDataCache || []).map(m => m["Tahun Pelajaran"]).filter(Boolean))];
@@ -13382,7 +13805,7 @@ async function renderManajemenGuru(container) {
                         <h2 class="text-sm sm:text-base font-bold text-white uppercase tracking-wider"><i class="fa-solid fa-chalkboard-user text-green-400 mr-2"></i> Data Akun Guru</h2>
                         <div class="flex gap-2 w-full sm:w-auto flex-wrap justify-end">${headerControls}</div>
                     </div>
-                    ${isAdmin ? `<div class="flex gap-2">${tabBtn('guru', 'Daftar Guru', 'fa-users')}${tabBtn('wali', 'Daftar Wali Kelas', 'fa-user-tie')}</div>` : ''}
+                    <div class="flex gap-2">${tabBtn('guru', 'Daftar Guru', 'fa-users')}${tabBtn('wali', 'Daftar Wali Kelas', 'fa-user-tie')}</div>
                 </div>
                 <div class="flex-1 overflow-auto custom-scrollbar bg-[#0f172a]">
                     ${currentTabAkunGuru === 'guru' ? `
@@ -13394,11 +13817,11 @@ async function renderManajemenGuru(container) {
                                 <th class="px-4 py-3 border-b border-white/10">Nama Guru & Jabatan</th>
                                 <th class="px-4 py-3 border-b border-white/10">Akses (Mapel & Ekskul)</th>
                                 <th class="px-4 py-3 border-b border-white/10">Email & Status</th>
-                                <th class="px-4 py-3 border-b border-white/10 text-center">Aksi</th>
+                                ${isAdmin ? `<th class="px-4 py-3 border-b border-white/10 text-center">Aksi</th>` : `<th class="px-4 py-3 border-b border-white/10 text-center">Profil</th>`}
                             </tr>
                         </thead>
                         <tbody id="tbody-guru" class="text-xs text-slate-200">
-                            ${generateTbodyGuru(cacheAkunGuru)}
+                            ${generateTbodyGuru(cacheAkunGuru, isAdmin)}
                         </tbody>
                     </table>` : `<div id="wali-kelas-box" class="p-4"></div>`}
                 </div>
@@ -13475,8 +13898,11 @@ function escJs(s) {
     return String(s ?? '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
 }
 
-function generateTbodyGuru(data) {
+function generateTbodyGuru(data, isAdmin) {
     if (!data || data.length === 0) return `<tr><td colspan="6" class="p-6 text-center text-slate-500">Belum ada data guru. Klik "Tambah Guru" untuk membuat (akun langsung bisa login).</td></tr>`;
+    // [REQ C] Identifikasi baris milik guru yang sedang login (sesi) → tombol "Edit Profil" sendiri.
+    const sesi = (currentUser || {}).user || {};
+    const ownNip = sesi["NIP"] || sesi["ID Akun Guru"] || '';
     return data.map((d, i) => {
         const nama = namaDenganGelar(
           d.nama_lengkap || d["Nama Guru"] || 'Tanpa Nama',
@@ -13491,6 +13917,14 @@ function generateTbodyGuru(data) {
         const ekskul = (pt.ekskul || []).join(', ') || d.ekstrakurikuler || '';
         const email = d.email || d.Email || '-';
         const tertaut = !!d.user_id;
+        const punya = isAdmin ? false : (ownNip && String(nip) === String(ownNip));
+        const kolAksi = isAdmin
+          ? `<button onclick='openFormAkunGuru(false, ${JSON.stringify(d).replace(/'/g, "&#39;")})' class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>
+             ${tertaut ? `<button onclick="resetPasswordGuru('${escJs(d.user_id)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>` : ''}
+             <button onclick="deleteAkunGuru('${escJs(d.user_id || '')}', '${escJs(nama)}', '${escJs(d.id || '')}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>`
+          : (punya
+              ? `<button onclick='openEditProfilGuru(${JSON.stringify(d).replace(/'/g, "&#39;")})' class="bg-emerald-600/20 hover:bg-emerald-600 text-emerald-300 hover:text-white px-3 py-1.5 rounded-lg text-[10px] font-bold transition" title="Edit profil guru ini (milik Anda)"><i class="fa-solid fa-user-pen mr-1"></i> Edit Profil</button>`
+              : `<span class="text-slate-600 text-[10px]">—</span>`);
         return `
         <tr class="hover:bg-white/5 border-b border-white/5 transition row-guru">
             <td class="px-4 py-3 text-center">${i+1}</td>
@@ -13502,13 +13936,57 @@ function generateTbodyGuru(data) {
                 <div class="max-w-[220px] text-[9px] text-slate-300 mt-1">${ringkasanPenugasan(d)}</div>
             </td>
             <td class="px-4 py-3 search-target"><div class="text-[10px] text-slate-400"><i class="fa-solid fa-envelope"></i> ${email}</div><div class="text-[9px] ${tertaut ? 'text-emerald-400' : 'text-amber-400'}"><i class="fa-${tertaut ? 'solid fa-circle-check' : 'regular fa-circle-question'}"></i> ${tertaut ? 'Auth aktif' : 'Belum tertaut Auth'}</div></td>
-            <td class="px-4 py-3 text-center whitespace-nowrap">
-                <button onclick='openFormAkunGuru(false, ${JSON.stringify(d).replace(/'/g, "&#39;")})' class="w-7 h-7 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded transition mr-1" title="Edit"><i class="fa-solid fa-pen"></i></button>
-                ${tertaut ? `<button onclick="resetPasswordGuru('${escJs(d.user_id)}', '${escJs(nama)}')" class="w-7 h-7 bg-amber-600/20 hover:bg-amber-600 text-amber-400 hover:text-white rounded transition mr-1" title="Reset Password"><i class="fa-solid fa-key"></i></button>` : ''}
-                <button onclick="deleteAkunGuru('${escJs(d.user_id || '')}', '${escJs(nama)}', '${escJs(d.id || '')}')" class="w-7 h-7 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded transition" title="Hapus"><i class="fa-solid fa-trash"></i></button>
-            </td>
+            <td class="px-4 py-3 text-center whitespace-nowrap">${kolAksi}</td>
         </tr>
     `; }).join('');
+}
+
+/** [REQ C] Popup edit profil guru — hanya untuk baris milik guru yang sedang login.
+ *  Bukan form admin; hanya kolom profil pribadi yang aman diubah sendiri. */
+function openEditProfilGuru(d) {
+    const nip = d.nis_nip || d.NIP || '';
+    const inp = (id, val) => `id="${id}" value="${escJs(String(val ?? ''))}"`;
+    Swal.fire({
+        title: 'Edit Profil Guru',
+        html: `
+            <div class="text-left text-[11px] text-slate-300 space-y-2 mt-2 max-h-[60vh] overflow-auto custom-scrollbar pr-1">
+                <div><label class="font-bold text-emerald-300">NIP</label><input readonly class="w-full bg-slate-800 border border-white/10 rounded px-2 py-1.5 mt-1 text-slate-400 outline-none" value="${escJs(nip)}"></div>
+                <div><label class="font-bold text-emerald-300">Nama Lengkap *</label><input id="gpf-nama" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500" ${inp('gpf-nama', d.nama_lengkap || d["Nama Guru"])}></div>
+                <div class="grid grid-cols-2 gap-2">
+                    <div><label class="font-bold text-emerald-300">Gelar Depan</label><input id="gpf-gelar-d" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500" ${inp('gpf-gelar-d', d.gelar_depan)} placeholder="Dr./Ir."></div>
+                    <div><label class="font-bold text-emerald-300">Gelar Belakang</label><input id="gpf-gelar-b" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500" ${inp('gpf-gelar-b', d.gelar_belakang)} placeholder="M.Pd."></div>
+                </div>
+                <div><label class="font-bold text-emerald-300">Jabatan</label><input id="gpf-jabatan" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500" ${inp('gpf-jabatan', d.jabatan)} placeholder="Guru Mata Pelajaran"></div>
+                <div><label class="font-bold text-emerald-300">No. Telepon / HP</label><input id="gpf-telepon" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-emerald-500" ${inp('gpf-telepon', d.no_telepon)} placeholder="08xxxxxxxxxx"></div>
+                <p class="text-[9px] text-slate-500"><i class="fa-solid fa-circle-info"></i> Email &amp; penugasan (mapel/wali/ekskul) dikelola oleh admin. Nama di sini dipakai pada dokumen &amp; rapor.</p>
+            </div>`,
+        background: '#1e293b', color: '#fff',
+        showCancelButton: true, confirmButtonText: '<i class="fa-solid fa-floppy-disk"></i> Simpan', cancelButtonText: 'Batal',
+        preConfirm: async () => {
+            const nama = (document.getElementById('gpf-nama')?.value || '').trim();
+            if (!nama) { Swal.showValidationMessage('Nama lengkap wajib diisi.'); return false; }
+            const sesi = (currentUser || {}).user || {};
+            const nipSesi = sesi["NIP"] || sesi["ID Akun Guru"] || '';
+            if (String(nip) !== String(nipSesi)) { Swal.showValidationMessage('Anda hanya dapat mengedit profil milik Anda.'); return false; }
+            const data = {
+                nama_lengkap: nama,
+                gelar_depan: (document.getElementById('gpf-gelar-d')?.value || '').trim(),
+                gelar_belakang: (document.getElementById('gpf-gelar-b')?.value || '').trim(),
+                jabatan: (document.getElementById('gpf-jabatan')?.value || '').trim(),
+                no_telepon: (document.getElementById('gpf-telepon')?.value || '').trim(),
+            };
+            try {
+                const { error } = await supaClient.rpc('ubah_profil_guru', { p_nip: nip, p_data: data });
+                if (error) throw error;
+                const main = document.getElementById('main-content');
+                if (main) await renderManajemenGuru(main);
+                return true;
+            } catch (e) {
+                Swal.showValidationMessage(String(e.message || e));
+                return false;
+            }
+        }
+    }).then(r => { if (r.isConfirmed) showToast('success', 'Profil guru diperbarui.'); });
 }
 
 function filterTabelGuru() {
@@ -16418,6 +16896,7 @@ async function renderTabInfoEkskul() {
         <button onclick="exportInfoEkskulExcel()" class="bg-green-700 hover:bg-green-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Export Excel sesuai cakupan di atas"><i class="fa-solid fa-file-excel"></i> Export Excel</button>
         <button onclick="exportInfoEkskulPDF()" class="bg-red-700 hover:bg-red-600 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Export PDF sesuai cakupan di atas"><i class="fa-solid fa-file-pdf"></i> Export PDF</button>
         <button onclick="exportInfoEkskulWA()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Bagikan via WhatsApp sesuai cakupan di atas"><i class="fa-brands fa-whatsapp"></i> Bagikan WA</button>
+        <button onclick="cetakKartuAnggotaEkskul()" class="bg-amber-600 hover:bg-amber-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition" title="Cetak kartu anggota / pengurus ekstrakurikuler ini (ID Card)"><i class="fa-solid fa-id-card"></i> Cetak Kartu</button>
       </div>
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
         <div id="info-pengumuman-ekskul" class="text-xs text-slate-400"><i class="fa-solid fa-circle-notch fa-spin"></i> Memuat pengumuman...</div>
@@ -16570,6 +17049,83 @@ async function renderTabInfoEkskul() {
         : isiAnggota}
     </div>`;
   }
+}
+/** [REQ D] Cetak Kartu Anggota / Pengurus Ekstrakurikuler (ID Card) — memakai cache Info Ekskul.
+ *  A4 potret, kartu 90×55mm grid 2 kolom. Menampilkan nama ekskul, NIS, nama, kelas, jabatan & QR NIS. */
+function cetakKartuAnggotaEkskul() {
+  const c = window.__cacheInfoEkskul || {};
+  const anggota = c.anggota || [];
+  const petaJab = c.petaJab || {};
+  const aktif = c.aktif || window.__ekskulAktif || '';
+  if (!anggota.length) return showToast('error', 'Belum ada anggota untuk dicetak.');
+
+  const idn = barisIdentitasMaster();
+  const namaSekolah = String(idn["Nama Sekolah"] || '').trim();
+  const logo = (idn["URL LOGO 1"] || '').trim() || (idn["URL LOGO 2"] || '').trim() || '';
+  const esc = (v) => escapeHtml(v ?? '');
+  const qr = (nis) => `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(String(nis || ''))}`;
+
+  const printWindow = window.open('', '_blank');
+  if (!printWindow) return Swal.fire({ icon: 'error', title: 'Popup Diblokir', text: 'Izinkan popup untuk mencetak kartu anggota.', background: '#1e293b', color: '#fff' });
+
+  const kartu = urutkanPengurusBakuEkskul(anggota, petaJab).map(a => {
+    const nis = String(a.nis_nip || a.NIS || a.nis || '');
+    const nama = String(a.nama_lengkap || 'Tanpa Nama');
+    const kelas = String(a.tingkat_kelas || '-');
+    const jab = petaJab[nis] || String(a.jabatan || '').trim() || '-';
+    const inisial = nama.split(/\s+/).filter(Boolean).slice(0, 2).map(s => s.charAt(0)).join('').toUpperCase();
+    return `<div class="kartu">
+      <div class="banner">
+        ${logo ? `<img src="${esc(logo)}" alt="logo" class="logo">` : ''}
+        <div class="judul"><div class="sekolah">${esc(namaSekolah)}</div><div class="ekskul">${esc(aktif)}</div></div>
+      </div>
+      <div class="isi">
+        <div class="foto">${a.url_foto ? `<img src="${esc(a.url_foto)}" alt="">` : `<div class="ini">${esc(inisial)}</div>`}</div>
+        <div class="data">
+          <div class="nama">${esc(nama)}</div>
+          <div class="baris"><span>NIS</span><b>${esc(nis || '-')}</b></div>
+          <div class="baris"><span>Kelas</span><b>${esc(kelas)}</b></div>
+          <div class="baris jab"><span>Jabatan</span><b>${esc(jab)}</b></div>
+          <div class="qr"><img src="${qr(nis)}" alt="QR"><span class="nisqr">${esc(nis)}</span></div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  printWindow.document.write(`
+    <html><head><title>Kartu Anggota Ekskul — ${esc(aktif)}</title>
+    <style>
+      @page { size: A4 portrait; margin: 10mm; }
+      body { font-family: Arial, sans-serif; color: #000; background: #fff; margin: 0; }
+      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5mm; }
+      .kartu { width: 90mm; height: 55mm; border: 1.6px solid #000; border-radius: 7px; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
+      .banner { background: #92400e; color: #fff; padding: 2mm 3mm; display: flex; align-items: center; gap: 3mm; }
+      .banner .logo { max-height: 10mm; max-width: 10mm; background: #fff; border-radius: 2px; }
+      .banner .judul { flex: 1; line-height: 1.15; }
+      .banner .sekolah { font-size: 9px; font-weight: bold; text-transform: uppercase; }
+      .banner .ekskul { font-size: 7.5px; }
+      .isi { flex: 1; display: flex; gap: 3mm; padding: 2.5mm 3mm; }
+      .foto { width: 24mm; height: 30mm; border: 1px solid #666; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .foto img { width: 100%; height: 100%; object-fit: cover; }
+      .foto .ini { font-size: 14px; font-weight: bold; color: #94a3b8; }
+      .data { flex: 1; display: flex; flex-direction: column; }
+      .data .nama { font-size: 9.5px; font-weight: bold; text-transform: uppercase; line-height: 1.1; }
+      .baris { font-size: 7.5px; margin-top: 1mm; display: flex; gap: 1mm; }
+      .baris span { color: #475569; min-width: 9mm; }
+      .baris b { font-family: 'Courier New', monospace; }
+      .baris.jab b { font-family: Arial, sans-serif; font-weight: bold; }
+      .qr { margin-top: auto; display: flex; align-items: center; gap: 2mm; }
+      .qr img { width: 12mm; height: 12mm; }
+      .qr .nisqr { font-size: 6px; font-family: 'Courier New', monospace; letter-spacing: 0.5px; }
+    </style></head><body>
+      <div class="grid">${kartu}</div>
+    </body></html>
+  `);
+  printWindow.document.close();
+  let sudahPrint = false;
+  const cetakSekali = () => { if (sudahPrint) return; sudahPrint = true; printWindow.focus(); printWindow.print(); };
+  printWindow.onload = cetakSekali;
+  setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 1200);
 }
 
 // ==================== [UPGRADE 2026-10-10] EXPORT INFO EKSULK BERDASARKAN CAKUPAN ====================
