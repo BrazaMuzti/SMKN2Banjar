@@ -193,15 +193,29 @@ async function pemanggilDiizinkan(
     }
     return { ok: true, tipe, nis_nip: nisP };
   }
-  if (tipe === "admin") {
-    // Admin lokal: verifikasi klaim NIS/NIP-nya ke baris akun ber-tipe admin.
-    const { data: baris } = await admin
+  if (tipe === "admin" || tipe === "guru") {
+    // [REQ B1] Terima admin ATAU guru. Bila klaim "admin" tidak cocok ke baris akun
+    // bertipe admin (mis. akun guru yang dibuka-panel-admin tapi NIP-nya bertipe guru),
+    // jatuh ke verifikasi guru (baris akun bertipe guru + scoping wali kelas/pembina).
+    // Dengan begitu kasus guru tidak lagi dipaksa cocok dengan baris akun admin.
+    const { data: barisAdmin } = await admin
       .from("akun")
       .select("nis_nip")
       .eq("nis_nip", nisP)
       .eq("tipe", "admin")
       .maybeSingle();
-    if (!baris) return { ok: false, tipe, nis_nip: nisP, alasan: "Akun admin tidak terverifikasi." };
+    if (tipe === "admin" && barisAdmin) return { ok: true, tipe, nis_nip: nisP };
+    // Guru (atau admin yang ternyata barisnya ber-tipe guru): verifikasi baris guru + ampu murid.
+    const { data: barisG } = await admin
+      .from("akun")
+      .select("nis_nip")
+      .eq("nis_nip", nisP)
+      .eq("tipe", "guru")
+      .maybeSingle();
+    if (!barisG) return { ok: false, tipe, nis_nip: nisP, alasan: "Akun guru tidak terverifikasi." };
+    if (!(await guruAmpuMurid(admin, nisP, p_nis))) {
+      return { ok: false, tipe, nis_nip: nisP, alasan: "Guru hanya dapat mengganti foto murid yang diampu (wali kelas / pembina ekskul)." };
+    }
     return { ok: true, tipe, nis_nip: nisP };
   }
   return { ok: false, tipe, nis_nip: nisP, alasan: "Sesi tidak terverifikasi." };

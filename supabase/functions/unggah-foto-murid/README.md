@@ -28,8 +28,10 @@ via **Google Drive API v3**, lalu menyimpan URL hasilnya ke `akun.url_foto`.
    - Buka <https://drive.google.com> → kiri **Shared drives** → pakai/buat drive
      (project ini memakai **`SISIP`**, drive ID `0ACjDwF0G1CkUUk9PVA`).
    - Buat **folder baru di dalam shared drive** (klik kanan di area drive →
-     **New folder**; mis. `Foto Siswa`). Catat ID-nya dari URL — contoh
-     `1jDdMHiMJI_eCmj4pxxL0E0yRw5jqtNb_` — lalu set ke secret `DRIVE_FOLDER_ID`.
+     **New folder**; mis. `Foto Siswa`). Catat **ID-nya** (potongan 33 karakter
+     di URL Drive setelah `/folders/`), lalu set ke secret `DRIVE_FOLDER_ID`.
+     ⚠️ **Jangan commit nilai ID folder yang asli** ke repo — cukup pakai
+     placeholder `<ID_FOLDER_DRIVE>` seperti di bawah.
      ⚠️ **Jangan** cukup "share" folder dari My Drive (403 kuota tetap muncul);
      folder harus benar-benar *berada* di dalam shared drive.
    - Di halaman shared drive → **Share drive** → tambahkan **email service account**
@@ -48,8 +50,8 @@ via **Google Drive API v3**, lalu menyimpan URL hasilnya ke `akun.url_foto`.
 
 | Secret | Isi |
 |---|---|
-| `GOOGLE_SA_JSON` | **Isi (teks)** file JSON kunci service account yang diunduh — memuat `client_email` & `private_key`. Set via Dashboard → *Edge Functions* → *Secrets* (tempel utuh). |
-| `DRIVE_FOLDER_ID` | `1jDdMHiMJI_eCmj4pxxL0E0yRw5jqtNb_` (folder "Foto Siswa" **di dalam shared drive `SISIP`**) |
+| `GOOGLE_SA_JSON` | **Isi (teks)** file JSON kunci service account yang diunduh (memuat `client_email` & `private_key`) — ikuti langkah di bagian [Siapkan Service Account](#siapkan-service-account-sekali-saja-±5-menit). Set via Dashboard → *Edge Functions* → *Secrets* (tempel utuh). |
+| `DRIVE_FOLDER_ID` | `<ID_FOLDER_DRIVE>` (folder "Foto Siswa" **di dalam shared drive `SISIP`**) — ganti dengan ID folder asli Anda, **jangan commit nilai asli** ke repo |
 
 Cara lama `GAS_UPLOAD_URL` / `GAS_UPLOAD_TOKEN` sudah tidak dipakai — boleh dihapus dari secret.
 
@@ -140,16 +142,18 @@ Dua secret wajib: `GOOGLE_SA_JSON` (isi JSON kunci service account) dan `DRIVE_F
 ### Cara 1 — lewat CLI
 
 ```
-supabase secrets set DRIVE_FOLDER_ID='1jDdMHiMJI_eCmj4pxxL0E0yRw5jqtNb_'
+supabase secrets set DRIVE_FOLDER_ID='<ID_FOLDER_DRIVE>'
 supabase secrets set GOOGLE_SA_JSON='<isi lengkap file JSON kunci service account>'
 ```
+> Ganti `<ID_FOLDER_DRIVE>` dengan ID folder asli Anda (potongan 33 karakter di URL
+> Drive). **Jangan commit nilai aslinya** ke repo.
 
 ### Cara 2 — lewat Dashboard (tanpa login CLI)
 
 1. Dashboard → pilih project → menu **Edge Functions** → tab **Secrets**.
 2. Klik **New secret** → *Name* `GOOGLE_SA_JSON`, *Value* = tempel **seluruh isi** file
    JSON kunci service account (memuat `client_email` & `private_key`).
-3. Klik **New secret** → *Name* `DRIVE_FOLDER_ID`, *Value* = `1jDdMHiMJI_eCmj4pxxL0E0yRw5jqtNb_`.
+3. Klik **New secret** → *Name* `DRIVE_FOLDER_ID`, *Value* = `<ID_FOLDER_DRIVE>` (ID folder asli Anda).
 4. Setelah secret diset, **deploy ulang fungsi** (lihat bagian "Deploy") — secret baru
    terbaca oleh fungsi yang berjalan hanya setelah deploy ulang.
 
