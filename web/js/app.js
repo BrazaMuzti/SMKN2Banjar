@@ -352,6 +352,77 @@ function barisIdentitasMaster() {
   return (masterDataCache || []).find(r => (r["Nama Sekolah"] || r["URL LOGO 1"] || r["URL LOGO 2"] || '').trim() !== '') || masterDataCache[0] || {};
 }
 
+/** Ekstrak file ID Google Drive dari beragam bentuk tautan Drive. */
+function ekstrakIdDriveUrl(url) {
+  const u = String(url || '').trim();
+  if (!u) return null;
+  let m;
+  m = u.match(/drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]{6,})/);
+  if (m) return m[1];
+  m = u.match(/drive\.google\.com\/[^?#]*[?&]id=([a-zA-Z0-9_-]{6,})/);
+  if (m) return m[1];
+  m = u.match(/drive\.google\.com\/d\/([a-zA-Z0-9_-]{6,})/);
+  if (m) return m[1];
+  m = u.match(/googleusercontent\.com\/d\/([a-zA-Z0-9_-]{6,})/);
+  if (m) return m[1];
+  m = u.match(/usercontent\.google\.com\/[^?#]*[?&]id=([a-zA-Z0-9_-]{6,})/);
+  if (m) return m[1];
+  return null;
+}
+
+/** Ubah tautan Google Drive menjadi URL gambar yang bisa tampil di <img> saat cetak.
+ *  Prioritas: lh3 (CORS-aman & tak butuh login) → proxy edge function (tembus blokir anonim). */
+function urlGambarDrive(url) {
+  const u = String(url || '').trim();
+  if (!u) return '';
+  if (/googleusercontent\.com/.test(u)) return u;
+  const id = ekstrakIdDriveUrl(u);
+  if (!id) return u; // link non-Drive → pakai apa adanya
+  if (typeof SUPABASE_URL !== 'undefined' && SUPABASE_URL) {
+    return String(SUPABASE_URL).replace(/\/+$/, '') + '/functions/v1/ambil-foto-drive?fileId=' + encodeURIComponent(id);
+  }
+  return 'https://lh3.googleusercontent.com/d/' + id + '=w1200';
+}
+
+/** Validator & normalisasi hex warna (mis. "#1e3a8a"). Kembali null bila tidak valid. */
+function hexWarnaValid(v) {
+  const t = String(v || '').trim();
+  const m = t.match(/^#?([0-9a-fA-F]{6})$/);
+  return m ? '#' + m[1].toLowerCase() : null;
+}
+
+/** Konfigurasi kartu pelajar dari baris identitas master (dengan default). */
+function konfigurasiKartu() {
+  const idn = barisIdentitasMaster();
+  const warnaHc = String(idn["Warna Header"] || '').trim();
+  return {
+    tahun: String(idn["Tahun Pelajaran"] || '').trim() || currentTahun,
+    semester: String(idn["Semester"] || '').trim() || (getPreferensiSesi && getPreferensiSesi().semester || 'Ganjil'),
+    kepsek: String(idn["Kepala Sekolah"] || '').trim(),
+    nipKepsek: String(idn["NIP Kepala Sekolah"] || '').trim(),
+    ttdUrl: String(idn["URL TTD Kepsek"] || '').trim(),
+    bgUrl: String(idn["URL Background Kartu"] || '').trim(),
+    // Warna Header: token "#transparan" => latar transparan (bleed/gambar terlihat); selain itu hex.
+    warnaHeader: (warnaHc.toLowerCase() === 'transparan' || warnaHc.toLowerCase() === '#transparan')
+      ? 'transparent'
+      : (hexWarnaValid(warnaHc) || '#1e3a8a'),
+    warnaAksen: hexWarnaValid(idn["Warna Aksen"]) || '#3b82f6',
+    logoBlk: String(idn["URL Logo Belakang"] || '').trim(),
+    kontenBlk: String(idn["Konten Belakang"] || '').trim()
+  };
+}
+
+/** Toggle kontrol Warna Header pada tab Konfigurasi: nonaktifkan color picker saat mode Transparan. */
+function toggleWarnaHeaderTransparan() {
+  const mode = document.getElementById('mi_warna_header_mode');
+  const picker = document.getElementById('mi_warna_header');
+  if (!mode || !picker) return;
+  const trx = mode.value === 'transparan';
+  picker.disabled = trx;
+  picker.classList.toggle('opacity-40', trx);
+}
+
+
 /** Deteksi kembalian login OAuth (Google): supabase-js sudah menyimpan sesi Auth,
  *  profil diambil dari tabel 'akun' lalu dashboard di-boot tanpa password. */
 async function cekSesiOAuth() {
@@ -4997,6 +5068,30 @@ async function renderNilaiModule(container) {
   currentSemesterNilai = defaultSemesterNilai;
   if (!listTahun.includes(defaultTahun)) listTahun.push(defaultTahun);
 
+  // [REQ 11] Kategori Nilai ─ sambungkan dari Master Data (kolom "Kategori Nilai").
+  // Kanonik bawaan modul selalu ditampilkan pertama; nilai tambahan dari master_data
+  // ditampilkan sebagai opsi (diizinkan) agar validasi tabel tetap aman via fallback bawaannya.
+  const KANONIK_KAT_NILAI = [
+    { val: "Data Nilai Pengetahuan", label: "Pengetahuan" },
+    { val: "Data Nilai Keterampilan", label: "Keterampilan" },
+    { val: "Data Nilai Sikap", label: "Sikap" },
+    { val: "Data Nilai Eskul", label: "Ekstrakurikuler" }
+  ];
+  const mapMasterKatNilai = new Set(
+    (masterDataCache || []).map(m => String(m["Kategori Nilai"] || '').trim()).filter(Boolean).map(v => v.toLowerCase())
+  );
+  const SUPPORTED_KAT = new Set(KANONIK_KAT_NILAI.map(k => k.label.toLowerCase()));
+  // Tambahan dari Master Data yang belum didukung render tabel → opsi nonaktif (info).
+  const katTambahanMaster = [...mapMasterKatNilai].filter(v => !SUPPORTED_KAT.has(v));
+  const opsiKategoriNilaiHTML = [
+    ...KANONIK_KAT_NILAI.map(k =>
+      `<option value="${k.val}" class="bg-slate-800 text-white" ${currentKategoriNilai === k.val ? 'selected' : ''}>${escapeHtml(k.label)}</option>`),
+    ...katTambahanMaster.map(v => {
+      const first = v.charAt(0).toUpperCase() + v.slice(1);
+      return `<option value="${escJs(v)}" disabled class="bg-slate-800 text-slate-500" title="Dari Master Data — belum didukung modul Input Nilai.">${escapeHtml(first)} (belum didukung)</option>`;
+    })
+  ].join('');
+
   // 3. Render Struktur HTML Utama (Header, Filter Bar, dan Container Tabel)
   container.innerHTML = `
     <!-- LAYER 1: Filter Bar -->
@@ -5007,10 +5102,7 @@ async function renderNilaiModule(container) {
           <div class="relative w-7 h-7 sm:w-8 sm:h-8 group" title="Pilih Kategori">
              <div class="w-full h-full rounded-full bg-slate-700/50 border border-white/10 flex items-center justify-center text-blue-400 group-hover:bg-blue-500 group-hover:text-white transition shadow-sm"><i class="fa-solid fa-layer-group text-[10px] sm:text-xs"></i></div>
              <select id="select-kategori-nilai" class="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onchange="changeKategoriNilai()">
-                 <option value="Data Nilai Pengetahuan" class="bg-slate-800 text-white" ${currentKategoriNilai === 'Data Nilai Pengetahuan' ? 'selected' : ''}>Pengetahuan</option>
-                 <option value="Data Nilai Keterampilan" class="bg-slate-800 text-white" ${currentKategoriNilai === 'Data Nilai Keterampilan' ? 'selected' : ''}>Keterampilan</option>
-                 <option value="Data Nilai Sikap" class="bg-slate-800 text-white" ${currentKategoriNilai === 'Data Nilai Sikap' ? 'selected' : ''}>Sikap</option>
-                 <option value="Data Nilai Eskul" class="bg-slate-800 text-white" ${currentKategoriNilai === 'Data Nilai Eskul' ? 'selected' : ''}>Ekstrakurikuler</option>
+                 ${opsiKategoriNilaiHTML}
              </select>
           </div>
 
@@ -9409,7 +9501,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             ${isAdminAktif() ? `<button onclick="prosesKenaikanKelas()" class="h-8 bg-violet-600 hover:bg-violet-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Proses kenaikan kelas — khusus admin (X→XI→XII→Lulus, dapat dikoreksi turun)"><i class="fa-solid fa-arrow-up-right-dots"></i> <span class="hidden sm:inline">Kenaikan</span></button>` : ''}
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
-                            <button onclick="cetakKartuPelajar()" class="h-8 bg-indigo-600 hover:bg-indigo-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak kartu pelajar (ID Card) siswa — mengikuti filter tabel aktif"><i class="fa-solid fa-id-card"></i> <span class="hidden sm:inline">Kartu</span></button>
+                            <button onclick="bukaPengaturanKartu()" class="h-8 bg-indigo-600 hover:bg-indigo-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak kartu pelajar (ID Card) siswa — pengaturan sebelum cetak"><i class="fa-solid fa-id-card"></i> <span class="hidden sm:inline">Kartu</span></button>
                             ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
 ${bisaImportMuridAktif() ? `<button onclick="openUploadFotoMasal()" class="h-8 bg-cyan-700 hover:bg-cyan-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Unggah foto massal utk SEMUA murid (tanpa terkait filter aktif). Nama file: \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Admin, wali kelas & pembina ekskul"><i class="fa-solid fa-upload"></i> <span class="hidden sm:inline">Upload Foto</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
@@ -11443,10 +11535,63 @@ async function cetakFotoSiswa() {
   setTimeout(() => { try { cetakSekali(); } catch (e) {} }, 1200);
 }
 
-/** [REQ E] Cetak Kartu Pelajar (ID Card) siswa — mengikuti filter tabel aktif (persis pola cetakFotoSiswa).
- *  A4 potret, kartu 90×55mm disusun grid. Menampilkan logo, identitas sekolah, foto, NISN, NIS,
- *  nama, kelas (dengan jurusan bila didefinisikan di master_data), QR NIS & kolom tanda tangan. */
-async function cetakKartuPelajar() {
+/**
+ * [REQ B.5] Popup pengaturan sebelum cetak kartu pelajar.
+ *  Menyediakan shortcut ke "Master Data → Konfigurasi" & pilihan eksport (PDF / Print),
+ *  lalu melanjutkan ke cetakKartuPelajar(moda).
+ */
+function bukaPengaturanKartu() {
+    const jumlah = (cacheAkunMurid ? muridTersaring(cacheAkunMurid).length : 0);
+    Swal.fire({
+        title: '<i class="fa-solid fa-id-card mr-2"></i>Pengaturan Kartu Pelajar',
+        html: `
+            <div class="text-left text-xs text-slate-300">
+                <p class="text-slate-400 mb-3"><i class="fa-solid fa-circle-info mr-1"></i>
+                    Kartu dicetak mengikuti <b>filter tabel aktif</b> pada menu Data Akun Murid.
+                    <b>${jumlah}</b> siswa pada filter ini.</p>
+                <label class="block font-bold text-indigo-300 mb-2">Konfigurasi Kartu</label>
+                <button type="button" onclick="bukaKonfigurasiKartu()" class="w-full bg-slate-700 hover:bg-slate-600 text-white border border-white/20 rounded-lg px-3 py-2 text-xs font-bold text-left mb-3">
+                    <i class="fa-solid fa-gear mr-2 text-orange-300"></i> Buka Master Data → Konfigurasi
+                    <span class="block text-[9px] font-normal text-slate-400 mt-0.5">Atur Tahun, Semester, TTD, background, logo & konten belakang kartu.</span>
+                </button>
+                <label class="block font-bold text-emerald-300 mb-2">Eksport / Cetak</label>
+                <div class="grid grid-cols-2 gap-2">
+                    <button type="button" onclick="lanjutCetakKartu('print')" class="bg-blue-600 hover:bg-blue-700 text-white rounded-lg px-3 py-2 text-xs font-bold">
+                        <i class="fa-solid fa-print mr-1"></i> Print
+                    </button>
+                    <button type="button" onclick="lanjutCetakKartu('pdf')" class="bg-rose-600 hover:bg-rose-700 text-white rounded-lg px-3 py-2 text-xs font-bold">
+                        <i class="fa-solid fa-file-pdf mr-1"></i> Simpan PDF
+                    </button>
+                </div>
+                <p class="text-[9px] text-slate-400 mt-2">PDF: pada dialog cetak pilih "Save as PDF".</p>
+            </div>`,
+        showConfirmButton: false,
+        showCloseButton: true,
+        background: '#1e293b',
+        color: '#fff',
+        width: 420
+    });
+}
+
+/** Shortcut: pindah ke menu Master Data → tab Konfigurasi. */
+function bukaKonfigurasiKartu() {
+    Swal.close();
+    currentTabMaster = 'konfigurasi';
+    changeMenu('master-data', 'Master Data'); // renderMasterDataModule otomatis memilih tab sesuai currentTabMaster
+}
+
+/** Tutup modal lalu lanjutkan cetak kartu ('print' | 'pdf'). */
+function lanjutCetakKartu(moda) {
+    Swal.close();
+    cetakKartuPelajar(moda);
+}
+
+/** [REQ E] Cetak Kartu Pelajar (ID Card) — mengikuti filter tabel aktif.
+ *  A4 potret, kartu 80×45mm (8×4.5cm). Logo dinas di kiri banner, identitas sekolah & alamat,
+ *  Tahun/Semester, foto, NISN/NIS, jurusan (singkatan + nomor rombel),
+ *  QR, TTD + nama Kepala Sekolah. Konten berada dalam area kartu; bleed atas/bawah untuk
+ *  potong + tanda potong sudut. Sisi belakang: 1 halaman (satu set kartu identik, 4 pc). */
+async function cetakKartuPelajar(moda) {
   Swal.fire({ title: 'Menyiapkan Kartu Pelajar...', allowOutsideClick: false, didOpen: () => Swal.showLoading(), background: '#1e293b', color: '#fff' });
   let sumber;
   try {
@@ -11464,82 +11609,153 @@ async function cetakKartuPelajar() {
 
   const esc = (v) => escapeHtml(v ?? '');
   const idn = barisIdentitasMaster();
-  const logo = (idn["URL LOGO 1"] || '').trim() || (idn["URL LOGO 2"] || '').trim() || '';
+  const logo = urlGambarDrive(String((idn["URL LOGO 1"] || '').trim() || (idn["URL LOGO 2"] || '').trim() || ''));
   const namaSekolah = String(idn["Nama Sekolah"] || '').trim();
   const dinas = String(idn["Nama Dinas"] || '').trim();
   const ketDinas = String(idn["Ket. Nama Dinas"] || '').trim();
-  // [REQ A] Peta singkatan jurusan → nama lengkap (dari Master Data Daftar), utk menampilkan jurusan kartu.
-  const jurusanMap = {};
-  (masterDataCache || []).forEach(m => {
-    const sg = String(m["Jurusan"] || '').trim(), lg = String(m["Jurusan Lengkap"] || '').trim();
-    if (sg && lg) jurusanMap[sg.toUpperCase()] = lg;
-  });
-  const jurusanKelas = (kls) => {
-    if (!kls) return '';
-    const kata = String(kls).split(/\s+/).filter(Boolean);
-    const sing = kata.find(k => jurusanMap[String(k).toUpperCase()]);
-    return sing ? `${jurusanMap[String(sing).toUpperCase()]} (${sing})` : '';
-  };
+  const alamat = String(idn["Alamat Sekolah"] || '').trim();
+
+  // Konfigurasi kartu dari Master (Tahun, Semester, Kepsek, TTD, background, warna, isi belakang).
+  const konf = konfigurasiKartu();
+  const bgImg = urlGambarDrive(konf.bgUrl);
+  const ttdImg = urlGambarDrive(konf.ttdUrl);
+  const logoBlk = urlGambarDrive(konf.logoBlk);
+  const itemBlk = String(konf.kontenBlk || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+
   const qr = (nis) => `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(String(nis || ''))}`;
 
   const kartu = rows.map(d => {
     const nama = String(d.nama_lengkap || d.Nama || 'Tanpa Nama');
     const nis = String(d.nis_nip || d.NIS || d.nis || '');
     const nisn = String(d.nisn || d.NISN || '');
-    const kelas = kelasSiswaTahun(d) || d.tingkat_kelas || '';
-    const jur = jurusanKelas(kelas);
+    const kelasRaw = kelasSiswaTahun(d) || d.tingkat_kelas || '';
+    // [REQ A1] "Jurusan": tampilkan singkatan jurusan + nomor rombel (mis. "LP 1"),
+    // bukan nama jurusan murni (Layanan Perbankan) agar ringkas dan tetap informatif.
+    const singJ = singkatanJurusanDariKelas(kelasRaw);
+    const noRom = rombelKelas(kelasRaw);
+    const jurusanRombel = singJ
+      ? (noRom ? `${singJ} ${noRom}` : singJ)
+      : (kelasRaw || '-');
     const inisial = nama.split(/\s+/).filter(Boolean).slice(0, 2).map(s => s.charAt(0)).join('').toUpperCase();
-    return `<div class="kartu">
-      <div class="banner">
-        ${logo ? `<img src="${esc(logo)}" alt="logo" class="logo">` : ''}
-        <div class="judul"><div class="dinas">${esc(ketDinas || dinas)}</div><div class="sekolah">${esc(namaSekolah)}</div></div>
-      </div>
-      <div class="isi">
-        <div class="foto">${d.url_foto ? `<img src="${esc(d.url_foto)}" alt="">` : `<div class="ini">${esc(inisial)}</div>`}</div>
-        <div class="data">
-          <div class="nama">${esc(nama)}</div>
-          <div class="baris"><span>NISN</span><b>${esc(nisn || '-')}</b></div>
-          <div class="baris"><span>NIS</span><b>${esc(nis || '-')}</b></div>
-          <div class="baris"><span>Kelas</span><b>${esc(kelas || '-')}${jur ? ' · ' + esc(jur) : ''}</b></div>
-          <div class="qr"><img src="${qr(nis)}" alt="QR"><span class="nisqr">${esc(nis)}</span></div>
+    const fotoSrc = d.url_foto ? urlGambarDrive(String(d.url_foto)) : '';
+    return `<div class="slip">
+      <div class="kartu ${bgImg ? 'has-bg' : ''}">
+        ${bgImg ? `<div class="bg" style="background-image:url(${esc(bgImg)});"></div>` : ''}
+        <div class="banner${konf.warnaHeader === 'transparent' ? ' trx' : ''}">
+          ${logo ? `<img src="${esc(logo)}" alt="logo" class="logo">` : ''}
+          <div class="judul">
+            <div class="dinas">${esc(ketDinas || dinas)}</div>
+            <div class="sekolah">${esc(namaSekolah)}</div>
+            ${alamat ? `<div class="alamat">${esc(alamat)}</div>` : ''}
+          </div>
+        </div>
+        <div class="qat">${esc(konf.tahun || '')} ${konf.tahun && konf.semester ? '·' : ''} ${esc(konf.semester || '')}</div>
+        <div class="isi">
+          <div class="foto">${fotoSrc ? `<img src="${esc(fotoSrc)}" alt="">` : `<div class="ini">${esc(inisial)}</div>`}</div>
+          <div class="data">
+            <div class="nama">${esc(nama)}</div>
+            <div class="baris"><span>NISN</span><b>${esc(nisn || '-')}</b></div>
+            <div class="baris"><span>NIS</span><b>${esc(nis || '-')}</b></div>
+            <div class="baris"><span>Jurusan</span><b>${esc(jurusanRombel)}</b></div>
+            <div class="gandeng">
+              <div class="qr"><img src="${qr(nis)}" alt="QR"></div>
+              <div class="ttd">
+                ${ttdImg ? `<img src="${esc(ttdImg)}" alt="ttd" class="img-ttd">` : `<div class="garis"></div>`}
+                <div class="nama-ks">${esc(konf.kepsek || '_____________________')}</div>
+                <div class="teks">Kepala Sekolah</div>
+                ${konf.nipKepsek ? `<div class="nip"><b>NIP.</b> ${esc(konf.nipKepsek)}</div>` : ''}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
-      <div class="bawah">
-        <div class="ttd"><div class="garis"></div><div class="teks">Kepala Sekolah</div></div>
-      </div>
+      <span class="cm cm-tl"></span><span class="cm cm-tr"></span>
+      <span class="cm cm-bl"></span><span class="cm cm-br"></span>
     </div>`;
   }).join('');
+  // [REQ 11] Sisi belakang kartu (halaman baru). Konten identik utk semua siswa,
+  // jadi cukup 1 lembar berisi satu set kartu belakang (tanpa nama siswa).
+  const isiBlk = itemBlk.length
+    ? `<ul>${itemBlk.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`
+    : `<p>Kartu pelajar ini wajib dibawa saat kegiatan sekolah &amp; absensi.</p>`;
+  const JUMLAH_KARTU_BLK = 4; // 2 kolom × 2 baris pada A4
+  const kartuBlk = Array.from({ length: JUMLAH_KARTU_BLK }, () => `<div class="slip">
+      <div class="kartu blk">
+        <div class="blk-head">${logoBlk ? `<img src="${esc(logoBlk)}" alt="logo" class="logo">` : ''}<span>KARTU PELAJAR</span></div>
+        <div class="blk-body">
+          <div class="blk-sekolah">${esc(namaSekolah || 'SEKOLAH')}</div>
+          ${isiBlk}
+        </div>
+        <div class="blk-foot">Sekolah</div>
+      </div>
+      <span class="cm cm-tl"></span><span class="cm cm-tr"></span>
+      <span class="cm cm-bl"></span><span class="cm cm-br"></span>
+    </div>`).join('');
+
+
 
 printWindow.document.write(`
-    <html><head><title>Kartu Pelajar</title>
+    <html><head><title>${moda === 'pdf' ? 'Kartu Pelajar (PDF)' : 'Kartu Pelajar'}</title>
     <style>
       @page { size: A4 portrait; margin: 10mm; }
       body { font-family: Arial, sans-serif; color: #000; background: #fff; margin: 0; }
-      .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5mm; }
-      .kartu { width: 90mm; height: 55mm; border: 1.6px solid #000; border-radius: 7px; overflow: hidden; break-inside: avoid; display: flex; flex-direction: column; }
-      .banner { background: #1e3a8a; color: #fff; padding: 2mm 3mm; display: flex; align-items: center; gap: 3mm; }
-      .banner .logo { max-height: 10mm; max-width: 10mm; background: #fff; border-radius: 2px; }
-      .banner .judul { flex: 1; line-height: 1.15; }
-      .banner .dinas { font-size: 6.5px; text-transform: uppercase; }
-      .banner .sekolah { font-size: 9px; font-weight: bold; text-transform: uppercase; }
-      .isi { flex: 1; display: flex; gap: 3mm; padding: 2.5mm 3mm; }
-      .foto { width: 24mm; height: 30mm; border: 1px solid #666; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+      .grid { display: grid; grid-template-columns: repeat(2, 80mm); gap: 5mm 8mm; justify-content: center; padding-top: 8mm; }
+      .halaman-blk { page-break-before: always; }
+      .halaman-blk h2 { text-align: center; font-size: 12px; color: #475569; margin: 0 0 4mm; }
+      .grid-blk { display: grid; grid-template-columns: repeat(2, 80mm); gap: 5mm 8mm; justify-content: center; margin-top: 10mm; }
+      /* slip = area potong (80x45 = ukuran kartu pelajar 8x4.5cm); kartu = bleed 0.5cm ke semua sisi */
+      .slip { position: relative; width: 80mm; height: 45mm; break-inside: avoid; }
+      .kartu { position: relative; width: 80mm; height: 45mm; display: flex; flex-direction: column; overflow: visible; border-radius: 7px; }
+      .bg { position: absolute; left: -5mm; right: -5mm; top: -5mm; bottom: -5mm; background-size: cover; background-position: center; background-repeat: no-repeat; }
+      .banner { position: relative; background: ${konf.warnaHeader}; color: #fff; margin: -5mm 0 0; padding: 2mm 3mm 1.5mm; display: flex; flex-direction: row; align-items: center; gap: 2.5mm; }
+      .banner.trx { background: rgba(255,255,255,0.55); color: #1e3a8a; }
+      .banner.trx .alamat, .banner.trx .dinas { color: #1e3a8a; }
+      .banner .logo { max-height: 12mm; max-width: 12mm; background: #fff; border-radius: 2px; flex: 0 0 auto; }
+      .banner .judul { flex: 1; min-width: 0; line-height: 1.15; width: 100%; }
+      .banner .dinas { font-size: 6.5px; text-transform: uppercase; letter-spacing: 0.3px; text-align: left; }
+      .banner .sekolah { font-size: 10px; font-weight: bold; text-transform: uppercase; line-height: 1.1; text-align: left; }
+      .banner .alamat { font-size: 5px; text-transform: none; opacity: 0.95; text-align: left; }
+      .qat { position: relative; font-size: 6px; color: #475569; text-align: center; padding: 0.8mm 0 0; font-weight: bold; letter-spacing: 0.3px; }
+      .isi { position: relative; flex: 1; display: flex; gap: 2mm; padding: 1mm 2.5mm; }
+      .has-bg .foto, .has-bg .data { background: rgba(255,255,255,0.86); border-radius: 4px; }
+      .foto { width: 20mm; min-height: 22mm; border: 1px solid #666; background: #f1f5f9; display: flex; align-items: center; justify-content: center; overflow: hidden; }
       .foto img { width: 100%; height: 100%; object-fit: cover; }
       .foto .ini { font-size: 14px; font-weight: bold; color: #94a3b8; }
-      .data { flex: 1; display: flex; flex-direction: column; }
+      .data { flex: 1; display: flex; flex-direction: column; padding-left: 1mm; }
       .data .nama { font-size: 9.5px; font-weight: bold; text-transform: uppercase; line-height: 1.1; }
-      .baris { font-size: 7.5px; margin-top: 1mm; display: flex; gap: 2mm; }
+      .baris { font-size: 7px; margin-top: 0.6mm; display: flex; gap: 2mm; }
       .baris span { color: #475569; min-width: 9mm; }
       .baris b { font-family: 'Courier New', monospace; }
-      .qr { margin-top: auto; display: flex; align-items: center; gap: 2mm; }
-      .qr img { width: 13mm; height: 13mm; }
-      .qr .nisqr { font-size: 6.5px; font-family: 'Courier New', monospace; letter-spacing: 0.5px; }
-      .bawah { border-top: 1px solid #cbd5e1; padding: 2mm 3mm 2.5mm; display: flex; justify-content: flex-end; }
-      .ttd { text-align: center; }
-      .ttd .garis { width: 26mm; border-top: 1px solid #000; height: 8mm; }
-      .ttd .teks { font-size: 6.5px; color: #475569; }
+      .qr { display: flex; align-items: flex-end; flex: 0 0 auto; }
+      .qr img { width: 13mm; height: 13mm; object-fit: contain; max-width: 100%; }
+      .gandeng { margin-top: auto; display: flex; align-items: flex-end; gap: 2.5mm; }
+      .ttd { flex: 1; text-align: center; min-width: 0; }
+      .ttd .img-ttd { width: 16mm; height: auto; max-height: 7mm; margin: 0 auto; }
+      .ttd .garis { width: 22mm; border-top: 1px solid #000; height: 2.5mm; margin: 0 auto; }
+      .ttd .nama-ks { font-size: 6.5px; font-weight: bold; text-align: center; line-height: 1.15; }
+      .ttd .teks { font-size: 6px; color: #475569; }
+      .ttd .nip { font-size: 5.5px; color: #334155; font-family: 'Courier New', monospace; margin-top: 0.3mm; }
+      /* Tanda potong di setiap sudut (pada garis 90x55) */
+      .cm { position: absolute; width: 5mm; height: 5mm; pointer-events: none; }
+      .cm::before, .cm::after { content: ''; position: absolute; background: #000; }
+      .cm::before { width: 5mm; height: 0.35mm; left: 0; top: 50%; }
+      .cm::after  { width: 0.35mm; height: 5mm; left: 50%; top: 0; }
+      .cm-tl { left: -2.5mm; top: -2.5mm; }
+      .cm-tr { right: -2.5mm; top: -2.5mm; }
+      .cm-bl { left: -2.5mm; bottom: -2.5mm; }
+      .cm-br { right: -2.5mm; bottom: -2.5mm; }
+      /* Sisi belakang kartu */
+      .kartu.blk { background: #fff; }
+      .blk-head { position: relative; display: flex; align-items: center; gap: 3mm; background: ${konf.warnaAksen}; color: #fff; padding: 2mm 3mm; margin: -5mm 0 0; font-size: 9px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
+      .blk-head .logo { max-height: 9mm; max-width: 9mm; background: #fff; border-radius: 2px; }
+      .blk-body { position: relative; flex: 1; padding: 3mm 3.5mm; font-size: 7px; line-height: 1.5; color: #334155; overflow: hidden; }
+      .blk-body ul { margin: 1mm 0 0; padding-left: 4mm; }
+      .blk-body li { margin-bottom: 0.6mm; }
+      .blk-sekolah { font-weight: bold; font-size: 8px; color: ${konf.warnaHeader === 'transparent' ? '#1e3a8a' : konf.warnaHeader}; text-transform: uppercase; margin-bottom: 1mm; }
+      .blk-foot { position: relative; margin: 0 0 -5mm; padding: 1mm 3mm; text-align: right; font-size: 6px; color: #fff; background: ${konf.warnaAksen}; }
     </style></head><body>
       <div class="grid">${kartu}</div>
+      ${kartuBlk ? `<div class="halaman-blk"><h2>Sisi Belakang Kartu</h2><div class="grid-blk">${kartuBlk}</div></div>` : ''}
     </body></html>
   `);
   printWindow.document.close();
@@ -12676,18 +12892,182 @@ let currentTabMaster = 'identitas';
 let masterSortDir = {};
 
 const MASTER_DAFTAR_SECTIONS = [
-    { kolom: "Tahun Pelajaran", icon: 'fa-calendar-days', ph: '2026/2027' },
-    { kolom: "Semester", icon: 'fa-repeat', ph: 'Ganjil' },
-    { kolom: "Tingkat/Kelas", icon: 'fa-school', ph: 'X RPL 1' },
-    { kolom: "Mata Pelajaran", icon: 'fa-book', ph: 'Matematika' },
-    { kolom: "Ekstrakurikuler", icon: 'fa-futbol', ph: 'Pramuka' },
-    { kolom: "Jabatan Ekstrakurikuler", icon: 'fa-medal', ph: 'Ketua Pramuka' },
-    { kolom: "Jabatan Kelas", icon: 'fa-user-tie', ph: 'Ketua Kelas' },
-    { kolom: "Jabatan Guru", icon: 'fa-chalkboard-user', ph: 'Kepala Sekolah' },
-    { kolom: "Jurusan", icon: 'fa-graduation-cap', ph: 'Rekayasa Perangkat Lunak' },
-    { kolom: "Kategori Nilai", icon: 'fa-star-half-stroke', ph: 'Tugas Harian' },
-    { kolom: "Agama", icon: 'fa-hands-praying', ph: 'Islam' }
+    { kolom: "Tahun Pelajaran", icon: 'fa-calendar-days', ph: '2026/2027', wizard: true },
+    { kolom: "Semester", icon: 'fa-repeat', ph: 'Ganjil', wizard: true },
+    { kolom: "Tingkat/Kelas", icon: 'fa-school', ph: 'X RPL 1', wizard: true },
+    { kolom: "Mata Pelajaran", icon: 'fa-book', ph: 'Matematika', wizard: true },
+    { kolom: "Ekstrakurikuler", icon: 'fa-futbol', ph: 'Pramuka', wizard: true },
+    { kolom: "Jabatan Ekstrakurikuler", icon: 'fa-medal', ph: 'Ketua Pramuka', wizard: true },
+    { kolom: "Jabatan Kelas", icon: 'fa-user-tie', ph: 'Ketua Kelas', wizard: true },
+    { kolom: "Jabatan Guru", icon: 'fa-chalkboard-user', ph: 'Kepala Sekolah', wizard: true },
+    { kolom: "Jurusan", icon: 'fa-graduation-cap', ph: 'Rekayasa Perangkat Lunak', wizard: true },
+    { kolom: "Kategori Nilai", icon: 'fa-star-half-stroke', ph: 'Tugas Harian', wizard: true },
+    { kolom: "Agama", icon: 'fa-hands-praying', ph: 'Islam', wizard: true },
+    // [SARAN WIZARD TAMBAHAN] Kategori pendukung yang kolomnya sudah tersedia di master_data:
+    { kolom: "Status Kehadiran", icon: 'fa-user-check', ph: 'Hadir', wizard: true }
 ];
+
+// ==========================================
+// WIZARD MASTER DATA — daftar pilihan isi-otomatis per kategori
+// Menulis nilai ke tabel master_data yang sudah ada (tanpa ubah DB).
+// Struktur nilai bisa string (daftar biasa) atau { grup: [ ... ] } (ber-heading).
+// ==========================================
+
+/** Generate Tahun Pelajaran otomatis "YYYY/YYYY+1" dari tahun awal (default 2024) s.d. tahun akhir (default 2040). */
+function generateTahunPelajaran(tahunAwal = 2024, tahunAkhir = 2040) {
+  const hasil = [];
+  for (let t = tahunAwal; t < tahunAkhir; t++) hasil.push(`${t}/${t + 1}`);
+  return hasil;
+}
+
+// [REQ 1] Tahun Pelajaran otomatis 2024/2025, 2025/2026, ... 2039/2040
+const WIZARD_TAHUN_PELAJARAN = generateTahunPelajaran(2024, 2040);
+
+// [REQ 5] Jurusan dikelompokkan: SMA & SMK per bidang — { grup: [ {sing, lengkap} ] }
+const WIZARD_JURUSAN_GRUP = [
+  { grup: 'SMA', daftar: [
+      { sing: 'MIPA', lengkap: 'Matematika dan Ilmu Pengetahuan Alam' },
+      { sing: 'IPS', lengkap: 'Ilmu Pengetahuan Sosial' },
+      { sing: 'BB', lengkap: 'Bahasa dan Budaya' },
+      { sing: 'SO', lengkap: 'Seni dan Olahraga' }
+  ] },
+  { grup: 'SMK - Teknologi', daftar: [
+      { sing: 'TKJ', lengkap: 'Teknik Komputer dan Jaringan' },
+      { sing: 'RPL', lengkap: 'Rekayasa Perangkat Lunak' },
+      { sing: 'TKRO', lengkap: 'Teknik Kendaraan Ringan Otomotif' },
+      { sing: 'TBSM', lengkap: 'Teknik dan Bisnis Sepeda Motor' },
+      { sing: 'TITL', lengkap: 'Teknik Instalasi Tenaga Listrik' },
+      { sing: 'TP', lengkap: 'Teknik Pemesinan' },
+      { sing: 'TEI', lengkap: 'Teknik Elektronika Industri' },
+      { sing: 'BKP', lengkap: 'Bisnis Konstruksi dan Properti' },
+      { sing: 'DPIB', lengkap: 'Desain Pemodelan dan Informasi Bangunan' },
+      { sing: 'TKR', lengkap: 'Teknik Kendaraan Ringan' }
+  ] },
+  { grup: 'SMK - Bisnis & Manajemen', daftar: [
+      { sing: 'AKL', lengkap: 'Akuntansi dan Keuangan Lembaga' },
+      { sing: 'LP', lengkap: 'Layanan Perbankan' },
+      { sing: 'MPLB', lengkap: 'Manajemen Perkantoran dan Layanan Bisnis' },
+      { sing: 'PM', lengkap: 'Pemasaran' },
+      { sing: 'MLOG', lengkap: 'Manajemen Logistik' }
+  ] },
+  { grup: 'SMK - Pariwisata', daftar: [
+      { sing: 'PH', lengkap: 'Perhotelan' },
+      { sing: 'KL', lengkap: 'Kuliner' },
+      { sing: 'TB', lengkap: 'Tata Busana' },
+      { sing: 'ULW', lengkap: 'Usaha Layanan Wisata' }
+  ] },
+  { grup: 'SMK - Kesehatan', daftar: [
+      { sing: 'FKK', lengkap: 'Farmasi Klinis dan Komunitas' },
+      { sing: 'TLM', lengkap: 'Teknologi Laboratorium Medik' },
+      { sing: 'KPR', lengkap: 'Keperawatan' }
+  ] },
+  { grup: 'SMK - Agribisnis', daftar: [
+      { sing: 'ATPH', lengkap: 'Agribisnis Tanaman Pangan dan Hortikultura' },
+      { sing: 'ATBK', lengkap: 'Agribisnis Ternak' },
+      { sing: 'APi', lengkap: 'Agribisnis Perikanan' },
+      { sing: 'AGRI', lengkap: 'Agriteknologi Pengolahan Hasil Pertanian' }
+  ] },
+  { grup: 'SMK - Seni & Industri Kreatif', daftar: [
+      { sing: 'DKV', lengkap: 'Desain Komunikasi Visual' },
+      { sing: 'MM', lengkap: 'Multimedia' },
+      { sing: 'BC', lengkap: 'Broadcasting dan Perfilman' }
+  ] }
+];
+
+// [REQ 6] Ekstrakurikuler ber-heading
+const WIZARD_EKSTRAKURIKULER = [
+  { grup: 'Ekstrakurikuler Wajib', daftar: ['Pramuka (Praja Muda Karana)'] },
+  { grup: 'Bidang Keagamaan', daftar: ['Rohis (Rohani Islam)', 'Rohkris (Rohani Kristen)', 'Rohkat (Rohani Katolik)', 'Rohin (Rohani Hindu)', 'Rohbud (Rohani Buddha)'] },
+  { grup: 'Bidang Kebangsaan, Belajar, dan Kepemimpinan', daftar: ['OSIS (Organisasi Siswa Intra Sekolah)', 'MPK (Majelis Perwakilan Kelas)', 'Paskibra (Pasukan Pengibar Bendera)', 'PMR (Palang Merah Remaja)', 'Pramuka Pilihan (Bantara/Laksana)', 'Patroli Keamanan Sekolah (PKS)', 'Pencinta Alam (Sispala)'] },
+  { grup: 'Bidang Sains, Teknologi, dan Akademik', daftar: ['Karya Ilmiah Remaja (KIR)', 'Klub Olimpiade Sains', 'Klub Bahasa Inggris (English Club/Debate)', 'Klub Bahasa Asing', 'Jurnalistik dan Mading', 'Klub Robotik dan Coding'] },
+  { grup: 'Bidang Seni, Budaya, dan Kreatif', daftar: ['Seni Musik dan Band', 'Paduan Suara (Choir)', 'Seni Tari Tradisional', 'Seni Tari Modern (Modern Dance)', 'Seni Rupa dan Lukis', 'Teater dan Drama', 'Fotografi dan Sinematografi', 'Marching Band / Drum Band', 'Karawitan / Gamelan', 'Seni Kriya dan Kerajinan', 'Desain Grafis'] },
+  { grup: 'Bidang Olahraga dan Olahraga Elektronik', daftar: ['Sepak Bola', 'Futsal', 'Bola Basket', 'Bola Voli', 'Bulu Tangkis', 'Tenis Meja', 'Atletik', 'Catur', 'E-Sports'] },
+  { grup: 'Bidang Bela Diri', daftar: ['Pencak Silat', 'Taekwondo', 'Karate', 'Judo', 'Tarung Derajat', 'Kempo', 'Merpati Putih'] },
+  { grup: 'Ekstrakurikuler Khusus SMK', daftar: ['Klub Coding dan Software Developer', 'Klub Desain dan Multimedia', 'Klub Mekanik Otomotif', 'Klub Robotika Otomasi Industri', 'Komunitas Akuntansi dan Pengelola Keuangan Mini Bank', 'Klub Entrepreneur dan Business Center', 'Komunitas Perhotelan dan Hospitality', 'Klub Tata Boga dan Pastry'] }
+];
+
+// [REQ 4] Mata Pelajaran dipisah SMA & SMK (Fase E = kelas X; Fase F = kelas XI & XII)
+const WIZARD_MAPEL_SMA_E = ['Pendidikan Agama dan Budi Pekerti', 'Pendidikan Pancasila', 'Bahasa Indonesia', 'Matematika', 'Fisika', 'Kimia', 'Biologi', 'Sosiologi', 'Ekonomi', 'Sejarah', 'Geografi', 'Bahasa Inggris', 'Pendidikan Jasmani Olahraga dan Kesehatan', 'Informatika', 'Seni Budaya', 'Prakarya dan Kewirausahaan', 'Muatan Lokal'];
+const WIZARD_MAPEL_SMA_F = ['Pendidikan Agama dan Budi Pekerti', 'Pendidikan Pancasila', 'Bahasa Indonesia', 'Matematika', 'Bahasa Inggris', 'Pendidikan Jasmani Olahraga dan Kesehatan', 'Sejarah', 'Seni Budaya', 'Biologi', 'Kimia', 'Fisika', 'Matematika Tingkat Lanjut', 'Ekonomi', 'Sosiologi', 'Geografi', 'Antropologi', 'Sejarah Tingkat Lanjut', 'Bahasa Indonesia Tingkat Lanjut', 'Bahasa Inggris Tingkat Lanjut', 'Bahasa Asing', 'Seni Rupa Tingkat Lanjut', 'Seni Musik Tingkat Lanjut', 'Seni Tari Tingkat Lanjut', 'Seni Teater Tingkat Lanjut', 'Prakarya dan Kewirausahaan', 'Muatan Lokal'];
+const WIZARD_MAPEL_SMK_E = ['Pendidikan Agama dan Budi Pekerti', 'Pendidikan Pancasila', 'Bahasa Indonesia', 'Matematika', 'Bahasa Inggris dan Bahasa Asing Lainnya', 'Pendidikan Jasmani Olahraga dan Kesehatan', 'Sejarah', 'Seni Budaya', 'Informatika', 'Projek Ilmu Pengetahuan Alam dan Sosial', 'Dasar-Dasar Program Keahlian', 'Muatan Lokal'];
+const WIZARD_MAPEL_SMK_F = ['Pendidikan Agama dan Budi Pekerti', 'Pendidikan Pancasila', 'Bahasa Indonesia', 'Matematika', 'Bahasa Inggris dan Bahasa Asing Lainnya', 'Pendidikan Jasmani Olahraga dan Kesehatan', 'Sejarah', 'Seni Budaya', 'Konsentrasi Keahlian', 'Projek Kreatif dan Kewirausahaan', 'Praktik Kerja Lapangan', 'Mata Pelajaran Pilihan', 'Muatan Lokal'];
+const WIZARD_MAPEL = [
+  { grup: 'SMA - Kelompok Mata Pelajaran Umum (Fase E / Kelas X)', daftar: WIZARD_MAPEL_SMA_E },
+  { grup: 'SMA - Kelompok Mata Pelajaran Umum (Fase F / Kelas XI dan XII)', daftar: WIZARD_MAPEL_SMA_F },
+  { grup: 'SMK - Kelompok Mata Pelajaran Umum (Fase E / Kelas X)', daftar: WIZARD_MAPEL_SMK_E },
+  { grup: 'SMK - Kelompok Mata Pelajaran Umum (Fase F / Kelas XI dan XII)', daftar: WIZARD_MAPEL_SMK_F }
+];
+
+// [REQ 7 & 11] Kategori Nilai + saran tambahan (nilai di sini -> dropdown Input Nilai)
+const WIZARD_KATEGORI_NILAI = ['Pengetahuan', 'Sikap', 'Keterampilan', 'Ekstrakurikuler', 'Penilaian Tengah Semester (PTS)', 'Penilaian Akhir Semester (PAS)', 'Penilaian Akhir Tahun (PAT)', 'Projek / Portofolio', 'Praktik', 'Ujian Sekolah', 'Kehadiran'];
+
+// Semua pilihan sederhana per kategori (daftar datar string)
+const WIZARD_DAFTAR = {
+  "Tahun Pelajaran": WIZARD_TAHUN_PELAJARAN,
+  "Semester": ['Ganjil', 'Genap'],
+  "Kategori Nilai": WIZARD_KATEGORI_NILAI,
+  "Agama": ['Islam', 'Kristen Protestan', 'Kristen Katolik', 'Hindu', 'Buddha', 'Konghucu'],
+  "Jabatan Ekstrakurikuler": ['Ketua', 'Wakil Ketua', 'Sekretaris I', 'Sekretaris II', 'Bendahara I', 'Bendahara II', 'Ketua Divisi Hubungan Masyarakat', 'Ketua Divisi Perlengkapan dan Logistik', 'Ketua Divisi Pengembangan Sumber Daya Anggota', 'Ketua Divisi Acara dan Operasional', 'Ketua Divisi Publikasi Dokumentasi dan Desain'],
+  "Jabatan Kelas": ['Ketua Kelas', 'Wakil Ketua Kelas', 'Sekretaris I', 'Sekretaris II', 'Bendahara I', 'Bendahara II', 'Seksi Bidang Keagamaan', 'Seksi Bidang Keamanan dan Ketertiban', 'Seksi Bidang Kebersihan dan Keindahan', 'Seksi Bidang Hubungan Masyarakat', 'Seksi Bidang Pembelajaran dan Edukasi', 'Seksi Bidang Olahraga dan Kesehatan'],
+  "Jabatan Guru": ['Kepala Sekolah', 'Wakil Kepala Sekolah Bidang Kurikulum', 'Wakil Kepala Sekolah Bidang Kesiswaan', 'Wakil Kepala Sekolah Bidang Hubungan Masyarakat', 'Wakil Kepala Sekolah Bidang Sarana Prasarana', 'Kepala Program Keahlian', 'Kepala Bengkel', 'Kepala Laboratorium', 'Kepala Perpustakaan', 'Wali Kelas', 'Guru Pembina Ekstrakurikuler', 'Guru Pembimbing Akademik', 'Guru Bimbingan dan Konseling', 'Guru Mata Pelajaran'],
+  "Status Kehadiran": ['Hadir', 'Izin', 'Sakit', 'Alpa/Tanpa Keterangan']
+};
+
+// Kategori yang memakai daftar ber-heading (objek {grup:[...]})
+const WIZARD_GRUP = {
+  "Mata Pelajaran": WIZARD_MAPEL,
+  "Ekstrakurikuler": WIZARD_EKSTRAKURIKULER
+};
+
+// Tampilkan Wizard hanya untuk kategori yang punya preset
+function wizardPunyaPreset(kolom) {
+  return !!WIZARD_DAFTAR[kolom] || !!WIZARD_GRUP[kolom] || kolom === 'Tingkat/Kelas' || kolom === 'Jurusan';
+}
+
+// ==========================================
+// [REQ C] TINGKAT/KELAS <-> JURUSAN & ROMBEL
+// Format "Tingkat/Kelas": "X <Singkatan Jurusan> <No.Rombel>"  contoh "X LP 1".
+// Rombel = angka di belakang; nama rombel = "Nama Jurusan Lengkap <no>" ("Layanan Perbankan 1").
+// ==========================================
+const DAFTAR_TINGKAT = ['X', 'XI', 'XII'];
+
+/** Ambil peta jurusan { SINGKATAN: namaLengkap } dari cache master_data. */
+function petaJurusanMaster() {
+  const map = {};
+  (masterDataCache || []).forEach(m => {
+    const sg = String(m['Jurusan'] || '').trim(), lg = String(m['Jurusan Lengkap'] || '').trim();
+    if (sg && lg) map[sg.toUpperCase()] = lg;
+  });
+  return map;
+}
+
+/** Nomor rombel dari string kelas ("X LP 1" -> 1; "X RPL 12" -> 12). */
+function rombelKelas(kls) {
+  const k = String(kls || '').trim();
+  const m = k.match(/(\d+)\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
+/** Nama rombel lengkap: "X LP 1" -> "Layanan Perbankan 1"; tanpa jurusan -> "Kelas 1". */
+function namaRombel(kls) {
+  const k = String(kls || '').trim();
+  const no = rombelKelas(k);
+  if (!no) return k;
+  const map = petaJurusanMaster();
+  const kata = k.split(/\s+/).filter(Boolean);
+  const sing = kata.find(w => map[String(w).toUpperCase()]);
+  if (sing) return `${map[String(sing).toUpperCase()]} ${no}`.trim();
+  return `Kelas ${no}`;
+}
+
+/** Singkatan jurusan yang terkandung dalam string kelas ("X LP 1" -> "LP"). */
+function singkatanJurusanDariKelas(kls) {
+  const k = String(kls || '').trim();
+  const map = petaJurusanMaster();
+  const kata = k.split(/\s+/).filter(Boolean);
+  const sing = kata.find(w => map[String(w).toUpperCase()]);
+  return sing || '';
+}
 
 const MASTER_JADWAL_SECTIONS = [
     { kolom: "Jam Pelajaran Senin", icon: 'fa-clock', ph: '1 - 07.00-07.40' },
@@ -12736,12 +13116,15 @@ function renderMasterDataModule(container) {
                 <div class="flex gap-2">
                     ${tabBtn('identitas', 'Identitas Sekolah', 'fa-school')}
                     ${tabBtn('daftar', `Daftar (${MASTER_DAFTAR_SECTIONS.length} Kategori)`, 'fa-list')}
+                    ${tabBtn('konfigurasi', 'Konfigurasi', 'fa-gear')}
                 </div>
             </div>
             <div id="content-master" class="flex-1 overflow-auto custom-scrollbar bg-[#0f172a] p-4"></div>
         </div>
     `;
-    if (currentTabMaster === 'identitas') renderTabIdentitas(); else renderTabDaftar();
+    if (currentTabMaster === 'identitas') renderTabIdentitas();
+    else if (currentTabMaster === 'konfigurasi') renderTabKonfigurasi();
+    else renderTabDaftar();
 }
 
 function gantiTabMaster(tab) {
@@ -12779,6 +13162,7 @@ async function renderTabIdentitas() {
             { id: 'alamat', kol: 'Alamat Sekolah', ph: 'Jl. ...' },
             { id: 'npsn', kol: 'NPSN', ph: '20219705' },
             { id: 'kepsek', kol: 'Kepala Sekolah', ph: 'Nama Kepala Sekolah' },
+            { id: 'nip_kepsek', kol: 'NIP Kepala Sekolah', ph: 'NIP Kepala Sekolah' },
             { id: 'telp', kol: 'Telepon Sekolah', ph: '(0265) xxx xxxx' },
             { id: 'email', kol: 'Email Sekolah', ph: 'info@sekolah.sch.id' },
             { id: 'website', kol: 'Website Sekolah', ph: 'https://sekolah.sch.id' },
@@ -12808,27 +13192,90 @@ async function renderTabIdentitas() {
     }
 }
 
+
+/** Tab "Konfigurasi" — pengaturan cetak Kartu Pelajar (Tahun, Semester, TTD, background,
+ *  logo & konten belakang, warna). Dipanggil dari tab Konfigurasi Menu Master Data. */
+async function renderTabKonfigurasi() {
+    const box = document.getElementById('content-master');
+    box.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat...</div>`;
+    try {
+        const rows = await ambilMasterData();
+        const idn = rows.find(r => r["Nama Sekolah"]) || {};
+        const FK = [
+            { id: 'tahun', kol: 'Tahun Pelajaran', ph: '2026/2027' },
+            { id: 'semester', kol: 'Semester', ph: 'Ganjil' },
+            { id: 'ttd_kepsek', kol: 'URL TTD Kepsek', ph: 'https://drive.google.com/...' },
+            { id: 'bg_kartu', kol: 'URL Background Kartu', ph: 'https://drive.google.com/...' },
+            { id: 'logo_blk', kol: 'URL Logo Belakang', ph: 'https://drive.google.com/...' },
+            { id: 'konten_blk', kol: 'Konten Belakang', ph: 'Satu baris per item' }
+        ];
+        const hdrVal = String(idn["Warna Header"] || '').trim().toLowerCase();
+        const hdrTrx = (hdrVal === 'transparan' || hdrVal === '#transparan');
+        box.innerHTML = `
+            <div class="max-w-lg mx-auto space-y-3 text-left text-[11px] text-slate-300">
+                <h3 class="text-sm font-bold text-orange-300 uppercase tracking-wide"><i class="fa-solid fa-id-card mr-1"></i> Pengaturan cetak Kartu Pelajar</h3>
+                <p class="text-[10px] text-slate-400"><i class="fa-solid fa-circle-info"></i> Disimpan pada baris identitas sekolah. TTD / background / logo belakang dapat berupa link Google Drive.</p>
+                ${FK.map(f => `<div class="mt-2"><label class="font-bold text-orange-300">${f.kol}</label><input id="mi_${f.id}" value="${escJs(idn[f.kol] || '')}" placeholder="${f.ph}" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-orange-500"></div>`).join('')}
+                <div class="grid grid-cols-2 gap-3">
+                    <div>
+                        <label class="font-bold text-orange-300">Warna Header</label>
+                        <select id="mi_warna_header_mode" onchange="toggleWarnaHeaderTransparan()" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 mt-1 text-white outline-none focus:border-orange-500 options-dark">
+                            <option value="warna" ${hdrTrx ? '' : 'selected'}>Warna Pilihan</option>
+                            <option value="transparan" ${hdrTrx ? 'selected' : ''}>Transparan</option>
+                        </select>
+                        <input id="mi_warna_header" type="color" value="${hexWarnaValid(idn['Warna Header']) || '#1e3a8a'}" ${hdrTrx ? 'disabled' : ''} class="w-full h-9 mt-1 bg-black/40 border border-white/20 rounded cursor-pointer ${hdrTrx ? 'opacity-40' : ''}">
+                    </div>
+                    <div><label class="font-bold text-orange-300">Warna Aksen</label>
+                        <input id="mi_warna_aksen" type="color" value="${hexWarnaValid(idn['Warna Aksen']) || '#3b82f6'}" class="w-full h-9 mt-1 bg-black/40 border border-white/20 rounded cursor-pointer"></div>
+                </div>
+                <div class="pt-2"><button onclick="simpanIdentitasMaster('${idn.id ?? ''}')" class="bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-md"><i class="fa-solid fa-save"></i> Simpan Konfigurasi Kartu</button></div>
+            </div>
+        `;
+    } catch (e) {
+        box.innerHTML = `<div class="p-6 text-center text-red-400">Gagal memuat: ${escapeHtml(e.message || '')}</div>`;
+    }
+}
+
+
 async function simpanIdentitasMaster(rowId) {
-    const ambil = id => (document.getElementById('mi_' + id)?.value || '').trim();
-    const payload = {
-        "Nama Dinas": ambil('nama_dinas'),
-        "Nama Sekolah": ambil('nama_sekolah'),
-        "URL LOGO 1": ambil('url_logo1'),
-        "URL LOGO 2": ambil('url_logo2'),
-        "Ket. Nama Dinas": ambil('ket_dinas'),
-        "Alamat Sekolah": ambil('alamat'),
-        "NPSN": ambil('npsn'),
-        "Kepala Sekolah": ambil('kepsek'),
-        "Telepon Sekolah": ambil('telp'),
-        "Email Sekolah": ambil('email'),
-        "Website Sekolah": ambil('website'),
-        "Kurikulum": ambil('kurikulum'),
-        "Drive Akun Murid": ambil('drive_murid'),
-        "Drive Akun Guru": ambil('drive_guru'),
-        "Drive Mata Pelajaran": ambil('drive_mapel'),
-        "Drive Ekstrakurikuler": ambil('drive_ekskul'),
-        "Drive Administrasi Sekolah": ambil('drive_adm')
+    // Hanya kolom yang elemennya benar-benar ada di DOM saat ini (tab Identitas merender
+    // field identitas/drive; tab Konfigurasi merender field kartu). Kolom yang tak dirender
+    // dipertahankan dari data existing (update) atau dilewati (insert).
+    const FIELD_ID = {
+        "Nama Dinas": 'nama_dinas', "Nama Sekolah": 'nama_sekolah',
+        "URL LOGO 1": 'url_logo1', "URL LOGO 2": 'url_logo2',
+        "Ket. Nama Dinas": 'ket_dinas', "Alamat Sekolah": 'alamat',
+        "NPSN": 'npsn', "Kepala Sekolah": 'kepsek', "NIP Kepala Sekolah": 'nip_kepsek',
+        "Telepon Sekolah": 'telp', "Email Sekolah": 'email',
+        "Website Sekolah": 'website', "Kurikulum": 'kurikulum',
+        "Drive Akun Murid": 'drive_murid', "Drive Akun Guru": 'drive_guru',
+        "Drive Mata Pelajaran": 'drive_mapel', "Drive Ekstrakurikuler": 'drive_ekskul',
+        "Drive Administrasi Sekolah": 'drive_adm',
+        "Tahun Pelajaran": 'tahun', "Semester": 'semester',
+        "URL TTD Kepsek": 'ttd_kepsek', "URL Background Kartu": 'bg_kartu',
+        "URL Logo Belakang": 'logo_blk', "Konten Belakang": 'konten_blk'
     };
+    const payload = {};
+    // Basis: baris identitas existing (bila edit) supaya kolom yg tak dirender tetap utuh.
+    const existing = (masterDataCache || []).find(r => String(r.id) === String(rowId));
+    if (existing) {
+        Object.keys(FIELD_ID).forEach(k => {
+            if (existing[k] !== null && existing[k] !== undefined) payload[k] = existing[k];
+        });
+    }
+    Object.keys(FIELD_ID).forEach(k => {
+        const el = document.getElementById('mi_' + FIELD_ID[k]);
+        if (el) payload[k] = el.value.trim();
+    });
+    const warnaH = document.getElementById('mi_warna_header');
+    const warnaA = document.getElementById('mi_warna_aksen');
+    const warnaHMode = document.getElementById('mi_warna_header_mode');
+    if (warnaHMode && warnaHMode.value === 'transparan') {
+        payload["Warna Header"] = '#transparan';
+    } else if (warnaH) payload["Warna Header"] = warnaH.value.trim();
+    else if (existing && existing["Warna Header"]) payload["Warna Header"] = existing["Warna Header"];
+    if (warnaA) payload["Warna Aksen"] = warnaA.value.trim();
+    else if (existing && existing["Warna Aksen"]) payload["Warna Aksen"] = existing["Warna Aksen"];
 
     if (!payload["Nama Sekolah"]) { showToast('error', 'Nama sekolah wajib diisi.'); return; }
     Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
@@ -12838,8 +13285,9 @@ async function simpanIdentitasMaster(rowId) {
           : await supaClient.from('master_data').insert(payload);
         if (error) throw error;
         await ambilMasterData();
-        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Identitas tersimpan!', showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
-        renderTabIdentitas();
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Tersimpan!', showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
+        if (currentTabMaster === 'konfigurasi') renderTabKonfigurasi();
+        else renderTabIdentitas();
     } catch (e) {
         Swal.fire({ icon: 'error', title: 'Gagal', text: e.message, background: '#1e293b', color: '#fff' });
     }
@@ -12858,6 +13306,14 @@ async function renderMasterDaftarUI(containerId, sections) {
     box.innerHTML = `<div class="p-6 text-center text-slate-300"><i class="fa-solid fa-circle-notch fa-spin text-2xl mb-2"></i><br>Memuat...</div>`;
     try {
         const rows = await ambilMasterData();
+        // [REQ B6] Set singkatan jurusan yang "dipakai" oleh kategori Tingkat/Kelas
+        // (mis. kelas "X LP 1" → singkatan "LP"). Dipakai untuk menandai badge Jurusan.
+        const singkatanTingkatDipakai = (rows || []).reduce((set, r) => {
+            const v = (r['Tingkat/Kelas'] || '').trim();
+            const sg = v && singkatanJurusanDariKelas(v);
+            if (sg) set.add(sg.toUpperCase());
+            return set;
+        }, new Set());
         // Kelompokkan nilai per kolom (baris bisa berisi campuran; tampilkan per kategori)
         const sectionHTML = sections.map(s => {
             const items = rows
@@ -12873,6 +13329,7 @@ async function renderMasterDaftarUI(containerId, sections) {
             // [REQ A] Bagian Jurusan: form dua-field (Singkatan + Nama Jurusan Lengkap) agar
             // singkatan seperti "RPL" dapat dipasangkan dengan nama lengkap "Rekayasa Perangkat Lunak".
             const isJurusan = s.kolom === 'Jurusan';
+            const isTingkatKelas = s.kolom === 'Tingkat/Kelas';
             let formBaris;
             if (isJurusan) {
               formBaris = `
@@ -12894,20 +13351,29 @@ async function renderMasterDaftarUI(containerId, sections) {
             }
             return `
                 <div class="bg-white/5 border border-white/10 rounded-xl p-3">
-                    <div class="flex items-center justify-between mb-2">
+                    <div class="flex items-start justify-between mb-2">
                         <h3 class="text-[11px] font-bold text-purple-300 uppercase tracking-wide"><i class="fa-solid ${s.icon} mr-1"></i> ${s.kolom}</h3>
-                        <button onclick="ubahSortMaster('${escJs(s.kolom)}')" title="${masterSortDir[s.kolom] === 'desc' ? 'Urutkan Z-A' : 'Urutkan A-Z'}" class="w-6 h-6 flex items-center justify-center rounded-md bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition">
+                        <div class="flex items-center gap-1.5">
+                          ${s.wizard ? `<button onclick="bukaWizard('${escJs(s.kolom)}')" title="Wizard: isi otomatis pilihan ${s.kolom}" class="h-6 px-2 inline-flex items-center gap-1 rounded-md bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 hover:text-amber-200 transition text-[10px] font-bold"><i class="fa-solid fa-wand-magic-sparkles text-[10px]"></i> Wizard</button>` : ''}
+                          <button onclick="ubahSortMaster('${escJs(s.kolom)}')" title="${masterSortDir[s.kolom] === 'desc' ? 'Urutkan Z-A' : 'Urutkan A-Z'}" class="w-6 h-6 flex items-center justify-center rounded-md bg-white/5 hover:bg-white/15 text-slate-300 hover:text-white transition">
                             <i class="fa-solid ${masterSortDir[s.kolom] === 'desc' ? 'fa-arrow-up-a-z' : 'fa-arrow-down-a-z'} text-[10px]"></i>
-                        </button>
+                          </button>
+                        </div>
                     </div>
                     ${formBaris}
                     ${items.length === 0
                       ? `<p class="text-[10px] text-slate-500 italic">Belum ada data.</p>`
                       : `<div class="flex flex-wrap gap-1.5">${items.map(it => `
                             <span class="inline-flex items-center gap-1.5 bg-slate-800 border border-white/10 rounded-full pl-2.5 pr-1 py-1 text-[10px] text-slate-200">
-                                ${isJurusan && it.lengkap
-                                  ? `${escapeHtml(it.lengkap)}<span class="text-emerald-400">(${escapeHtml(it.val)})</span>`
-                                  : escapeHtml(it.val)}
+                                ${isTingkatKelas
+                                  ? escapeHtml(it.val)
+                                  : (isJurusan && it.lengkap
+                                      ? `${escapeHtml(it.lengkap)}<span class="text-emerald-400">(${escapeHtml(it.val)})</span>`
+                                      : escapeHtml(it.val))}
+                                ${isJurusan && singkatanTingkatDipakai.has(String(it.val).trim().toUpperCase())
+                                  ? `<span class="text-[8px] font-bold text-emerald-200 bg-emerald-500/25 border border-emerald-400/40 rounded-full px-1.5 py-0.5" title="Dipakai oleh Tingkat/Kelas">Dipakai</span>`
+                                  : ''}
+                                <button onclick="mulaiEditMasterDaftar('${r_id(it.id)}', '${escJs(s.kolom)}', '${escJs(it.val)}', '${escJs(it.lengkap || '')}')" class="w-4 h-4 flex items-center justify-center bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white rounded-full" title="Edit"><i class="fa-solid fa-pen text-[8px]"></i></button>
                                 <button onclick="hapusMasterDaftar('${r_id(it.id)}', '${escJs(s.kolom)}')" class="w-4 h-4 flex items-center justify-center bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white rounded-full" title="Hapus"><i class="fa-solid fa-xmark text-[8px]"></i></button>
                             </span>`).join('')}
                         </div>`}
@@ -13153,6 +13619,349 @@ async function tambahMasterDaftarJurusan() {
         Swal.fire({ icon: 'error', title: 'Gagal', text: e.message, background: '#1e293b', color: '#fff' });
     }
 }
+
+// ==========================================
+// WIZARD MASTER DATA — modal isi-otomatis tiap kategori
+// ==========================================
+
+/** Nama pilihan yang sudah ada di master_data untuk sebuah kolom (set lowercase). */
+function nilaiMasterSudahAda(kolom) {
+  const set = new Set();
+  (masterDataCache || []).forEach(r => { const v = (r[kolom] || '').trim(); if (v) set.add(v.toLowerCase()); });
+  return set;
+}
+
+/** Simpan daftar nilai pilihan ke master_data (dedupe; lewati yang sudah ada). */
+async function simpanWizardNilai(kolom, daftar) {
+  if (!daftar || !daftar.length) { showToast('error', 'Tidak ada pilihan dicentang.'); return; }
+  const sudahAda = nilaiMasterSudahAda(kolom);
+  const belumAda = daftar.filter(v => !sudahAda.has(String(v).trim().toLowerCase()));
+  if (!belumAda.length) { showToast('info', 'Semua pilihan sudah ada di ' + kolom + '.'); return; }
+  Swal.fire({ title: 'Menyimpan Wizard...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
+  let berhasil = 0, gagal = 0, errMsg = '';
+  for (const v of belumAda) {
+    try {
+      // Hemat baris: isi kolom kosong (bukan baris identitas) sebelum insert baru
+      const target = (masterDataCache || []).find(r => !(r[kolom] || '').trim() && !MASTER_KOLOM_IDENTITAS.some(k => (r[k] || '').trim() !== ''));
+      const { error } = target
+        ? await supaClient.from('master_data').update({ [kolom]: v }).eq('id', target.id)
+        : await supaClient.from('master_data').insert({ [kolom]: v });
+      if (error) { gagal++; errMsg = error.message || errMsg; }
+      else { berhasil++; await ambilMasterData(); }
+    } catch (e) { gagal++; errMsg = e.message || errMsg; }
+  }
+  refreshMasterUI();
+  if (typeof isiHeaderSesi === 'function') isiHeaderSesi();
+  if (gagal === 0) {
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `${berhasil} pilihan ditambahkan ke ${kolom}.`, showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
+  } else {
+    Swal.fire({ icon: 'error', title: `${berhasil} berhasil, ${gagal} gagal.`, text: errMsg, background: '#1e293b', color: '#fff' });
+  }
+}
+
+/** Render daftar ceklis ber-heading dari struktur WIZARD_GRUP. */
+function renderCeklisGrup(grupList) {
+  const header = `
+    <label class="text-[10px] font-bold text-slate-400 block mb-1 mt-2">Pilih bagian</label>
+    <select id="wiz-pilih-grup" onchange="wizardFilterGrup(this.value)" class="w-full bg-black/40 border border-white/15 rounded px-2 py-1.5 text-[11px] text-white outline-none focus:border-amber-500">
+      <option value="">Semua bagian</option>
+      ${grupList.map(g => `<option value="${escJs(g.grup)}">${escapeHtml(g.grup)}</option>`).join('')}
+    </select>`;
+  const badan = grupList.map(g => `
+    <div class="mb-3 wiz-grup-item" data-grup="${escJs(g.grup)}">
+      <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1 border-b border-white/10 pb-1">${escapeHtml(g.grup)}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        ${g.daftar.map(v => `<label class="flex items-center gap-2 text-[11px] text-slate-200 bg-slate-800/60 border border-white/10 rounded px-2 py-1 cursor-pointer hover:bg-slate-700/60"><input type="checkbox" class="wizck" value="${escJs(String(v))}" checked><span>${escapeHtml(v)}</span></label>`).join('')}
+      </div>
+    </div>`).join('');
+  return `${header}<div id="wiz-grup-wadah">${badan}</div>`;
+}
+
+/** [REQ B2] Filter grup dalam Wizard ber-bagian sesuai pilihan dropdown "Pilih bagian". */
+function wizardFilterGrup(grup) {
+  document.querySelectorAll('#wiz-grup-wadah .wiz-grup-item').forEach(el => {
+    const cocok = !grup || el.dataset.grup === grup;
+    el.style.display = cocok ? '' : 'none';
+  });
+}
+
+/** Render daftar ceklis datar (string[]). */
+function renderCeklisDatar(daftar) {
+  return `<div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+    ${daftar.map(v => `<label class="flex items-center gap-2 text-[11px] text-slate-200 bg-slate-800/60 border border-white/10 rounded px-2 py-1 cursor-pointer hover:bg-slate-700/60"><input type="checkbox" class="wizck" value="${escJs(String(v))}"><span>${escapeHtml(v)}</span></label>`).join('')}
+  </div>`;
+}
+
+/** Wizard utama — dispatcher ke dialog khusus (Tingkat/Kelas, Jurusan) atau ceklis generik. */
+async function bukaWizard(kolom) {
+  if (kolom === 'Tingkat/Kelas') { bukaWizardTingkat(); return; }
+  if (kolom === 'Jurusan') { bukaWizardJurusan(); return; }
+  const datar = WIZARD_DAFTAR[kolom];
+  const grup = WIZARD_GRUP[kolom];
+
+  let badan;
+  if (grup) badan = renderCeklisGrup(grup);
+  else if (datar) badan = renderCeklisDatar(datar);
+  else { showToast('error', `Belum ada preset wizard untuk ${kolom}.`); return; }
+
+  Swal.fire({
+    title: `<i class="fa-solid fa-wand-magic-sparkles text-amber-400 mr-1"></i> Wizard ${escapeHtml(kolom)}`,
+    html: `
+      <div class="text-left text-slate-300 max-h-[50vh] overflow-y-auto custom-scrollbar pr-1">
+        <p class="text-[10px] text-slate-400 mb-2"><i class="fa-solid fa-circle-info mr-1"></i>Tandai pilihan lalu klik "Tambahkan yang Dicentang". Nilai yang sudah ada di abaikan.</p>
+        <label class="flex items-center gap-2 text-[11px] text-slate-300 bg-slate-800 border border-white/10 rounded px-2 py-1 mb-2 cursor-pointer"><input type="checkbox" id="wiz-pilih-semua" checked onchange="wizardToggleSemua(this.checked)"><b class="font-bold">Pilih semua</b></label>
+        <div id="wiz-badan">${badan}</div>
+      </div>`,
+    icon: 'info', iconColor: '#f59e0b', background: '#1e293b', color: '#fff',
+    width: 620,
+    showCancelButton: true, cancelButtonText: 'Batal', cancelButtonColor: '#475569',
+    confirmButtonText: `<i class="fa-solid fa-plus mr-1"></i> Tambahkan yang Dicentang`, confirmButtonColor: '#d97706',
+    customClass: { popup: 'swal-wizard' }
+  }).then((res) => {
+    if (!res.isConfirmed) return;
+    const pilihan = [];
+    document.querySelectorAll('.wizck:checked').forEach(c => pilihan.push(c.value));
+    simpanWizardNilai(kolom, pilihan);
+  });
+}
+
+/** Toggle Pilih Semua dalam modal Wizard (dipanggil dari atribut onchange). */
+function wizardToggleSemua(checked) {
+  document.querySelectorAll('.wizck').forEach(c => {
+    const it = c.closest('.wiz-grup-item');
+    // Bagian yang disembunyikan oleh dropdown "Pilih bagian" tidak ikut dicentang.
+    if (!it || it.style.display !== 'none') c.checked = checked;
+  });
+}
+
+// ==========================================
+// WIZARD TINGKAT/KELAS — gabungkan Tingkat × Jurusan × Rombel
+// ==========================================
+
+/** Urutkan daftar jurusan valid (grup wizard + master_data) tanpa duplikasi. */
+function daftarJurusanWizard() {
+  const map = new Map(); // SINGKATAN -> lengkap
+  (masterDataCache || []).forEach(m => {
+    const sg = String(m['Jurusan'] || '').trim().toUpperCase(), lg = String(m['Jurusan Lengkap'] || '').trim();
+    if (sg) map.set(sg, lg);
+  });
+  (WIZARD_JURUSAN_GRUP || []).forEach(g => (g.daftar || []).forEach(j => {
+    if (j.sing) map.set(String(j.sing).toUpperCase(), j.lengkap || '');
+  }));
+  return [...map.entries()]
+    .sort((a, b) => a[0].localeCompare(b[0], 'id', { sensitivity: 'base' }))
+    .map(([sing, lengkap]) => ({ sing, lengkap }));
+}
+
+/** Render input Wizard Tingkat/Kelas: pilih tingkat + jurusan + jumlah rombel. */
+function wizardHtmlTingkat() {
+  const jurusan = daftarJurusanWizard();
+  const opsiJurusan = jurusan.map(j => `<option value="${escJs(j.sing)}">${escapeHtml(j.sing)}${j.lengkap ? ' — ' + escapeHtml(j.lengkap) : ''}</option>`).join('')
+    || '<option value="">(tambah Jurusan dulu / belum ada)</option>';
+  const opsiTingkat = DAFTAR_TINGKAT.map(t => `<option value="${t}">Tingkat ${t}</option>`).join('');
+  return `
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
+      <div><label class="text-[10px] font-bold text-slate-400 block mb-1">Tingkat</label>
+        <select id="wiz-tingkat" onchange="wizardPratinjauTingkat()" class="w-full bg-slate-800 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none">${opsiTingkat}</select></div>
+      <div><label class="text-[10px] font-bold text-slate-400 block mb-1">Jurusan</label>
+        <select id="wiz-jurusan" onchange="wizardPratinjauTingkat()" class="w-full bg-slate-800 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none">${opsiJurusan}</select></div>
+      <div><label class="text-[10px] font-bold text-slate-400 block mb-1">Jumlah Rombel</label>
+        <input type="number" id="wiz-rombel" min="1" max="6" value="1" onchange="wizardPratinjauTingkat()" class="w-full bg-slate-800 border border-white/20 rounded px-2 py-1.5 text-[11px] text-white outline-none"></div>
+    </div>
+    <p class="text-[10px] text-slate-400 mb-2"><i class="fa-solid fa-circle-info mr-1"></i>Format kelas: <b>Tingkat + Singkatan Jurusan + No.Rombel</b> (contoh <b>X RPL 1</b>). Nama rombel mengikuti jurusan lengkap, misal "Rekayasa Perangkat Lunak 1".</p>
+    <div id="wiz-pratinjau" class="text-[11px] text-slate-200"></div>`;
+}
+
+/** Pratinjau kombinasi kelas dari Wizard Tingkat/Kelas. */
+function wizardPratinjauTingkat() {
+  const box = document.getElementById('wiz-pratinjau');
+  if (!box) return;
+  const tingkat = document.getElementById('wiz-tingkat')?.value || '';
+  const sing = document.getElementById('wiz-jurusan')?.value || '';
+  const jml = Math.min(Math.max(parseInt(document.getElementById('wiz-rombel')?.value, 10) || 1, 1), 6);
+  const jurus = daftarJurusanWizard();
+  const j = jurus.find(x => x.sing.toUpperCase() === sing.toUpperCase());
+  const namaLengkap = j ? j.lengkap : '';
+  const sudh = nilaiMasterSudahAda('Tingkat/Kelas');
+  let html = '';
+  for (let n = 1; n <= jml; n++) {
+    const kls = `${tingkat} ${sing} ${n}`.trim().replace(/\s+/g, ' ');
+    const keterangan = namaLengkap ? `${namaLengkap} ${n}` : `Kelas ${n}`;
+    const sudah = sudh.has(kls.toLowerCase());
+    html += `<label class="flex items-start gap-2 text-[11px] text-slate-200 bg-slate-800/60 border ${sudah ? 'border-emerald-500/40' : 'border-white/10'} rounded px-2 py-1.5 mb-1 cursor-pointer hover:bg-slate-700/60">
+        <input type="checkbox" class="wizck" value="${escJs(kls)}" ${sudah ? '' : 'checked'}>
+        <span><b class="text-white">${escapeHtml(kls)}</b>${sudah ? '<span class="text-emerald-400 text-[9px] ml-1">(sudah ada)</span>' : ''}<br><span class="text-slate-400">${escapeHtml(keterangan)}</span></span>
+      </label>`;
+  }
+  box.innerHTML = html;
+}
+
+/** Wizard Tingkat/Kelas — modal: pilih tingkat, jurusan, jumlah rombel → kombinasi ceklis. */
+function bukaWizardTingkat() {
+  const jurusan = daftarJurusanWizard();
+  Swal.fire({
+    title: `<i class="fa-solid fa-wand-magic-sparkles text-amber-400 mr-1"></i> Wizard Tingkat/Kelas`,
+    html: `<div class="text-left max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">${wizardHtmlTingkat()}</div>`,
+    icon: 'info', iconColor: '#f59e0b', background: '#1e293b', color: '#fff',
+    width: 640,
+    showCancelButton: true, cancelButtonText: 'Batal', cancelButtonColor: '#475569',
+    confirmButtonText: `<i class="fa-solid fa-plus mr-1"></i> Tambahkan yang Dicentang`, confirmButtonColor: '#d97706',
+    didOpen: () => { wizardPratinjauTingkat(); }
+  }).then((res) => {
+    if (!res.isConfirmed) return;
+    const pilihan = [];
+    document.querySelectorAll('.wizck:checked').forEach(c => pilihan.push(c.value));
+    simpanWizardNilai('Tingkat/Kelas', pilihan);
+  });
+  if (!jurusan.length) showToast('info', 'Tip: jalankan Wizard Jurusan terlebih dahulu agar kelas punya nama rombel lengkap.');
+}
+
+// ==========================================
+// WIZARD JURUSAN — ceklis singkatan + nama lengkap (grup SMA & SMK)
+// ==========================================
+function bukaWizardJurusan() {
+  const sudh = nilaiMasterSudahAda('Jurusan');
+  const badan = (WIZARD_JURUSAN_GRUP || []).map(g => `
+    <div class="mb-3">
+      <div class="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1 border-b border-white/10 pb-1">${escapeHtml(g.grup)}</div>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+        ${g.daftar.map(j => {
+          const sg = String(j.sing).trim();
+          const ada = sudh.has(sg.toLowerCase());
+          return `<label class="flex items-start gap-2 text-[11px] text-slate-200 bg-slate-800/60 border ${ada ? 'border-emerald-500/40' : 'border-white/10'} rounded px-2 py-1 cursor-pointer hover:bg-slate-700/60">
+              <input type="checkbox" class="wizck" data-sing="${escJs(sg)}" data-lengkap="${escJs(j.lengkap)}" ${ada ? '' : 'checked'}>
+              <span><b class="text-white">${escapeHtml(sg)}</b>${ada ? '<span class="text-emerald-400 text-[9px] ml-1">(ada)</span>' : ''}<br><span class="text-slate-400">${escapeHtml(j.lengkap)}</span></span>
+            </label>`;
+        }).join('')}
+      </div>
+    </div>`).join('');
+
+  Swal.fire({
+    title: `<i class="fa-solid fa-wand-magic-sparkles text-amber-400 mr-1"></i> Wizard Jurusan`,
+    html: `
+      <div class="text-left max-h-[55vh] overflow-y-auto custom-scrollbar pr-1">
+        <p class="text-[10px] text-slate-400 mb-2"><i class="fa-solid fa-circle-info mr-1"></i>Centang singkatan jurusan. Nama lengkap tersimpan otomatis di kolom "Jurusan Lengkap".</p>
+        ${badan}
+      </div>`,
+    icon: 'info', iconColor: '#f59e0b', background: '#1e293b', color: '#fff',
+    width: 680,
+    showCancelButton: true, cancelButtonText: 'Batal', cancelButtonColor: '#475569',
+    confirmButtonText: `<i class="fa-solid fa-plus mr-1"></i> Tambahkan yang Dicentang`, confirmButtonColor: '#d97706'
+  }).then(async (res) => {
+    if (!res.isConfirmed) return;
+    const pilihan = [];
+    document.querySelectorAll('.wizck:checked').forEach(c => {
+      const sing = c.dataset.sing ? c.dataset.sing : c.value;
+      const lengkap = c.dataset.lengkap || '';
+      pilihan.push({ sing, lengkap });
+    });
+    if (!pilihan.length) { showToast('error', 'Tidak ada jurusan dicentang.'); return; }
+    const sudahAda = nilaiMasterSudahAda('Jurusan');
+    const belumAda = pilihan.filter(p => !sudahAda.has(String(p.sing).toLowerCase()));
+    if (!belumAda.length) { showToast('info', 'Semua jurusan sudah ada.'); return; }
+    Swal.fire({ title: 'Menyimpan Wizard...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
+    let ok = 0;
+    for (const p of belumAda) {
+      try {
+        const target = (masterDataCache || []).find(r => !(r['Jurusan'] || '').trim() && !(r['Jurusan Lengkap'] || '').trim() && !MASTER_KOLOM_IDENTITAS.some(k => (r[k] || '').trim() !== ''));
+        const payload = { 'Jurusan': p.sing };
+        if (p.lengkap) payload['Jurusan Lengkap'] = p.lengkap;
+        const { error } = target
+          ? await supaClient.from('master_data').update(payload).eq('id', target.id)
+          : await supaClient.from('master_data').insert(payload);
+        if (!error) { ok++; await ambilMasterData(); }
+      } catch (e) {}
+    }
+    refreshMasterUI();
+    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `${ok} jurusan ditambahkan.`, showConfirmButton: false, timer: 2000, background: '#1e293b', color: '#fff' });
+  });
+}
+
+// ===== [REQ A.1] EDIT item Master Data (Daftar kategori) =====
+/** [REQ B1] Pada form Edit Jurusan, bila nilai singkatan diketik sebagai
+ *  "SINGKATAN - NAMA LENGKAP" (dipisah tanda hubung ber-spasi), pisahkan otomatis:
+ *  kiri → field singkatan (ed_master_nilai), kanan → box "Nama Jurusan Lengkap". */
+function pisahJurusanEdit(inputEl) {
+    if (!inputEl) return;
+    const v = (inputEl.value || '').trim();
+    const m = v.match(/^([^\s-]+)\s*-\s*(.+)$/);
+    if (!m) return;
+    const lengEl = document.getElementById('ed_jurusan_lengkap');
+    if (!lengEl) return;
+    inputEl.value = m[1].trim();
+    const leng = (lengEl.value || '').trim();
+    if (!leng) lengEl.value = m[2].trim();
+    inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** Buka modal edit untuk sebuah item master_data pada baris `rowId` kolom `kolom`. */
+function mulaiEditMasterDaftar(rowId, kolom, nilaiAwal, lengkapAwal) {
+    const isJurusan = kolom === 'Jurusan';
+    const lengkapInput = isJurusan
+        ? `<div class="mt-3 text-left">
+             <label class="block font-bold text-emerald-300 mb-1 text-xs">Nama Jurusan Lengkap <span class="text-[9px] font-normal text-slate-400">(opsional, mis. Rekayasa Perangkat Lunak)</span></label>
+             <input id="ed_jurusan_lengkap" value="${escJs(lengkapAwal || '')}" placeholder="Nama Jurusan Lengkap" class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none focus:border-emerald-500">
+           </div>`
+        : '';
+    Swal.fire({
+        title: `Edit ${kolom}`,
+        html: `
+            <div class="text-left">
+                <label class="block font-bold text-purple-300 mb-1 text-xs">${kolom}</label>
+                <input id="ed_master_nilai" value="${escJs(nilaiAwal || '')}" placeholder="Nilai baru" ${isJurusan ? 'oninput="pisahJurusanEdit(this)"' : ''} class="w-full bg-black/40 border border-white/20 rounded px-2 py-1.5 text-white outline-none focus:border-purple-500">
+                ${lengkapInput}
+            </div>`,
+        showCancelButton: true,
+        confirmButtonText: '<i class="fa-solid fa-save mr-1"></i>Simpan',
+        cancelButtonText: 'Batal',
+        confirmButtonColor: '#3b82f6',
+        background: '#1e293b',
+        color: '#fff',
+        preConfirm: () => {
+            const nilaiInput = (document.getElementById('ed_master_nilai')?.value || '').trim();
+            let nilai = nilaiInput;
+            let lengkap = isJurusan ? (document.getElementById('ed_jurusan_lengkap')?.value || '').trim() : '';
+            // [REQ B1] Bila user menaruh "Singkatan - Nama Lengkap" pada field singkatan,
+            // pisahkan otomatis: kiri → singkatan, kanan → box "Nama Jurusan Lengkap".
+            if (isJurusan) {
+                const m = nilaiInput.match(/^([^\s-]+)\s*-\s*(.+)$/);
+                if (m) {
+                    nilai = m[1].trim();
+                    if (!lengkap) lengkap = m[2].trim();
+                }
+            }
+            if (!nilai) { Swal.showValidationMessage('Nilai tidak boleh kosong.'); return false; }
+            return { nilai, lengkap, isJurusan };
+        }
+    }).then(res => {
+        if (res.isConfirmed && res.value) {
+            simpanEditMasterDaftar(rowId, kolom, res.value.nilai, res.value.isJurusan ? res.value.lengkap : null);
+        }
+    });
+}
+
+/** Update nilai master_data pada baris `rowId` (dan pasangan "Jurusan Lengkap" bila jurusan). */
+async function simpanEditMasterDaftar(rowId, kolom, nilaiBaru, lengkapBaru) {
+    try {
+        const dup = (masterDataCache || []).some(r =>
+            String(r.id) !== String(rowId) &&
+            (r[kolom] || '').trim().toLowerCase() === String(nilaiBaru).trim().toLowerCase());
+        if (dup) { showToast('error', `"${nilaiBaru}" sudah ada di ${kolom}.`); return; }
+        Swal.fire({ title: 'Menyimpan...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
+        const payload = { [kolom]: nilaiBaru };
+        if (kolom === 'Jurusan') payload[MASTER_KOLOM_JURUSAN_LENGKAP] = (lengkapBaru || '').trim() || null;
+        const { error } = await supaClient.from('master_data').update(payload).eq('id', rowId);
+        if (error) throw error;
+        await ambilMasterData();
+        Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Diperbarui!', showConfirmButton: false, timer: 1200, background: '#1e293b', color: '#fff' });
+        refreshMasterUI();
+        if (typeof isiHeaderSesi === 'function') isiHeaderSesi();
+    } catch (e) {
+        if (Swal.isLoading()) Swal.close();
+        showToast('error', e.message || 'Gagal menyimpan.');
+    }
+}
+
 async function hapusMasterDaftar(rowId, kolom) {
     const konf = await Swal.fire({
         title: 'Hapus data ini?',
