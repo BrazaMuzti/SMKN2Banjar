@@ -121,7 +121,6 @@ function clearSession() {
   localStorage.removeItem('sisip_user');
 }
 
-// INI FUNGSI YANG ERROR KARENA HILANG:
 function getCurrentUser() {
   try {
     return JSON.parse(localStorage.getItem('sisip_user') || 'null');
@@ -592,6 +591,25 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/** Saring URL untuk dipakai sebagai src gambar.
+ *  Hanya mengizinkan skema http:, https: dan data: (foto/logo hasil upload lokal).
+ *  Mengembalikan '' untuk skema lain (mis. file://), path absolut sistem (/home/...),
+ *  atau nilai kosong — sehingga <img src=""> tidak memicu error keamanan browser
+ *  ("tidak boleh memuat atau tersambung ke file:///") dan fallback (inisial/placeholder)
+ *  yang sudah ada otomatis tampil. */
+function urlGambarAman(url) {
+  const u = String(url ?? '').trim();
+  if (!u) return '';
+  // Blokir skema selain http/https/data (file:, ftp:, javascript:, vbscript:, dsb.) — case-insensitive.
+  if (/^(file|ftp|javascript|vbscript|about|chrome|data-):/i.test(u)) return '';
+  // Blokir URL absolut yang mirip path filesistem (mis. /home/... atau C:\...).
+  if (/^[a-z]:[\\/]/i.test(u)) return '';
+  if (/^[/\\]/.test(u)) return '';
+  // Izinkan http, https dan data:image.
+  if (/^(https?:|data:image\/)/i.test(u)) return u;
+  return '';
 }
 function showToast(icon = 'success', title = '') {
   if (typeof Swal === 'undefined') { console.log(`[${icon}] ${title}`); return; }

@@ -9416,7 +9416,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             <!-- [REQ 2] Sinkronkan URL foto murid dari Google Drive (admin, guru/wali kelas, pembina ekskul) -->
                             ${bisaImportMuridAktif() ? `<button onclick="sinkronkanFotoDrive()" class="h-8 bg-teal-700 hover:bg-teal-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Auto-update foto siswa dari file Google Drive berformat \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Membaca folder terkonfigurasi & memperbarui url_foto yang berubah — admin, wali kelas & pembina ekskul"><i class="fa-brands fa-google-drive"></i> <span class="hidden sm:inline">Sinkron Foto</span></button>` : ''}
                             ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
-                            ${bisaImportMuridAktif() ? `<button onclick="openUploadFotoMasal()" class="h-8 bg-sky-600 hover:bg-sky-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Upload foto siswa sekaligus (massal) — mengikuti filter aktif (Tahun / Kelas / Ekskul / Status / Status Wajah). Cocokkan nama file dengan format &quot;{NISN} {Nama siswa}.jpg&quot; (fallback NIS). Admin, wali kelas & pembina ekskul."><i class="fa-solid fa-images"></i> <span class="hidden sm:inline">Upload Foto</span></button>` : ''}
+${bisaImportMuridAktif() ? `<button onclick="openUploadFotoMasal()" class="h-8 bg-cyan-700 hover:bg-cyan-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Unggah foto massal utk SEMUA murid (tanpa terkait filter aktif). Nama file: \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Admin, wali kelas & pembina ekskul"><i class="fa-solid fa-upload"></i> <span class="hidden sm:inline">Upload Foto</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
                     </div>
@@ -11197,7 +11197,7 @@ function siapkanModalCropper() {
         </div>
         <div class="flex-1 rounded-lg bg-slate-800 px-2 py-1" style="min-width:150px;display:flex;align-items:center;gap:8px;">
           <i class="fa-solid fa-magnifying-glass-minus text-slate-400 text-[10px]"></i>
-          <input type="range" id="sisip-crop-zoom" min="0.1" max="10" step="0.01" value="1" oninput="aturZoomCropperFoto()">
+          <input type="range" id="sisip-crop-zoom" min="0.05" max="0.2" step="0.01" value="1" oninput="aturZoomCropperFoto()">
           <i class="fa-solid fa-magnifying-glass-plus text-slate-400 text-[10px]"></i>
         </div>
         <button type="button" onclick="terapkanCropperFoto()" class="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg font-bold text-sm"><i class="fa-solid fa-check mr-1"></i> Gunakan</button>
@@ -11500,8 +11500,11 @@ async function scanWajahMasal() {
 }
 
 
-/** Upload foto siswa secara MASSAL (banyak file sekaligus) — mengikuti filter tabel aktif.
- *  Cocokkan nama tiap file dengan murid hasil filter memakai format nama file Drive:
+
+
+/** Upload foto siswa secara MASSAL (banyak file sekaligus) — berlaku untuk SEMUA murid
+ *  yang tercatat (tidak dipengaruhi filter tabel aktif). Cocokkan nama tiap file dengan murid
+ *  memakai format nama file Drive:
  *  "{NISN} {Nama siswa}.jpg" (fallback NIS). Setiap pasangan file→murid dikirim ke
  *  Edge Function unggah-foto-murid (1 request per NIS), URL disimpan ke akun.url_foto.
  *  Hanya admin & guru (wali kelas / pembina ekskul) yang boleh. */
@@ -11511,22 +11514,13 @@ async function openUploadFotoMasal() {
     return showToast('error', 'Fitur Upload Foto Masal khusus admin, wali kelas, atau pembina ekskul.');
   }
 
-  // 1. Ambil murid hasil filter aktif (tahun/kelas/ekskul/status/cari) + status wajah.
+  // 1. Ambil SEMUA murid (tipe=murid) — tanpa filter tabel aktif maupun status wajah.
   let sumber;
   try { sumber = await supaAmbilSemua(supaClient.from('akun').select(KOLOM_EXPORT_MURID).eq('tipe', 'murid')); }
   catch (e) { console.warn('openUploadFotoMasal fetch:', e); sumber = cacheAkunMurid || []; }
-  let rows = muridTersaring(sumber);
-  const filtWajah = (((document.getElementById('filter-status-wajah') || {}).value) || 'ALL').toLowerCase();
-  if (filtWajah !== 'all' && rows.length && window.FaceWajah && typeof window.FaceWajah.ambilStatusWajah === 'function') {
-    try {
-      const nisList = rows.map(r => String(r.nis_nip || r.NIS || r.nis || '')).filter(Boolean);
-      const petaW = await window.FaceWajah.ambilStatusWajah(nisList);
-      rows = rows.filter(r => (petaW[String(r.nis_nip || r.NIS || r.nis)] || 'belum') === filtWajah);
-    } catch (e) { console.warn('Gagal filter status wajah (upload foto):', e); }
-  }
-  const daftarMurid = rows || [];
+  const daftarMurid = sumber || [];
   if (!daftarMurid.length) {
-    return showToast('info', 'Tidak ada murid yang cocok dengan filter aktif.');
+    return showToast('info', 'Tidak ada murid (dengan NISN atau NIS) yang dapat dipasangi foto.');
   }
 
   // 2. Modal pilih banyak file foto + info jumlah murid + petunjuk format nama.
@@ -11535,10 +11529,10 @@ async function openUploadFotoMasal() {
     title: 'Upload Foto Masal',
     html:
       `<div class="text-left text-sm">
-         <p class="text-xs text-slate-300 mb-2"><b class="text-sky-300">${daftarMurid.length}</b> murid sesuai filter aktif akan dipasangi foto.</p>
+         <p class="text-xs text-slate-300 mb-2"><b class="text-sky-300">${daftarMurid.length}</b> murid tercatat akan dipasangi foto.</p>
          <p class="text-[10px] text-slate-400 mb-3">Pilih banyak file gambar sekaligus (Ctrl/Shift untuk multi-pilih). Nama file mengikuti format Google Drive: <code class="px-1 py-0.5 bg-black/40 rounded text-emerald-300">NISN Nama.jpg</code> — fallback bila tanpa NISN: <code class="px-1 py-0.5 bg-black/40 rounded text-emerald-300">NIS.jpg</code>. Nomor identitas yang cocok menentukan murid tujuannya.</p>
          <input type="file" id="upload-foto-masal-input" multiple accept="image/*" class="block w-full text-sm text-slate-200 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-sky-600 file:text-white file:text-sm file:font-bold hover:file:bg-sky-700 cursor-pointer">
-         <p class="text-[9px] text-slate-500 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>File maksimal 5 MB per foto. Foto yang nama-filenya tidak cocok dengan murid hasil filter akan dicatat di log.</p>
+         <p class="text-[9px] text-slate-500 mt-2"><i class="fa-solid fa-circle-info mr-1"></i>File maksimal 5 MB per foto. Foto yang nama-filenya tidak cocok dengan murid mana pun akan dicatat di log.</p>
        </div>`,
     showCancelButton: true, confirmButtonText: 'Mulai Upload', cancelButtonText: 'Batal',
     confirmButtonColor: '#0284c7', background: '#1e293b', color: '#fff',
@@ -11594,7 +11588,7 @@ async function openUploadFotoMasal() {
   const takCocok = rencana.filter(r => !r.murid);
   if (!cocok.length) {
     return Swal.fire({ icon: 'warning', title: 'Tidak Ada File Cocok',
-      html: `<p class="text-xs text-slate-300">Tidak ada file yang cocok dengan murid pada filter aktif.<br><span class="text-[10px] text-slate-400">Periksa format nama file: <code class="text-emerald-300">NISN Nama.jpg</code> (fallback NIS).</span></p>`,
+      html: `<p class="text-xs text-slate-300">Tidak ada file yang cocok dengan murid mana pun.<br><span class="text-[10px] text-slate-400">Periksa format nama file: <code class="text-emerald-300">NISN Nama.jpg</code> (fallback NIS).</span></p>`,
       background: '#1e293b', color: '#fff' });
   }
 
@@ -13498,6 +13492,7 @@ async function tambahMasterDaftarJurusan() {
         Swal.fire({ icon: 'error', title: 'Gagal', text: e.message, background: '#1e293b', color: '#fff' });
     }
 }
+async function hapusMasterDaftar(rowId, kolom) {
     const konf = await Swal.fire({
         title: 'Hapus data ini?',
         text: `"${kolom}" akan dihapus permanen dari database.`,
