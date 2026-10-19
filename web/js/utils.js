@@ -512,7 +512,14 @@ async function supabaseFetch(action, payload = {}) {
             const kelasEfektif = rw ? String(rw.kelas || '') : String(m.tingkat_kelas || '');
             const statusSiswa = rw ? String(rw.status || 'Aktif') : 'Aktif';
             if (statusSiswa !== 'Aktif' || !kelasEfektif) return false;
-            if (isEkskulDb) return String(m.ekstrakurikuler || '').split(',').map(e => e.trim()).includes(payload.mapel);
+            // Kecocokan anggota ekskul dipakai SEMUA fitur Ekskul lain lewat
+            // ambilAnggotaEkskul() (app.js) yaitu `ilike('%ekskul%')` —
+            // SUBSTRING & case-insensitive. Dahulu di sini dipakai pencocokan token
+            // tepat (split(',') + include persis) sehingga murid yang terdaftar
+            // sebagai anggota (mis. kapital/substring/format berbeda) TIDAK muncul di
+            // Daftar Hadir Ekstrakurikuler. Samakan semantiknya agar roster konsisten
+            // dengan daftar anggota di menu Kelola/Tambah Anggota.
+            if (isEkskulDb) return String(m.ekstrakurikuler || '').toLowerCase().includes(String(payload.mapel || '').toLowerCase());
             return kelasEfektif === payload.kelas;
          });
 
