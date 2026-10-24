@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SISIP — Offline</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="stylesheet" href="css/style.css?v=20261024b">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" referrerpolicy="no-referrer">
+  <style>
+    body { background-color: #0f172a; color: #ccc; display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center; }
+    .container { max-width: 500px; }
+    h1 { color: #f0f0f0; font-size: 2.5rem; margin-bottom: 1rem; }
+    p { font-size: 1.1rem; color: #aaa; margin-bottom: 2rem; }
+    .btn-refresh { background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; font-weight: bold; text-decoration: none; transition: background-color 0.2s; }
+    .btn-refresh:hover { background-color: #1d4ed8; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="text-6xl text-gray-600 mb-4"><i class="fa-solid fa-triangle-exclamation"></i></div>
+    <h1>Anda Sedang Offline</h1>
+    <p>Koneksi internet terputus. Silakan periksa koneksi Anda atau coba muat ulang halaman.</p>
+    <button onclick="window.location.reload()" class="btn-refresh">Muat Ulang Halaman</button>
+  </div>
+  <script>
+    // Coba hidupkan service worker agar bisa menangani offline
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/web/sw.js')
+        .then(reg => console.log('[SW] Registered', reg))
+        .catch(err => console.error('[SW] Registration failed:', err));
+    }
+  </script>
+</body>
+</html>
