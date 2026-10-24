@@ -2539,6 +2539,7 @@ async function simpanSubEkskulSaya() {
 async function simpanProfilMurid() {
   const user = (currentUser || {}).user || {};
   const nis = user["NIS"] || '';
+  if (!nis) return showToast('error', 'NIS tidak ditemukan pada sesi. Silakan login ulang.');
   const ambil = (id) => document.getElementById(id)?.value?.trim() ?? null;
   const p_data = {
     email: ambil('pro-email'),
@@ -2558,10 +2559,25 @@ async function simpanProfilMurid() {
     nama_wali: ambil('pro-nama_wali'),
     catatan_khusus: ambil('pro-catatan_khusus')
   };
-  // [FASE B] Sertakan token sesi server (upgrade_20261028a/b2).
-  const { data, error } = await supaClient.rpc('ubah_profil_murid', Object.assign({ p_nis: nis, p_data }, sesiRpc()));
+  // [FASE B] Signature B2 = ubah_profil_murid(p_nis, p_data, p_token) — TIDAK ada
+  // `p_klaim_nis`. Jangan pakai sesiRpc() di sini: argumen tak dikenal membuat
+  // PostgREST menolak dengan PGRST202 ("Could not find the function … in the
+  // schema cache") dan tombol "Simpan Perubahan" gagal sebelum sampai server.
+  const { data, error } = await supaClient.rpc('ubah_profil_murid', {
+    p_nis: nis, p_data, p_token: getToken()
+  });
   if (error || (data && data.status === 'error')) {
-    return Swal.fire({ icon: 'error', title: 'Gagal', text: (data && data.message) || error?.message, background: '#1e293b', color: '#fff' });
+    const pesan = (data && data.message) || (error && error.message) || 'Gagal menyimpan profil.';
+    // RPC belum ada di database → user belum menjalankan migrasi B2.
+    if (/could not find the function/i.test(pesan)) {
+      return Swal.fire({ icon: 'info', title: 'Migrasi belum dijalankan', text: 'RPC ubah_profil_murid(p_nis, p_data, p_token) belum ada di database. Jalankan supabase/sql/upgrade_20261028b2_token_rpc_murid.sql di SQL Editor Supabase, lalu muat ulang halaman.', background: '#1e293b', color: '#fff' });
+    }
+    // Murid mengubah profilnya sendiri tapi ditolak → token sesi tidak dikenali.
+    if (((currentUser || {}).role || '') === 'murid' && /sesi|tidak berhak/i.test(pesan)) {
+      showToast('warning', 'Sesi Anda sudah berakhir. Silakan login ulang.');
+      setTimeout(() => logout(), 2500);
+    }
+    return Swal.fire({ icon: 'error', title: 'Gagal', text: pesan, background: '#1e293b', color: '#fff' });
   }
   // Perbarui sesi lokal (email bisa berubah → profil header konsisten)
   try {
@@ -2582,11 +2598,21 @@ async function gantiPasswordSendiri() {
   const lama = document.getElementById('pass-lama')?.value || '';
   const baru = document.getElementById('pass-baru')?.value || '';
   if (!lama || !baru) return showToast('warning', 'Isi password lama dan baru.');
-  // [FASE B] Sertakan token sesi; server mencabut sesi lama & menerbitkan yang baru.
-  const { data, error } = await supaClient.rpc('ubah_password_sendiri', Object.assign({ p_nis: nis, p_lama: lama, p_baru: baru }, sesiRpc()));
+  // [FASE B] Signature B2 = ubah_password_sendiri(p_nis, p_lama, p_baru, p_token)
+  // — TANPA `p_klaim_nis` (pakai sesiRpc() di sini ⇒ PGRST202). Server mencabut
+  // seluruh sesi lama murid ini lalu menerbitkan sesi baru (sesi_token).
+  const { data, error } = await supaClient.rpc('ubah_password_sendiri', {
+    p_nis: nis, p_lama: lama, p_baru: baru, p_token: getToken()
+  });
   const ok = !error && data && data.status === 'success';
-  if (ok && data && data.sesi_token) setSession(data.sesi_token, currentUser || {});
-  Swal.fire({ icon: ok ? 'success' : 'error', title: ok ? 'Berhasil' : 'Gagal', text: (data && data.message) || error?.message, background: '#1e293b', color: '#fff' });
+  // Simpan token baru bersama objek USER (bukan currentUser utuh) agar bentuk
+  // sesi lokal tetap konsisten dengan getCurrentUser()/setSession().
+  if (ok && data && data.sesi_token) setSession(data.sesi_token, (currentUser || {}).user || {});
+  const pesanGagal = (data && data.message) || (error && error.message) || 'Gagal mengganti password.';
+  if (!ok && /could not find the function/i.test(pesanGagal)) {
+    return Swal.fire({ icon: 'info', title: 'Migrasi belum dijalankan', text: 'RPC ubah_password_sendiri(p_nis, p_lama, p_baru, p_token) belum ada di database. Jalankan supabase/sql/upgrade_20261028b2_token_rpc_murid.sql di SQL Editor Supabase, lalu muat ulang halaman.', background: '#1e293b', color: '#fff' });
+  }
+  Swal.fire({ icon: ok ? 'success' : 'error', title: ok ? 'Berhasil' : 'Gagal', text: ok ? ((data && data.message) || 'Password diperbarui.') : pesanGagal, background: '#1e293b', color: '#fff' });
   if (ok) {
     const el1 = document.getElementById('pass-lama'), el2 = document.getElementById('pass-baru');
     if (el1) el1.value = ''; if (el2) el2.value = '';

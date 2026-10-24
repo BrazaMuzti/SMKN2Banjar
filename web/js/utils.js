@@ -452,9 +452,26 @@ async function kelolaAkunAuth(payload = {}) {
 //   - murid lokal → token sesi `sesi_lokal` (p_token, dari cek_login_murid)
 // Selama fase B1/B2 server masih menerima `p_klaim_nis` (kompatibilitas);
 // setelah `fix_20261028d_sesi_wajib.sql`, HANYA token yang diakui.
+//
+// ⚠ KONTRAK ARGUMEN — jangan tertukar (ini pernah mematahkan tombol
+//   "Simpan Perubahan" di menu Data Akun Murid lewat error PGRST202):
+//   a) RPC Fase B (upgrade_20261028b) — menerima `p_token` + `p_klaim_nis`
+//      → pakai sesiRpc():
+//      ambil_daftar_murid, ambil_akun_satu, ambil_peta_wajah,
+//      cek_sesi_absen, simpan_riwayat_murid, simpan_ekskul_murid.
+//   b) RPC Fase B2 (upgrade_20261028b2) — HANYA `p_token`, identitas diambil
+//      server dari sesi → kirim `{ p_token: getToken() }` saja, JANGAN
+//      pakai sesiRpc():
+//      ubah_profil_murid, ubah_password_sendiri, simpan_wajah_murid,
+//      ubah_anggota_ekskul, ganti_kunci_absen_ekskul.
+//   Argumen yang tidak dideklarasikan fungsi membuat PostgREST menjawab
+//   "Could not find the function … in the schema cache" (PGRST202).
 // ==========================================================
 
-/** Parameter sesi standar untuk RPC murid (token server + klaim NIS). */
+/** [FASE B] Parameter sesi untuk RPC murid yang mendeklarasikan `p_klaim_nis`
+ *  (token server + klaim NIS) — lihat kontrak argumen di atas.
+ *  RPC Fase B2 (mis. `ubah_profil_murid`, `ubah_password_sendiri`) TIDAK
+ *  menerima `p_klaim_nis`: kirim `{ p_token: getToken() }` saja. */
 function sesiRpc() {
   try {
     const u = getCurrentUser() || {};
