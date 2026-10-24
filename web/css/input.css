@@ -269,3 +269,156 @@ table {
   white-space: pre-wrap;
   word-break: break-word;
 }
+
+/* ============================================================
+   [MOBILE v2] Ekstrakurikuler — navigation ikon-only & custom
+   scrollbar tipis (bar horizontal sub-tab & tab utama).
+   ============================================================ */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.4) transparent;
+}
+.custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 3px; }
+
+/* Bar navigasi ekskul mobile-first: satu baris, flex-nowrap, scroll horizontal.
+   Tombol di dalam bersikker flex-shrink:0 agar tetap satu baris. */
+.ekskul-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.ekskul-tabbar button {
+  flex-shrink: 0;
+  min-width: 30px;
+}
+.ekskul-tabbar::-webkit-scrollbar { height: 5px; }
+.ekskul-tabbar::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.35); border-radius: 3px; }
+
+/* ============================================================
+   [PIKET v3] Kartu per hari — Hari Ini + Berikutnya + "Lihat semua hari".
+   Pengganti tabel matrik transposé (drag & drop dihapus).
+   ============================================================ */
+.piket-kartu {
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+/* Kartu hari ini — dibedakan agar langsung terlihat saat halaman dibuka. */
+.piket-kartu[data-hari-ini="1"] {
+  border-color: rgba(250, 204, 21, 0.45);
+  background: rgba(250, 204, 21, 0.06);
+  box-shadow: 0 0 0 1px rgba(250, 204, 21, 0.25);
+}
+.piket-kartu-kepala {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 7px 10px;
+}
+.piket-kartu-badan { padding: 0 10px 10px; }
+.piket-badge-hari {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 9999px;
+  white-space: nowrap;
+}
+.piket-badge-hari.ini {
+  background: rgba(250, 204, 21, 0.18);
+  color: rgb(253, 224, 71);
+  border: 1px solid rgba(250, 204, 21, 0.45);
+}
+.piket-badge-hari.dekat {
+  background: rgba(56, 189, 248, 0.15);
+  color: rgb(125, 211, 252);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+/* Chip nama petugas piket (satu nama per chip, dalam kartu harinya) */
+.piket-chip-anggota {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: rgba(30, 41, 59, 0.75);
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 9999px;
+  padding: 2px 4px 2px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  color: rgb(226, 232, 240);
+  max-width: 100%;
+}
+.piket-chip-nama {
+  max-width: 8.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.piket-chip-jab {
+  font-size: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: rgb(196, 181, 253);
+  background: rgba(124, 58, 237, 0.25);
+  border-radius: 9999px;
+  padding: 0 5px;
+  white-space: nowrap;
+}
+.piket-chip-aksi {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  font-size: 9px;
+  border: 1px solid transparent;
+  background: rgba(148, 163, 184, 0.12);
+  color: rgb(148, 163, 184);
+  flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+.piket-chip-aksi:hover { color: #fff; background: rgba(148, 163, 184, 0.3); }
+.piket-chip-aksi.buang:hover { background: rgba(220, 38, 38, 0.85); }
+.piket-chip-aksi.hari:hover { background: rgba(2, 132, 199, 0.85); }
+/* Bar progres ceklis hadir di kartu hari (cek / jumlah petugas) */
+.piket-progress {
+  height: 3px;
+  border-radius: 9999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+.piket-progress > span { display: block; height: 100%; background: rgb(16, 185, 129); }
+/* Chip ceklis hadir (✓ / ○) di sel */
+.piket-cek-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  font-size: 11px;
+  line-height: 1;
+  background: rgba(30, 41, 59, 0.7);
+  color: rgb(100, 116, 139);
+  border: 1px solid rgba(148, 163, 184, 0.35);
+}
+.piket-cek-chip.cek {
+  background: rgba(16, 185, 129, 0.22);
+  color: rgb(16, 185, 129);
+  border-color: rgba(16, 185, 129, 0.55);
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.35);
+}
+.piket-cek-chip.locked { opacity: 0.8; }
+/* Antrian ciut (mobile): badan tak tampil, hanya header */
+#antrian-piket.piket-antrian-ciut .piket-antrian-badan { display: none; }
