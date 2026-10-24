@@ -19,6 +19,15 @@
   const ID_BTN = 'btn-install-pwa';
   const ID_KARTU = 'kartu-pwa-dashboard';
 
+  /* Stempel build halaman. WAJIB selalu disamakan dengan `?v=` di web/index.html
+   * (naikkan bersama `VERSION` di sw.js). Dipakai untuk:
+   *   - log diagnosis: `[SISIP] build 20261029a` (terlihat di console perangkat),
+   *   - membersihkan cache SEKALI per perubahan build → anti "versi nyangkut". */
+  const BUILD = '20261029a';
+  const KUNCI_BUILD = 'sisip_build';               // build yang terakhir dipasang di perangkat ini
+  const KUNCI_RELOAD_CACHE = 'sisip_reload_build'; // penjaga muat-ulang setelah cache dibersihkan
+  const KUNCI_RELOAD_SW = 'sisip_reload_sw';       // penjaga muat-ulang setelah SW baru aktif
+
   let promptPasang = null;        // event beforeinstallprompt yang disimpan
   let terpasangBaru = false;      // sudah dipasang pada sesi ini (event appinstalled)
 
@@ -49,6 +58,60 @@
   /** Bisa dipasang sekarang? (Chrome/Edge/Opera Android: prompt tersedia) */
   function bisaDipasang() { return !!promptPasang; }
 
+  /** Perlu panduan manual? (iOS/iPadOS Safari tidak punya beforeinstallprompt,
+   *  jadi satu-satunya cara memasang lewat menu Bagikan → lihat petunjukIOS()).
+   *  Dipakai oleh tombol header, kartu dashboard, dan pasangPWA(). */
+  function butuhPetunjukManual() {
+    return !sudahTerpasang() && iniIOS();
+  }
+
+  /* ─────────── 0. Stempel build & pembersih cache "versi nyangkut" ─────────── */
+
+  /** Tulis stempel build ke DOM + console. Berguna saat menolong siswa/guru:
+   *  perangkat yang menjalankan berkas lama akan menampilkan build lama. */
+  function stempelBuild() {
+    try { document.documentElement.setAttribute('data-sisip-build', BUILD); } catch (e) { /* abaikan */ }
+    console.log('[SISIP] build', BUILD);
+  }
+
+  /** Buang cache service worker milik SISIP (`sisip-*`) bila perangkat ini masih
+   *  memakai build lama, lalu muat ulang SEKALI.
+   *
+   *  Latar belakang (kasus "Simpan Perubahan" gagal / PGRST202): service worker
+   *  lama yang gagal install (mis. daftar precache berisi path absolut `/web/…`
+   *  yang 404) TIDAK pernah `activate`, sehingga cache lamanya tidak pernah
+   *  dibersihkan dan perangkat bisa terus menjalankan `js/app.js` versi lama.
+   *  Fungsi ini menyapu cache tersebut tanpa perlu pengguna menghapus data situs. */
+  function bersihkanCacheBilaBedaBuild() {
+    let terakhir = null;
+    try { terakhir = localStorage.getItem(KUNCI_BUILD); } catch (e) { return Promise.resolve(); }
+    if (terakhir === BUILD) return Promise.resolve(); // perangkat ini sudah se-build
+
+    const hapus = (window.caches && caches.keys)
+      ? caches.keys().then(function (keys) {
+          // Hanya cache milik SISIP: origin GitHub Pages dipakai bersama oleh
+          // project page lain, jadi cache aplikasi lain tidak boleh tersentuh.
+          return Promise.all(keys
+            .filter(function (k) { return k.indexOf('sisip-') === 0; })
+            .map(function (k) {
+              console.log('[SISIP] Hapus cache lama:', k);
+              return caches.delete(k);
+            }));
+        }).catch(function (err) { console.warn('[SISIP] Gagal membersihkan cache:', err); })
+      : Promise.resolve();
+
+    return hapus.then(function () {
+      try { localStorage.setItem(KUNCI_BUILD, BUILD); } catch (e) { /* abaikan */ }
+      if (!terakhir) return; // kunjungan pertama: tidak ada yang perlu disegarkan
+      let sudah = false;
+      try { sudah = sessionStorage.getItem(KUNCI_RELOAD_CACHE) === BUILD; } catch (e) { /* abaikan */ }
+      if (sudah) return;     // sudah dimuat ulang pada sesi ini → jangan ulangi
+      try { sessionStorage.setItem(KUNCI_RELOAD_CACHE, BUILD); } catch (e) { /* abaikan */ }
+      console.log('[SISIP] Build baru ' + BUILD + ' — memuat ulang sekali agar berkas segar.');
+      window.location.reload();
+    });
+  }
+
   /* ─────────────────── 1. Registrasi service worker ─────────────────── */
 
   function daftarkanSW() {
@@ -56,21 +119,46 @@
       console.log('[PWA] Service worker tidak didukung browser ini.');
       return;
     }
+    const adaKontrolSebelumnya = !!navigator.serviceWorker.controller;
+
+    // SW baru langsung mengambil kendali → muat ulang SEKALI agar halaman
+    // memakai aset baru (bukan berkas lama yang masih ada di memori).
+    navigator.serviceWorker.addEventListener('controllerchange', function () {
+      if (!adaKontrolSebelumnya) return; // pemasangan pertama: tidak perlu muat ulang
+      let sudah = false;
+      try { sudah = sessionStorage.getItem(KUNCI_RELOAD_SW) === BUILD; } catch (e) { /* abaikan */ }
+      if (sudah) return;
+      try { sessionStorage.setItem(KUNCI_RELOAD_SW, BUILD); } catch (e) { /* abaikan */ }
+      console.log('[SISIP] Service worker baru aktif — memuat ulang sekali.');
+      window.location.reload();
+    });
+
     // Path relatif: situs ini project page GitHub Pages (/repo/), bukan root domain.
-    navigator.serviceWorker.register('./sw.js')
+    // `updateViaCache: 'none'` → sw.js SELALU diambil dari jaringan (tidak pernah
+    // disajikan dari cache HTTP), jadi versi baru tidak mungkin "nyangkut".
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
       .then(function (reg) {
         console.log('[PWA] Service worker terdaftar. Scope:', reg.scope);
+        aktifkanVersiBaru(reg);
         reg.addEventListener('updatefound', function () {
           const sw = reg.installing;
           if (!sw) return;
           sw.addEventListener('statechange', function () {
             if (sw.state === 'installed' && navigator.serviceWorker.controller) {
-              console.log('[PWA] Versi baru tersedia (aktif setelah muat ulang).');
+              console.log('[PWA] Versi baru tersedia — mengaktifkan sekarang…');
+              aktifkanVersiBaru(reg);
             }
           });
         });
+        // Paksa cek pembaruan tiap aplikasi dibuka (bawaannya hanya tiap 24 jam).
+        reg.update().catch(function (err) { console.warn('[PWA] Gagal cek pembaruan SW:', err); });
       })
       .catch(function (err) { console.error('[PWA] Registrasi service worker gagal:', err); });
+  }
+
+  /** SW yang sedang "waiting" langsung diaktifkan (ditangani `message` di sw.js). */
+  function aktifkanVersiBaru(reg) {
+    if (reg && reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
   }
 
   /* ───────────────── 2. Tangkap event install bawaan ────────────────── */
@@ -276,6 +364,8 @@
   }
 
   function init() {
+    stempelBuild();
+    bersihkanCacheBilaBedaBuild().catch(function (err) { console.warn('[SISIP] Pembersih cache gagal:', err); });
     daftarkanSW();
     suntikTombolHeader();
     tampilkanTombolHeader(bisaDipasang() || butuhPetunjukManual());

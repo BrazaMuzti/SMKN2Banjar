@@ -3,32 +3,42 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SISIP — Offline</title>
+  <title>SISIP — Tidak Ada Koneksi</title>
+  <meta name="theme-color" content="#0f172a">
   <link rel="manifest" href="manifest.json">
-  <link rel="stylesheet" href="css/style.css?v=20261024b">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha384-iw3OoTErCYJJB9mCa8LNS2hbsQ7M3C0EpIsO/H5+EGAkPGc6rk+V8i04oW/K5xq0" crossorigin="anonymous" referrerpolicy="no-referrer">
+  <link rel="icon" type="image/svg+xml" href="assets/logo.svg">
+  <!-- CSS dari cache service worker (relatif: situs ini project page /repo/) -->
+  <link rel="stylesheet" href="css/style.css?v=20261028f">
   <style>
-    body { background-color: #0f172a; color: #ccc; display: flex; justify-content: center; align-items: center; height: 100vh; text-align: center; }
-    .container { max-width: 500px; }
-    h1 { color: #f0f0f0; font-size: 2.5rem; margin-bottom: 1rem; }
-    p { font-size: 1.1rem; color: #aaa; margin-bottom: 2rem; }
-    .btn-refresh { background-color: #2563eb; color: white; padding: 10px 20px; border-radius: 8px; font-weight: bold; text-decoration: none; transition: background-color 0.2s; }
-    .btn-refresh:hover { background-color: #1d4ed8; }
+    body { background-color: #0f172a; color: #cbd5e1; display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0; text-align: center; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    .kotak-offline { max-width: 460px; padding: 24px; }
+    .ikon-offline { width: 72px; height: 72px; margin: 0 auto 18px; border-radius: 9999px; display: flex; align-items: center; justify-content: center; font-size: 34px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); }
+    h1 { color: #f8fafc; font-size: 1.6rem; margin: 0 0 10px; }
+    p { font-size: 0.95rem; color: #94a3b8; margin: 0 0 22px; line-height: 1.6; }
+    button { background-color: #2563eb; color: #fff; border: 0; padding: 11px 22px; border-radius: 10px; font-weight: 700; font-size: 0.9rem; cursor: pointer; transition: background-color .2s; }
+    button:hover { background-color: #1d4ed8; }
+    .catatan { margin-top: 18px; font-size: 0.75rem; color: #64748b; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="text-6xl text-gray-600 mb-4"><i class="fa-solid fa-triangle-exclamation"></i></div>
+  <div class="kotak-offline">
+    <div class="ikon-offline">📶</div>
     <h1>Anda Sedang Offline</h1>
-    <p>Koneksi internet terputus. Silakan periksa koneksi Anda atau coba muat ulang halaman.</p>
-    <button onclick="window.location.reload()" class="btn-refresh">Muat Ulang Halaman</button>
+    <p>
+      Koneksi internet terputus sehingga data terbaru belum bisa dimuat.<br>
+      Periksa koneksi Anda lalu muat ulang halaman.
+    </p>
+    <button type="button" onclick="window.location.reload()">Muat Ulang Halaman</button>
+    <div class="catatan">SISIP — Sistem Informasi Sekolah Indonesia Pintar</div>
   </div>
+
   <script>
-    // Coba hidupkan service worker agar bisa menangani offline
+    // Pastikan service worker tetap aktif (agar aset dari cache bisa dipakai offline).
+    // Path relatif ('./sw.js') penting: situs ini project page GitHub Pages, bukan root domain.
     if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/web/sw.js')
-        .then(reg => console.log('[SW] Registered', reg))
-        .catch(err => console.error('[SW] Registration failed:', err));
+      navigator.serviceWorker.register('./sw.js').catch(function (err) {
+        console.warn('[SW] Registrasi gagal di halaman offline:', err);
+      });
     }
   </script>
 </body>

@@ -1,132 +1,155 @@
-// SISIP Service Worker — Cache statis, fallback offline, & jaringan utk data.
-// Berbasis https://github.com/GoogleChrome/samples/blob/gh-pages/service-worker/basic/service-worker.js
+/* ============================================================================
+ * SISIP Service Worker — cache aset statis + fallback halaman offline.
+ * ----------------------------------------------------------------------------
+ * PENTING (jangan diubah): situs ini di-deploy ke GitHub Pages sebagai
+ * PROJECT PAGE → https://<user>.github.io/Administrasi-Sekolah/
+ * Artifact CI = folder `web/` (lihat .github/workflows/static.yml → path: 'web').
+ * Maka SEMUA path di bawah HARUS relatif terhadap scope SW (pakai `new URL`),
+ * JANGAN pakai '/index.html' (itu menunjuk root domain GitHub Pages = 404).
+ *
+ * Cakupan cache: hanya aset statis same-origin. Request ke Supabase/CDN
+ * (beda origin) dilewatkan langsung ke jaringan (data selalu real-time).
+ * ========================================================================== */
 
-const STATIC_CACHE_NAME = 'sisip-v1';
-const DYNAMIC_CACHE_NAME = 'sisip-api-v1';
-const OFFLINE_PAGE = '/offline.html'; // File fallback bila jaringan mati
+const VERSION = 'v3'; // ← WAJIB dinaikkan setiap index.html berubah (lihat PRECACHE)
+const STATIC_CACHE = `sisip-static-${VERSION}`;
+const RUNTIME_CACHE = `sisip-runtime-${VERSION}`;
 
-// Daftar file statis yang akan di-cache saat instalasi.
-// Perlu diperbarui bila ada perubahan di `web/index.html` (CSS/JS/ikon).
-const STATIC_FILES = [
-  '/', // Harus ada! Ini halaman utama index.html.
-  '/index.html',
-  '/web/css/style.css?v=20261024b', // Versi CSS harus cocok dg di index.html
-  '/web/js/utils.js?v=20261028e',   // Versi JS harus cocok
-  '/web/js/app.js?v=20261028f',     // Versi JS harus cocok
-  '/web/js/face.js?v=20261028e',
-  '/web/js/utils.example.js',
-  '/web/vendor/supabase.js?v=2.45.4',
-  '/web/vendor/face-api.min.js?v=20261014a',
-  '/web/vendor/cropper.min.js',
-  '/web/vendor/xlsx.full.min.js',
-  '/web/vendor/html5-qrcode.min.js',
-  '/web/vendor/mediapipe/vision_bundle.js?v=20261020c',
-  '/web/vendor/onnx/ort.min.js?v=20261020c',
-  '/web/js/face.js?v=20261028e',
-  // ... tambahkan ikon PWA yang sudah dibuat
-  '/web/assets/logo.svg',
-  '/web/assets/icon-192.png',
-  '/web/assets/icon-512.png',
-  '/web/assets/icon-192-maskable.png',
-  '/web/assets/icon-512-maskable.png',
-  '/web/assets/apple-touch-icon.png',
-  // ... file lain yang dipakai saat offline (mis. font awesome)
-  'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css',
-  // ... (font Awesome JS tidak di-cache di sini karena CSP)
+/** Scope SW — mis. https://user.github.io/Administrasi-Sekolah/ */
+const BASE = new URL('./', self.location.href).href;
+const abs = (p) => new URL(p, BASE).href;
+
+/** Halaman fallback bila offline (ada di web/offline.html). */
+const OFFLINE_URL = abs('offline.html');
+
+/* Aset inti yang di-precache saat install.
+ * ── Setiap kali web/index.html berubah (versi ?v=... naik), VERSION di atas
+ *    WAJIB dinaikkan & daftar di bawah WAJIB disinkronkan. */
+const PRECACHE = [
+  './',
+  'index.html',
+  'offline.html',
+  'manifest.json',
+  'css/style.css?v=20261029a',
+  'js/utils.js?v=20261029a',
+  'js/app.js?v=20261029a',
+  'js/face.js?v=20261029a',
+  'js/install.js?v=20261029a',
+  'vendor/face-api.min.js?v=20261014a',
+  'vendor/mediapipe/vision_bundle.js?v=20261020c',
+  'vendor/onnx/ort.min.js?v=20261020c',
+  'assets/logo.svg',
+  'assets/icon-192.png',
+  'assets/icon-512.png',
+  'assets/icon-192-maskable.png',
+  'assets/icon-512-maskable.png',
+  'assets/apple-touch-icon.png'
 ];
 
-// Cache saat service worker diinstal
+/* Folder yang TIDAK di-cache (model wajah besar) — ambil dari jaringan saja. */
+const SKIP_PREFIX = [abs('models/')];
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(STATIC_CACHE_NAME)
-      .then((cache) => {
-        console.log('[Service Worker] Precaching static assets...');
-        return cache.addAll(STATIC_FILES);
-      })
-  );
+  event.waitUntil((async () => {
+    const cache = await caches.open(STATIC_CACHE);
+    // `cache.add` satu per satu: satu file 404 tidak menggagalkan seluruh install.
+    await Promise.all(PRECACHE.map((url) =>
+      cache.add(abs(url)).catch((err) => console.warn('[SW] Gagal precache:', url, err))
+    ));
+    await self.skipWaiting(); // versi baru langsung menunggu aktif (lihat activate)
+  })());
+  console.log('[SW] install selesai — cache:', STATIC_CACHE);
 });
 
-// Bersihkan cache lama saat service worker diaktifkan
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== STATIC_CACHE_NAME && cacheName !== DYNAMIC_CACHE_NAME) {
-            console.log('[Service Worker] Cleaning old cache: ' + cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(keys.map((k) =>
+      (k.startsWith('sisip-') && k !== STATIC_CACHE && k !== RUNTIME_CACHE)
+        ? (console.log('[SW] Hapus cache lama:', k), caches.delete(k))
+        : null
+    ));
+    await self.clients.claim(); // langsung kendalikan tab yang sudah terbuka
+  })());
+  console.log('[SW] activate selesai.');
 });
 
-// Tangani permintaan jaringan (strategi cache: Network first, fallback cache)
 self.addEventListener('fetch', (event) => {
-  // Hanya tangani permintaan navigasi (HTML) dan GET request
-  if (event.request.mode !== 'navigate' && event.request.method !== 'GET') {
-    return;
-  }
+  const req = event.request;
+  if (req.method !== 'GET') return;
 
-  // Abaikan permintaan ke domain eksternal (CDN, API lain) — tidak di-cache di sini
-  const url = new URL(event.request.url);
-  if (url.origin !== location.origin) {
-    return;
-  }
+  let url;
+  try { url = new URL(req.url); } catch (e) { return; }
 
-  event.respondWith(
-    caches.open(DYNAMIC_CACHE_NAME).then((cache) => {
-      // Coba ambil dari jaringan dulu
-      return fetch(event.request).then((response) => {
-        // Bila sukses, simpan ke cache dinamis
-        if (response.ok) {
-          cache.put(event.request, response.clone());
+  // Beda origin (Supabase, Font Awesome, jsdelivr, unpkg) → lewat ke jaringan.
+  if (url.origin !== self.location.origin) return;
+  if (SKIP_PREFIX.some((p) => url.href.startsWith(p))) return;
+
+  // ── Navigasi (buka/ganti halaman) → network-first, fallback cache → offline.
+  if (req.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        const res = await fetch(req);
+        if (res && res.ok && res.type === 'basic') {
+          const cache = await caches.open(RUNTIME_CACHE);
+          cache.put(req, res.clone());
         }
-        return response;
-      }).catch(() => {
-        // Bila jaringan gagal, coba ambil dari cache dinamis
-        return cache.match(event.request).then((cachedResponse) => {
-          // Bila masih tidak ada di cache, berikan fallback offline
-          if (!cachedResponse) {
-            return caches.match(OFFLINE_PAGE);
-          }
-          return cachedResponse;
-        });
-      });
-    })
-  );
+        return res;
+      } catch (e) {
+        return (await caches.match(req))
+          || (await caches.match(abs('index.html')))
+          || (await caches.match(OFFLINE_URL))
+          || new Response('<h1>Offline</h1>', { status: 503, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      }
+    })());
+    return;
+  }
+
+  // ── Aset statis → cache-first (sudah ada di precache), update di belakang.
+  event.respondWith((async () => {
+    const cached = await caches.match(req);
+    const dariJaringan = fetch(req).then(async (res) => {
+      if (res && res.ok && res.type === 'basic') {
+        const cache = await caches.open(RUNTIME_CACHE);
+        cache.put(req, res.clone());
+      }
+      return res;
+    }).catch(() => null);
+
+    if (cached) return cached; // instan + hemat kuota
+    const res = await dariJaringan;
+    return res || Response.error();
+  })());
 });
 
-// Handle push notifications (jika ada di masa depan)
+/* ─── Push notification (disiapkan utk masa depan; belum dipakai) ────────── */
 self.addEventListener('push', (event) => {
-  console.log('[Service Worker] Push notification received:', event);
-  const payload = event.data ? JSON.parse(event.data.text()) : {};
-  const title = payload.title || 'SISIP Notification';
+  let payload = {};
+  try { payload = event.data ? event.data.json() : {}; } catch (e) { payload = { body: event.data && event.data.text() }; }
+  const title = payload.title || 'SISIP';
   const options = {
-    body: payload.body || 'Pesan baru diterima.',
-    icon: payload.icon || '/web/assets/icon-192.png',
-    data: payload.data || {}
+    body: payload.body || 'Ada pembaruan baru di SISIP.',
+    icon: payload.icon || abs('assets/icon-192.png'),
+    badge: abs('assets/icon-192-maskable.png'),
+    data: payload.data || { url: abs('index.html') }
   };
   event.waitUntil(self.registration.showNotification(title, options));
 });
 
-// Handle notification clicks
+/* ─── Klik notifikasi → fokuskan tab SISIP yang sudah terbuka ────────────── */
 self.addEventListener('notificationclick', (event) => {
-  console.log('[Service Worker] Notification click:', event);
-  const notificationData = event.notification.data;
-  const url = notificationData.url || '/'; // Default ke root jika tidak ada URL
-  event.notification.close(); // Tutup notifikasi
-  // Buka aplikasi atau tab baru dengan URL yang ditentukan
-  event.waitUntil(
-    clients.matchAll({ type: 'window' }).then((windowClients) => {
-      for (let i = 0; i < windowClients.length; i++) {
-        const client = windowClients[i];
-        if (client.url.startsWith(location.origin) && 'focus' in client) {
-          return client.focus();
-        }
-      }
-      return clients.openWindow(url);
-    })
-  );
+  event.notification.close();
+  const target = (event.notification.data && event.notification.data.url) || BASE;
+  event.waitUntil(clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) {
+      if (c.url.startsWith(BASE) && 'focus' in c) return c.focus();
+    }
+    return clients.openWindow(target);
+  }));
 });
+
+/* ─── Pesan dari halaman (mis. minta skipWaiting saat update tersedia) ───── */
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
+});
+
