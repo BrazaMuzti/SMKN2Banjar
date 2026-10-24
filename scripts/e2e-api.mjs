@@ -310,9 +310,36 @@ async function main() {
         cek('Peta jabatan tersimpan & terbaca', data?.jabatan_ekskul_map?.[EKSKUL_UJI] === 'Ketua', JSON.stringify(data).slice(0, 100));
     }
     {
-        // Pengurus murid (anon) memperbarui peta jabatan sendiri (grant kolom-level)
+        // [FASE B] Tabel `akun` kini RLS KETAT + anon dicabut: update langsung dari
+        // anon HARUS ditolak (sebelumnya lolos karena grant kolom-level 20260926).
         const { error } = await anon.from('akun').update({ jabatan_ekskul_map: { [EKSKUL_UJI]: 'Sekretaris' } }).eq('nis_nip', NIS_MURID);
-        cek('Anon (pengurus) ubah jabatan_ekskul_map', !error, error?.message);
+        cek('Anon (pengurus) DITOLAK mengubah akun langsung (RLS ketat)',
+            !!error, 'update anon justru sukses — jalankan upgrade_20261028c_rls_akun_ketat.sql');
+    }
+    {
+        // [FASE B] Jalur resmi: token sesi dari server + RPC `simpan_ekskul_murid`.
+        const { data: login } = await anon.rpc('cek_login_murid', { p_nis: NIS_MURID, p_password: 'uji1234' });
+        const token = (login && login.sesi_token) || '';
+        cek('cek_login_murid menerbitkan sesi_token (server, 64 hex)',
+            typeof token === 'string' && token.length === 64, token ? `panjang ${token.length}` : 'kosong');
+        const { data: rpcJab, error: eJab } = await anon.rpc('simpan_ekskul_murid', {
+            p_nis: NIS_MURID, p_ekskul: EKSKUL_UJI,
+            p_jabatan_ekskul_map: { [EKSKUL_UJI]: 'Sekretaris' }, p_token: token
+        });
+        cek('Murid ber-token ubah jabatan via RPC simpan_ekskul_murid',
+            !eJab && rpcJab && rpcJab.status === 'success', eJab?.message || rpcJab?.message);
+        const { data: jm } = await admin.from('akun').select('jabatan_ekskul_map').eq('nis_nip', NIS_MURID).maybeSingle();
+        cek('Jabatan hasil RPC tersimpan (Sekretaris)',
+            jm?.jabatan_ekskul_map?.[EKSKUL_UJI] === 'Sekretaris', JSON.stringify(jm).slice(0, 100));
+    }
+    {
+        // [FASE B] RPC baca `akun` menuntut sesi valid.
+        const { data: tanpaToken } = await anon.rpc('ambil_daftar_murid', { p_mode: 'list' });
+        cek('RPC ambil_daftar_murid tanpa token → []',
+            Array.isArray(tanpaToken) && tanpaToken.length === 0, JSON.stringify(tanpaToken).slice(0, 80));
+        const { data: profilAnon } = await anon.rpc('ambil_akun_satu', { p_nis_nip: NIS_MURID, p_mode: 'penuh' });
+        cek('RPC ambil_akun_satu tanpa token ditolak',
+            !!(profilAnon && profilAnon.status === 'error'), JSON.stringify(profilAnon).slice(0, 80));
     }
     {
         // Sub-ekstrakurikuler: anon kelola sub & anggota — RENAME TIDAK BOLEH menghilangkan anggota
