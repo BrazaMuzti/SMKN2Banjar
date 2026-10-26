@@ -10278,7 +10278,7 @@ async function renderManajemenMurid(container, paksa = false) {
                             <button onclick="cetakMutasiSiswa()" class="h-8 bg-orange-600 hover:bg-orange-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Laporan mutasi siswa antar tahun pelajaran"><i class="fa-solid fa-file-signature"></i> <span class="hidden sm:inline">Mutasi</span></button>
                             <button onclick="cetakFotoSiswa()" class="h-8 bg-cyan-600 hover:bg-cyan-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak lembar foto siswa (mengikuti filter tabel aktif)"><i class="fa-solid fa-camera-retro"></i> <span class="hidden sm:inline">Foto</span></button>
                             <button onclick="bukaPengaturanKartu()" class="h-8 bg-indigo-600 hover:bg-indigo-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Cetak kartu pelajar (ID Card) siswa — pengaturan sebelum cetak"><i class="fa-solid fa-id-card"></i> <span class="hidden sm:inline">Kartu</span></button>
-                            ${bisaImportMuridAktif() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
+                            ${aksesRegistrasiWajahMasal() ? `<button onclick="scanWajahMasal()" class="h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Registrasi wajah otomatis dari foto profil utk murid yang belum punya wajah (mengikuti filter aktif)"><i class="fa-solid fa-face-viewfinder"></i><i class="fa-solid fa-users text-[6px] -ml-1 -mb-2 text-white/90"></i> <span class="hidden sm:inline">Wajah Masal</span></button>` : ''}
 ${bisaImportMuridAktif() ? `<button onclick="openUploadFotoMasal()" class="h-8 bg-cyan-700 hover:bg-cyan-600 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Unggah foto massal utk SEMUA murid (tanpa terkait filter aktif). Nama file: \"{NISN} {Nama siswa}.jpg\" (fallback NIS). Admin, wali kelas & pembina ekskul"><i class="fa-solid fa-upload"></i> <span class="hidden sm:inline">Upload Foto</span></button>` : ''}
                             <button onclick="openFormAkunMurid(true)" class="h-8 bg-blue-600 hover:bg-blue-700 text-white px-1.5 sm:px-3 rounded-lg text-[11px] font-bold transition shadow-md whitespace-nowrap" title="Tambah Murid"><i class="fa-solid fa-plus"></i> <span class="hidden sm:inline">Tambah</span></button>
                         </div>
@@ -11903,12 +11903,14 @@ function medsosTeks(medsosArr) {
 
 /** Registrasi wajah masal dari foto profil (murid ber-foto namun belum punya wajah).
  *  Mengikuti filter tabel aktif; berjalan berurutan dengan progres; best-effort.
- *  Hak akses: admin & guru (wali kelas/pembina) — sejalan dgn tombol Import (bisaImportMuridAktif). */
+ *  Hak akses: lewat `aksesRegistrasiWajahMasal()` — admin & guru (wali kelas/pembina),
+ *  selaras dengan RPC `simpan_wajah_murid` (upgrade_20261028b2) & grant admin di
+ *  supabase/sql/upgrade_20261031_akses_admin_akun_murid.sql. */
 let scanWajahMasalSedangProses = false;
 async function scanWajahMasal() {
   // [HAK AKSES] Lapis kedua (pertahanan ekstra selain sembunyi tombol):
   // hanya admin & guru (wali kelas/pembina) yg boleh; selain itu ditolak.
-  if (!bisaImportMuridAktif()) {
+  if (!aksesRegistrasiWajahMasal()) {
     return showToast('error', 'Fitur Wajah Masal khusus admin, wali kelas, atau pembina ekskul.');
   }
   if (scanWajahMasalSedangProses) return showToast('info', 'Wajah masal sedang memproses…');
@@ -12557,6 +12559,18 @@ printWindow.document.write(`
 }
   /** Simpan tambah/edit murid via RPC (hash password ditangani server). */
 async function simpanAkunMurid(formData, isNew) {
+  // [HAK AKSES] Gerbang klien sebelum memanggil RPC `buat_akun_murid` (server tetap
+  // memeriksa ulang): admin boleh tambah & edit; guru hanya edit murid yang diampu;
+  // murid ditolak (murid memakai RPC sendiri). Lihat aksesSimpanDataAkunMurid().
+  if (!aksesSimpanDataAkunMurid(formData, isNew)) {
+    return Swal.fire({
+      icon: 'error', title: 'Akses Ditolak',
+      html: 'Anda tidak berhak menyimpan data akun murid ini.<br><br>'
+          + '<span style="font-size:12px;opacity:.85">Akses <b>Simpan Data</b> dimiliki <b>admin</b> '
+          + '(tambah &amp; edit) dan <b>guru wali kelas / pembina ekskul</b> untuk murid yang diampu.</span>',
+      background: '#1e293b', color: '#fff'
+    });
+  }
   Swal.fire({ title: 'Menyimpan Data...', allowOutsideClick: false, background: '#1e293b', color: '#fff', didOpen: () => Swal.showLoading() });
 
   const p_data = { ...formData };
@@ -12591,7 +12605,13 @@ async function simpanAkunMurid(formData, isNew) {
   const { data, error } = await supaClient.rpc('buat_akun_murid', { p_data });
 
   if (error || !data || data.status !== 'success') {
-    const pesan = (data && data.message) || (error && error.message) || 'Gagal menyimpan.';
+    let pesan = (data && data.message) || (error && error.message) || 'Gagal menyimpan.';
+    // [AKSES] Pesan tolakan server yang samar diberi jalan keluar yang jelas.
+    // Server mengenali admin dari baris `akun` dengan user_id = auth.uid() & tipe 'admin'
+    // (lihat supabase/sql/upgrade_20261031_akses_admin_akun_murid.sql).
+    if (/Hanya admin atau guru/i.test(pesan)) {
+      pesan += ' Akun Anda belum dikenali sebagai admin/guru oleh server: pastikan baris akun Anda bertipe benar dan kolom user_id-nya sudah tertaut ke akun login (keluar lalu masuk lagi, kemudian coba simpan sekali lagi).';
+    }
     console.error("Error simpan akun murid:", error || data);
     Swal.fire({ icon: 'error', title: 'Gagal', text: pesan, background: '#1e293b', color: '#fff' });
     return;
@@ -14981,6 +15001,34 @@ function bisaEditAkunMurid(d) {
         }
     }
     return false;
+}
+
+/** AKSES FITUR — "Registrasi Wajah Masal" (tombol **Wajah Masal**, menu Data Akun Murid).
+ *  Aksi = `scanWajahMasal()` → `FaceWajah.registrasiOtomatisDariFoto()` → RPC
+ *  `simpan_wajah_murid` (otorisasi: admin ATAU guru wali kelas/pembina ekskul,
+ *  upgrade_20261028b2). Admin dipertegas lewat
+ *  supabase/sql/upgrade_20261031_akses_admin_akun_murid.sql (`fn_role`/`fn_is_admin`
+ *  deterministik admin-first + backfill `akun.user_id`).
+ *  Dipakai di DUA titik: sembunyi-tombol (toolbar) & penjaga fungsi `scanWajahMasal()`. */
+function aksesRegistrasiWajahMasal() {
+    // Satu sumber kebenaran dengan tombol Import: admin selalu true; guru harus
+    // wali kelas ATAU pembina ekskul. Murid tidak punya alur registrasi masal.
+    return bisaImportMuridAktif();
+}
+
+/** AKSES FITUR — tombol **Simpan Data** pada form Edit/Tambah Akun Murid.
+ *  Aksi = `simpanAkunMurid()` → RPC `buat_akun_murid` (otorisasi: admin boleh
+ *  TAMBAH & EDIT termasuk password; guru hanya EDIT murid yang diampu tanpa ubah
+ *  password; murid ditolak — murid memakai RPC sendiri), lihat
+ *  supabase/sql/upgrade_20261015_edit_murid_akses_guru_wali.sql & file upgrade
+ *  20261031 (otorisasi admin dibuat andal).
+ *  `data` = isian form (butuh nis/tingkat_kelas/ekstrakurikuler utk cek murid diampu);
+ *  `isNew` = true bila form dipakai MENAMBAH murid baru. */
+function aksesSimpanDataAkunMurid(data, isNew) {
+    if (isAdminAktif()) return true;                       // tambah & edit
+    if (((currentUser || {}).role) !== 'guru') return false;
+    if (isNew) return false;                               // guru tidak boleh menambah murid
+    return bisaEditAkunMurid(data || {});                  // guru: hanya murid yang diampu
 }
 
 /** Ringkasan penugasan utk badge tabel: "TA: Mapel1, Mapel2 · Wali X" per tahun. */
