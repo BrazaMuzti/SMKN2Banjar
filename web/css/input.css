@@ -422,3 +422,24 @@ table {
 .piket-cek-chip.locked { opacity: 0.8; }
 /* Antrian ciut (mobile): badan tak tampil, hanya header */
 #antrian-piket.piket-antrian-ciut .piket-antrian-badan { display: none; }
+
+/* ============================================================
+   PWA — "Pasang ke layar utama" (lihat web/js/install.js & web/sw.js)
+   ============================================================ */
+
+/* Denyut halus di tombol Pasang: menarik perhatian tanpa mengganggu. */
+.pwa-denut { animation: pwaDenut 2.4s ease-in-out infinite; }
+@keyframes pwaDenut {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.55); }
+  50%      { box-shadow: 0 0 0 6px rgba(37, 99, 235, 0); }
+}
+
+/* Kartu ajakan pasang di dashboard: garis tegas di tepi kiri. */
+#kartu-pwa-dashboard { border-left: 3px solid rgba(37, 99, 235, 0.85); }
+
+/* Saat berjalan sebagai aplikasi terpasang (standalone), cegah efek "karet"
+   berlebih pada scroll layar sentuh agar terasa seperti aplikasi native. */
+@media all and (display-mode: standalone) {
+  body { overscroll-behavior-y: none; }
+}
+
